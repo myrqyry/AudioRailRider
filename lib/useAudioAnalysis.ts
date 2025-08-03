@@ -1,16 +1,15 @@
 import { useRef, useEffect } from 'react';
 import Meyda from 'meyda';
-import * as THREE from 'three';
 
 interface UseAudioAnalysisProps {
   audioFile: File | null;
-  onFeatureExtract: (features: any) => void;
   status: string; // Assuming AppStatus.Riding or similar
 }
 
-export const useAudioAnalysis = ({ audioFile, onFeatureExtract, status }: UseAudioAnalysisProps) => {
+export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const meydaAnalyzer = useRef<ReturnType<typeof Meyda.createMeydaAnalyzer> | null>(null);
+  const featuresRef = useRef<any>(null);
 
   useEffect(() => {
     if (!audioFile || status !== 'Riding') {
@@ -19,7 +18,10 @@ export const useAudioAnalysis = ({ audioFile, onFeatureExtract, status }: UseAud
       }
       if (audioRef.current) {
         audioRef.current.pause();
-        URL.revokeObjectURL(audioRef.current.src);
+        // Check if src exists before revoking
+        if (audioRef.current.src) {
+            URL.revokeObjectURL(audioRef.current.src);
+        }
       }
       return;
     }
@@ -35,9 +37,9 @@ export const useAudioAnalysis = ({ audioFile, onFeatureExtract, status }: UseAud
       audioContext: audioContext,
       source: source,
       bufferSize: 512,
-      featureExtractors: ['loudness'],
+      featureExtractors: ['loudness', 'mfcc', 'spectralCentroid', 'rms'],
       callback: (features) => {
-        onFeatureExtract(features);
+        featuresRef.current = features;
       },
     });
 
@@ -52,10 +54,12 @@ export const useAudioAnalysis = ({ audioFile, onFeatureExtract, status }: UseAud
       }
       if (audioRef.current) {
         audioRef.current.pause();
-        URL.revokeObjectURL(audioRef.current.src);
+        if (audioRef.current.src) {
+            URL.revokeObjectURL(audioRef.current.src);
+        }
       }
     };
-  }, [audioFile, onFeatureExtract, status]);
+  }, [audioFile, status]);
 
-  return { audioRef };
+  return { audioRef, featuresRef };
 };

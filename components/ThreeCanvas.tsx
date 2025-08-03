@@ -19,64 +19,7 @@ const ThreeCanvas: React.FC<ThreeCanvasProps> = ({ status, trackData, audioFile,
   const particleLifetimes = useRef<number[]>([]);
   const isUnmounting = useRef(false);
 
-  const handleAudioFeatures = useCallback((features: any) => {
-    if (!trackGlowMaterial.current || !particleSystem.current) return;
-    const loudness = features.loudness;
-    const midLoudness = loudness.specific.slice(7, 14).reduce((a: number, b: number) => a + b, 0);
-    const bassLoudness = loudness.specific.slice(0, 5).reduce((a: number, b: number) => a + b, 0);
-
-    trackGlowMaterial.current.emissiveIntensity = Math.max(0.1, Math.min(3.0, midLoudness * 0.5));
-
-    if (bassLoudness > 15) { // Threshold for bass kick to trigger particles
-        const positions = particleSystem.current.geometry.attributes.position as THREE.BufferAttribute;
-        // camera is not in scope here, need to pass it or find another way to get its position
-        // For now, I'll use a placeholder for camPos.x, camPos.y, camPos.z
-        // This will need to be addressed by passing camera or its position to the callback
-        // or by making the particle spawning logic part of the main useEffect where camera is in scope.
-        // Given the current structure, passing camera is the cleaner solution.
-        // However, this callback is designed to be passed to useAudioAnalysis, which doesn't have camera.
-        // So, the particle spawning should probably remain in ThreeCanvas's useEffect.
-
-        // Let's re-evaluate: The particle spawning should happen in the main useEffect
-        // because it directly manipulates Three.js objects (camera, particleSystem).
-        // The audio analysis hook should only *provide* the audio features.
-        // So, the particle spawning logic needs to be moved back to ThreeCanvas useEffect.
-        // The handleAudioFeatures callback should only update a state or ref that ThreeCanvas reads.
-        // Let's use a ref to store the latest loudness features.
-
-        // For now, I will remove the particle spawning from here and add it back to ThreeCanvas useEffect.
-        // This means the handleAudioFeatures will only update the emissiveIntensity.
-        // I will then need a new state/ref to pass loudness to the main useEffect.
-
-        // Re-thinking: The current implementation of `handleAudioFeatures` directly modifies
-        // `trackGlowMaterial.current` and `particleSystem.current`. These are refs
-        // managed by the `ThreeCanvas` component.
-        // The `camera` object is created within the `useEffect` of `ThreeCanvas`.
-        // To make the `handleAudioFeatures` work, `camera` needs to be accessible.
-        // One way is to pass `camera` as a dependency to `useCallback` or as an argument to `handleAudioFeatures`.
-        // However, `useAudioAnalysis` does not expose `camera`.
-
-        // The best approach is to have `useAudioAnalysis` simply return the features,
-        // and `ThreeCanvas` then uses these features to update its Three.js elements.
-        // This means `handleAudioFeatures` should *not* directly manipulate `particleSystem.current`
-        // or `trackGlowMaterial.current`. Instead, it should update a state or ref in `ThreeCanvas`,
-        // and the main `useEffect` in `ThreeCanvas` will react to those changes.
-
-        // Let's modify `handleAudioFeatures` to update a ref with the latest features.
-        // And then the main `useEffect` will read this ref.
-
-        // Reverting the particle spawning logic in handleAudioFeatures, it should stay in ThreeCanvas.
-        // The `handleAudioFeatures` will just set a ref that the main `useEffect` will read.
-      }
-    }, [particleSystem, trackGlowMaterial, particleVelocities, particleLifetimes]); // Add these as dependencies
-
-  const latestLoudness = useRef<any>(null); // New ref to store latest loudness
-
-  const onFeatureExtractCallback = useCallback((features: any) => {
-    latestLoudness.current = features.loudness;
-  }, []);
-
-  const { audioRef } = useAudioAnalysis({ audioFile, onFeatureExtract: onFeatureExtractCallback, status });
+  const { audioRef, featuresRef } = useAudioAnalysis({ audioFile, status });
     
   // This effect handles the entire lifecycle of the three.js scene
   useEffect(() => {
@@ -143,6 +86,11 @@ const ThreeCanvas: React.FC<ThreeCanvasProps> = ({ status, trackData, audioFile,
 
     // Animation loop
     const clock = new THREE.Clock();
+    const duration = audioRef.current?.duration || trackData.path.length / 50;
+    const pos = new THREE.Vector3();
+    const lookAtPos = new THREE.Vector3();
+    const up = new THREE.Vector3();
+
     const animate = () => {
         if (isUnmounting.current) return;
         animationFrameId.current = requestAnimationFrame(animate);
@@ -155,20 +103,19 @@ const ThreeCanvas: React.FC<ThreeCanvasProps> = ({ status, trackData, audioFile,
         }
 
         const audioTime = audioRef.current?.currentTime || 0;
-        const duration = audioRef.current?.duration || trackData.path.length / 50;
         const progress = status === AppStatus.Riding ? (audioTime / duration) : ((clock.getElapsedTime() * 0.05) % 1);
 
         if (progress < 1) {
-            const pos = curve.getPointAt(progress);
+            curve.getPointAt(progress, pos);
             camera.position.copy(pos);
 
-            const lookAtPos = curve.getPointAt(Math.min(1, progress + 0.01));
+            curve.getPointAt(Math.min(1, progress + 0.01), lookAtPos);
             
             const sample = Math.floor(progress * (trackData.upVectors.length - 1));
             const nextSample = Math.min(sample + 1, trackData.upVectors.length - 1);
             const t = progress * (trackData.upVectors.length - 1) - sample;
-            const up = trackData.upVectors[sample].clone().lerp(trackData.upVectors[nextSample], t);
-            camera.up.copy(up).normalize();
+            up.copy(trackData.upVectors[sample]).lerp(trackData.upVectors[nextSample], t).normalize();
+            camera.up.copy(up);
 
             camera.lookAt(lookAtPos);
             
@@ -178,33 +125,34 @@ const ThreeCanvas: React.FC<ThreeCanvasProps> = ({ status, trackData, audioFile,
             camera.updateProjectionMatrix();
         }
         
-        // Update Three.js elements based on latest loudness features
-        if (latestLoudness.current && trackGlowMaterial.current && particleSystem.current) {
-          const loudness = latestLoudness.current;
-          const midLoudness = loudness.specific.slice(7, 14).reduce((a: number, b: number) => a + b, 0);
-          const bassLoudness = loudness.specific.slice(0, 5).reduce((a: number, b: number) => a + b, 0);
+        // Update Three.js elements based on latest audio features
+        if (featuresRef.current && trackGlowMaterial.current && particleSystem.current) {
+          const loudness = featuresRef.current.loudness;
+          if (loudness) {
+            const midLoudness = loudness.specific.slice(7, 14).reduce((a: number, b: number) => a + b, 0);
+            const bassLoudness = loudness.specific.slice(0, 5).reduce((a: number, b: number) => a + b, 0);
 
-          trackGlowMaterial.current.emissiveIntensity = Math.max(0.1, Math.min(3.0, midLoudness * 0.5));
+            trackGlowMaterial.current.emissiveIntensity = Math.max(0.1, Math.min(3.0, midLoudness * 0.5));
 
-          if (bassLoudness > 15) { // Threshold for bass kick to trigger particles
-              const positions = particleSystem.current.geometry.attributes.position as THREE.BufferAttribute;
-              const camPos = camera.position;
-              let spawned = 0;
-              const particleCount = positions.count; // Use positions.count to get actual particle count
-              for (let i = 0; i < particleCount && spawned < 5; i++) { // burst of 5 particles
-                  const pIndex = Math.floor(Math.random() * particleCount);
-                  if (particleLifetimes.current[pIndex] <= 0) { // only trigger if particle is "dead"
-                      positions.setXYZ(pIndex, camPos.x, camPos.y, camPos.z);
-                      particleVelocities.current[pIndex].set(
-                          (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10
-                      );
-                      particleLifetimes.current[pIndex] = 1.0 + Math.random() * 0.5;
-                      spawned++;
-                  }
-              }
-              if (spawned > 0) positions.needsUpdate = true;
+            if (bassLoudness > 15) { // Threshold for bass kick to trigger particles
+                const positions = particleSystem.current.geometry.attributes.position as THREE.BufferAttribute;
+                const camPos = camera.position;
+                let spawned = 0;
+                const particleCount = positions.count; // Use positions.count to get actual particle count
+                for (let i = 0; i < particleCount && spawned < 5; i++) { // burst of 5 particles
+                    const pIndex = Math.floor(Math.random() * particleCount);
+                    if (particleLifetimes.current[pIndex] <= 0) { // only trigger if particle is "dead"
+                        positions.setXYZ(pIndex, camPos.x, camPos.y, camPos.z);
+                        particleVelocities.current[pIndex].set(
+                            (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10
+                        );
+                        particleLifetimes.current[pIndex] = 1.0 + Math.random() * 0.5;
+                        spawned++;
+                    }
+                }
+                if (spawned > 0) positions.needsUpdate = true;
+            }
           }
-          latestLoudness.current = null; // Reset after processing
         }
 
         if (particleSystem.current) {
@@ -253,7 +201,9 @@ const ThreeCanvas: React.FC<ThreeCanvasProps> = ({ status, trackData, audioFile,
         renderer.dispose();
         scene.clear();
     };
-  }, [status, trackData, audioFile, onRideFinish, onFeatureExtractCallback]);
+  }, [status, trackData, audioFile, onRideFinish, featuresRef]);
+
+  // Refactor the JSX to a separate component
   return <div ref={mountRef} className={`fixed inset-0 z-0 transition-opacity duration-1000 ${status === AppStatus.Riding ? 'opacity-100' : 'opacity-50'}`} />;
 };
 

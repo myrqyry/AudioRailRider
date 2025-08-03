@@ -1,6 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { RideBlueprint } from "../types";
 import { config } from '../config';
+import geminiConfig from '../gemini.config.ts';
 
 const SYSTEM_INSTRUCTION = `
 You are a synesthetic architect, a digital-alchemist. Your purpose is to translate a song's audio data directly into a rollercoaster blueprint.
@@ -19,7 +20,7 @@ Here are the available track components:
 - 'loop': A full vertical loop. The ultimate thrill for the most powerful moments.
   - 'radius': The size of the loop (e.g., 40 to 80).
 - 'barrelRoll': A corkscrew motion. Perfect for synth solos, complex rhythms, or disorienting moments.
-  - 'rotations': How many full 360-degree rolls (e.g., 1, 2).
+  - 'rotations': How many full 360-degree rolls (e.g., 1, 2). This must be an integer.
   - 'length': The forward distance covered during the roll (e.g., 100 to 200).
 `;
 
@@ -89,8 +90,18 @@ const fileToGenerativePart = async (file: File) => {
 };
 
 export const generateRideBlueprint = async (audioFile: File, duration: number, bpm: number, energy: number): Promise<RideBlueprint> => {
+  // Add a new function to validate the API key before making the API call
+  const validateApiKey = () => {
+    if (!config.apiKey || config.apiKey.trim() === '') {
+      throw new Error("Gemini API key is missing. Please set it in your .env.local file.");
+    }
+  };
+
+  // Call the validation function before making the API call
+  validateApiKey();
+
   const ai = new GoogleGenAI({ apiKey: config.apiKey });
-  const model = "gemini-2.5-flash";
+  const model = geminiConfig.modelName; // Use modelName from gemini.config.ts
   
   try {
     const audioPart = await fileToGenerativePart(audioFile);
@@ -112,18 +123,31 @@ export const generateRideBlueprint = async (audioFile: File, duration: number, b
         throw new Error("The AI returned an empty response. Please try a different song.");
     }
 
-    const blueprint = JSON.parse(jsonText);
-    
-    if (!blueprint.palette || !Array.isArray(blueprint.palette) || blueprint.palette.length < 3 || !blueprint.track || !Array.isArray(blueprint.track)) {
-        throw new Error("The AI returned an invalid blueprint structure. This can happen with very unusual songs. Please try another one.");
+    try {
+      const blueprint = JSON.parse(jsonText);
+      
+      if (!blueprint.palette || !Array.isArray(blueprint.palette) || blueprint.palette.length < 3 || !blueprint.track || !Array.isArray(blueprint.track)) {
+          throw new Error("The AI returned an invalid blueprint structure. This can happen with very unusual songs. Please try another one.");
+      }
+
+      // Round rotations values for barrelRoll components to 2 decimal places
+      blueprint.track.forEach((segment: any) => {
+        if (segment.component === 'barrelRoll' && typeof segment.rotations === 'number') {
+          segment.rotations = parseFloat(segment.rotations.toFixed(2));
+        }
+      });
+      
+      return blueprint as RideBlueprint;
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        console.error("Syntax error in JSON response:", jsonText);
+        throw new Error("The AI returned malformed data. This is a rare issue, please try again. The raw response from the AI was: " + jsonText);
+      } else {
+        throw error;
+      }
     }
-    
-    return blueprint as RideBlueprint;
   } catch (error) {
     console.error("Error generating ride blueprint:", error);
-    if (error instanceof SyntaxError) {
-        throw new Error("The AI returned malformed data. This is a rare issue, please try again.");
-    }
     const errorMessage = error instanceof Error ? error.message : String(error);
     if (errorMessage.includes('API key not valid')) {
         throw new Error("Your Gemini API key is not valid. Please ensure it is correctly set in your .env.local file.");
@@ -133,4 +157,5 @@ export const generateRideBlueprint = async (audioFile: File, duration: number, b
     }
     throw new Error(`The generative muse is unavailable: ${errorMessage}`);
   }
+
 };
