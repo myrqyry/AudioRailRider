@@ -28,11 +28,11 @@ const App: React.FC = () => {
         try {
             setStatus(AppStatus.Analyzing);
             setStatusMessage('Reading audio essence...');
-            const { duration } = await analyzeAudio(file);
+            const { duration, bpm, energy } = await analyzeAudio(file);
 
             setStatus(AppStatus.Generating);
             setStatusMessage('Translating sound into structure...');
-            const blueprint: RideBlueprint = await generateRideBlueprint(file, duration);
+            const blueprint: RideBlueprint = await generateRideBlueprint(file, duration, bpm, energy);
             
             setStatusMessage('Constructing ephemeral cathedral...');
             const newTrackData = buildTrackData(blueprint);

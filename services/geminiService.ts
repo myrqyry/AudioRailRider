@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { RideBlueprint } from "../types";
+import { config } from '../config';
 
 const SYSTEM_INSTRUCTION = `
 You are a synesthetic architect, a digital-alchemist. Your purpose is to translate a song's audio data directly into a rollercoaster blueprint.
@@ -22,8 +23,9 @@ Here are the available track components:
   - 'length': The forward distance covered during the roll (e.g., 100 to 200).
 `;
 
-const PROMPT_TEXT = (duration: number) => `
-You have been given an audio file of a song that is ${duration.toFixed(0)} seconds long.
+const PROMPT_TEXT = (duration: number, bpm: number, energy: number) => `
+You have been given an audio file that is ${duration.toFixed(0)} seconds long.
+It has a tempo of approximately ${bpm.toFixed(0)} BPM and an overall energy level of ${energy.toFixed(2)} (out of 1).
 
 Listen to the entire track and analyze its emotional arc, dynamics, and rhythm. Your task is to translate this audio experience into a thrilling rollercoaster ride blueprint.
 
@@ -86,18 +88,13 @@ const fileToGenerativePart = async (file: File) => {
   };
 };
 
-export const generateRideBlueprint = async (audioFile: File, duration: number): Promise<RideBlueprint> => {
-  if (!process.env.API_KEY) {
-    console.error("API_KEY environment variable not set.");
-    throw new Error("API_KEY environment variable not set. This app requires a configured Gemini API key to function.");
-  }
-
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+export const generateRideBlueprint = async (audioFile: File, duration: number, bpm: number, energy: number): Promise<RideBlueprint> => {
+  const ai = new GoogleGenAI({ apiKey: config.apiKey });
   const model = "gemini-2.5-flash";
   
   try {
     const audioPart = await fileToGenerativePart(audioFile);
-    const textPart = { text: PROMPT_TEXT(duration) };
+    const textPart = { text: PROMPT_TEXT(duration, bpm, energy) };
 
     const response = await ai.models.generateContent({
         model: model,
@@ -129,10 +126,10 @@ export const generateRideBlueprint = async (audioFile: File, duration: number): 
     }
     const errorMessage = error instanceof Error ? error.message : String(error);
     if (errorMessage.includes('API key not valid')) {
-        throw new Error("Your Gemini API key is not valid. Please check your configuration.");
+        throw new Error("Your Gemini API key is not valid. Please ensure it is correctly set in your .env.local file.");
     }
     if (errorMessage.includes('500') || errorMessage.includes('Internal error') || errorMessage.includes('request failed')) {
-        throw new Error("The generative muse had a temporary hiccup, likely due to the song's complexity. Please try again in a moment.");
+        throw new Error("The AI had a temporary issue, possibly due to the song's complexity. Please try again in a moment or with a different track.");
     }
     throw new Error(`The generative muse is unavailable: ${errorMessage}`);
   }

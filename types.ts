@@ -4,6 +4,8 @@ import { Vector3 } from 'three';
 // Data extracted from audio analysis, now simplified to just duration.
 export interface AudioFeatures {
   duration: number;
+  bpm: number;
+  energy: number;
   // Loudness, spectral centroid, and peaks are now analyzed by Gemini.
 }
 
