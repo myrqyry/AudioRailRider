@@ -1,6 +1,3 @@
-The following `README.md` file has been generated based on your project context and specific instructions.
-
-```markdown
 # AudioRail Rider: Ride the Pulse of Your Music
 
 ## 🚀 Project Overview

@@ -18,6 +18,7 @@ const ThreeCanvas: React.FC<ThreeCanvasProps> = ({ status, trackData, audioFile,
   const particleVelocities = useRef<THREE.Vector3[]>([]);
   const particleLifetimes = useRef<number[]>([]);
   const isUnmounting = useRef(false);
+  const lastBassLoudness = useRef(0);
 
   const { audioRef, featuresRef } = useAudioAnalysis({ audioFile, status });
     
@@ -93,7 +94,8 @@ const ThreeCanvas: React.FC<ThreeCanvasProps> = ({ status, trackData, audioFile,
 
     // Animation loop
     const clock = new THREE.Clock();
-    const duration = audioRef.current?.duration || trackData.path.length / 50;
+    const audioDuration = audioRef.current?.duration;
+    const duration = (audioDuration && isFinite(audioDuration)) ? audioDuration : trackData.path.length / 50;
     const pos = new THREE.Vector3();
     const lookAtPos = new THREE.Vector3();
     const up = new THREE.Vector3();
@@ -141,7 +143,7 @@ const ThreeCanvas: React.FC<ThreeCanvasProps> = ({ status, trackData, audioFile,
 
             trackGlowMaterial.current.emissiveIntensity = Math.max(0.1, Math.min(3.0, midLoudness * 0.5));
 
-            if (bassLoudness > 15) { // Threshold for bass kick to trigger particles
+            if (bassLoudness > 15 && lastBassLoudness.current <= 15) { // Threshold for bass kick to trigger particles
                 const positions = particleSystem.current.geometry.attributes.position as THREE.BufferAttribute;
                 const camPos = camera.position;
                 let spawned = 0;
@@ -159,6 +161,7 @@ const ThreeCanvas: React.FC<ThreeCanvasProps> = ({ status, trackData, audioFile,
                 }
                 if (spawned > 0) positions.needsUpdate = true;
             }
+            lastBassLoudness.current = bassLoudness;
           }
         }
 
