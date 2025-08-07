@@ -1,7 +1,7 @@
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 
 if (!GEMINI_API_KEY) {
-  throw new Error("GEMINI_API_KEY environment variable not set. Please check your .env.local file.");
+  throw new Error("VITE_GEMINI_API_KEY environment variable not set. Please check your .env.local file.");
 }
 
 export const config = {
