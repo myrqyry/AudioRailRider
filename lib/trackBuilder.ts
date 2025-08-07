@@ -5,6 +5,7 @@ import { RideBlueprint, TrackSegment, TrackData } from '../types';
 export const buildTrackData = (blueprint: RideBlueprint): TrackData => {
     const points: THREE.Vector3[] = [];
     const upVectors: THREE.Vector3[] = [];
+    const segmentDetails: TrackData['segmentDetails'] = [];
 
     let currentPos = new THREE.Vector3(0, 5, 0);
     let currentDir = new THREE.Vector3(0, 0, -1);
@@ -31,11 +32,24 @@ export const buildTrackData = (blueprint: RideBlueprint): TrackData => {
         initialSegmentUps.push(currentUp.clone());
     }
     addSegment(initialSegmentPoints, initialSegmentUps);
+    segmentDetails.push({
+      intensity: 0,
+      lightingEffect: "none",
+      environmentChange: "none",
+      audioSyncPoint: 0
+    });
 
     blueprint.track.forEach((segment: TrackSegment) => {
         const segmentPoints: THREE.Vector3[] = [];
         const segmentUps: THREE.Vector3[] = [];
         const resolution = 100;
+
+        segmentDetails.push({
+          intensity: segment.intensity,
+          lightingEffect: segment.lightingEffect,
+          environmentChange: segment.environmentChange,
+          audioSyncPoint: segment.audioSyncPoint
+        });
 
         switch (segment.component) {
             case 'climb':
@@ -113,6 +127,12 @@ export const buildTrackData = (blueprint: RideBlueprint): TrackData => {
             }
         }
         addSegment(segmentPoints, segmentUps);
+        segmentDetails.push({
+          intensity: segment.intensity,
+          lightingEffect: segment.lightingEffect,
+          environmentChange: segment.environmentChange,
+          audioSyncPoint: segment.audioSyncPoint
+        });
     });
 
     return {
@@ -122,5 +142,8 @@ export const buildTrackData = (blueprint: RideBlueprint): TrackData => {
         glowColor: blueprint.palette[1] || '#00ffff',
         skyColor1: blueprint.palette[2] || '#0d0a1f',
         skyColor2: '#000000',
+        segmentDetails: segmentDetails,
+        rideName: blueprint.rideName,
+        moodDescription: blueprint.moodDescription
     };
 };

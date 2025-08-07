@@ -3,7 +3,7 @@ import Meyda from 'meyda';
 
 interface UseAudioAnalysisProps {
   audioFile: File | null;
-  status: string; // Assuming AppStatus.Riding or similar
+  status: string;
 }
 
 export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) => {
@@ -12,30 +12,33 @@ export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) =
   const featuresRef = useRef<any>(null);
 
   useEffect(() => {
-    if (!audioFile || status !== 'Riding') {
-      if (meydaAnalyzer.current) {
-        meydaAnalyzer.current.stop();
-      }
+    if (status !== 'Riding' || !audioFile) {
+      // Cleanup logic
       if (audioRef.current) {
         audioRef.current.pause();
-        // Check if src exists before revoking
         if (audioRef.current.src) {
-            URL.revokeObjectURL(audioRef.current.src);
+          URL.revokeObjectURL(audioRef.current.src);
         }
+        audioRef.current = null;
+      }
+      if (meydaAnalyzer.current) {
+        meydaAnalyzer.current.stop();
+        meydaAnalyzer.current = null;
       }
       return;
     }
 
-    audioRef.current = new Audio();
-    audioRef.current.src = URL.createObjectURL(audioFile);
-    
+    // Setup logic
+    const audio = new Audio(URL.createObjectURL(audioFile));
+    audioRef.current = audio;
+
     const audioContext = new AudioContext();
-    const source = audioContext.createMediaElementSource(audioRef.current);
+    const source = audioContext.createMediaElementSource(audio);
     source.connect(audioContext.destination);
 
     meydaAnalyzer.current = Meyda.createMeydaAnalyzer({
-      audioContext: audioContext,
-      source: source,
+      audioContext,
+      source,
       bufferSize: 512,
       featureExtractors: ['loudness', 'mfcc', 'spectralCentroid', 'rms'],
       callback: (features) => {
@@ -43,21 +46,19 @@ export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) =
       },
     });
 
-    if (audioRef.current) {
-      audioRef.current.play();
-    }
-    meydaAnalyzer.current.start();
+    audio.play()
+      .then(() => {
+        console.log("Audio playback started successfully.");
+        meydaAnalyzer.current?.start();
+      })
+      .catch(e => console.error("Audio playback failed:", e));
 
     return () => {
-      if (meydaAnalyzer.current) {
-        meydaAnalyzer.current.stop();
-      }
-      if (audioRef.current) {
-        audioRef.current.pause();
-        if (audioRef.current.src) {
-            URL.revokeObjectURL(audioRef.current.src);
-        }
-      }
+      // This cleanup runs when the component unmounts or dependencies change
+      audio.pause();
+      URL.revokeObjectURL(audio.src);
+      meydaAnalyzer.current?.stop();
+      audioContext.close();
     };
   }, [audioFile, status]);
 

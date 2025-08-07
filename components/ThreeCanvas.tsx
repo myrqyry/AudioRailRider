@@ -23,7 +23,14 @@ const ThreeCanvas: React.FC<ThreeCanvasProps> = ({ status, trackData, audioFile,
     
   // This effect handles the entire lifecycle of the three.js scene
   useEffect(() => {
+    console.log(`ThreeCanvas effect triggered. Status: ${status}`);
     if (!mountRef.current || !trackData || !audioFile || status === AppStatus.Idle) {
+        console.log("ThreeCanvas effect aborted:", {
+            mount: !!mountRef.current,
+            trackData: !!trackData,
+            audioFile: !!audioFile,
+            isIdle: status === AppStatus.Idle
+        });
         return;
     }
     
@@ -201,7 +208,7 @@ const ThreeCanvas: React.FC<ThreeCanvasProps> = ({ status, trackData, audioFile,
         renderer.dispose();
         scene.clear();
     };
-  }, [status, trackData, audioFile, onRideFinish, featuresRef]);
+  }, [status, trackData, audioFile, onRideFinish]);
 
   // Refactor the JSX to a separate component
   return <div ref={mountRef} className={`fixed inset-0 z-0 transition-opacity duration-1000 ${status === AppStatus.Riding ? 'opacity-100' : 'opacity-50'}`} />;
