@@ -1,73 +1,33 @@
 
-import React, { useState, useCallback, useRef } from 'react';
-import { AppStatus, RideBlueprint, TrackData } from './types';
-import { analyzeAudio } from './lib/audioProcessor';
-import { generateRideBlueprint } from './services/geminiService';
-import { buildTrackData } from './lib/trackBuilder';
+import React, { useRef, useEffect } from 'react';
+import { AppStatus } from './types';
+import { useAppStore } from './lib/store';
 import { Loader } from './components/Loader';
 import { UploadIcon, PlayIcon, SparkleIcon } from './components/Icon';
 import ThreeCanvas from './components/ThreeCanvas';
 
 const App: React.FC = () => {
-    const [status, setStatus] = useState<AppStatus>(AppStatus.Idle);
-    const [errorMessage, setErrorMessage] = useState<string>('');
-    const [statusMessage, setStatusMessage] = useState<string>('');
-    const [audioFile, setAudioFile] = useState<File | null>(null);
-    const [trackData, setTrackData] = useState<TrackData | null>(null);
+    const status = useAppStore((state) => state.status);
+    const errorMessage = useAppStore((state) => state.errorMessage);
+    const statusMessage = useAppStore((state) => state.statusMessage);
+    const audioFile = useAppStore((state) => state.audioFile);
+    const trackData = useAppStore((state) => state.trackData);
+    const { setAudioFile, startRide, resetApp } = useAppStore((state) => state.actions);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         if (file) {
             setAudioFile(file);
-            processAudioFile(file);
-        }
-    };
-
-    const processAudioFile = useCallback(async (file: File) => {
-        try {
-            setStatus(AppStatus.Analyzing);
-            setStatusMessage('Reading audio essence...');
-            const { duration, bpm, energy } = await analyzeAudio(file);
-
-            setStatus(AppStatus.Generating);
-            setStatusMessage('Translating sound into structure...');
-            const blueprint: RideBlueprint = await generateRideBlueprint(file, duration, bpm, energy);
-            
-            setStatusMessage('Constructing ephemeral cathedral...');
-            const newTrackData = buildTrackData(blueprint);
-            setTrackData(newTrackData);
-            
-            setStatus(AppStatus.Ready);
-        } catch (error) {
-            console.error(error);
-            const message = error instanceof Error ? error.message : 'An unknown error occurred.';
-            setErrorMessage(`Failed to process '${file.name}': ${message}`);
-            setStatus(AppStatus.Error);
-        }
-    }, []);
-
-    const startRide = () => {
-        if (status === AppStatus.Ready && trackData && audioFile) {
-            setStatus(AppStatus.Riding);
         }
     };
     
-    const resetApp = useCallback(() => {
-        setStatus(AppStatus.Idle);
-        setErrorMessage('');
-        setStatusMessage('');
-        setAudioFile(null);
-        setTrackData(null);
-        if (fileInputRef.current) {
+    useEffect(() => {
+        if (status === AppStatus.Idle && fileInputRef.current) {
             fileInputRef.current.value = '';
         }
-    }, []);
-    
-    const handleRideFinish = useCallback(() => {
-        resetApp();
-    }, [resetApp]);
-    
+    }, [status]);
+
     const renderContent = () => {
         switch (status) {
             case AppStatus.Error:
@@ -121,12 +81,7 @@ const App: React.FC = () => {
             </div>
             
             {(status === AppStatus.Riding || status === AppStatus.Ready) && trackData && (
-                <ThreeCanvas
-                    status={status}
-                    trackData={trackData}
-                    audioFile={audioFile}
-                    onRideFinish={handleRideFinish}
-                />
+                <ThreeCanvas />
             )}
         </main>
     );

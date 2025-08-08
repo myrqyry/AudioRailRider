@@ -1,16 +1,15 @@
-import React, { useRef, useEffect, useCallback } from 'react';
+import React, { useRef, useEffect } from 'react';
 import * as THREE from 'three';
-import { TrackData, AppStatus } from '../types';
+import { AppStatus } from '../types';
 import { useAudioAnalysis } from '../lib/useAudioAnalysis';
+import { useAppStore } from '../lib/store';
 
-interface ThreeCanvasProps {
-  status: AppStatus;
-  trackData: TrackData | null;
-  audioFile: File | null;
-  onRideFinish: () => void;
-}
+const ThreeCanvas: React.FC = () => {
+  const status = useAppStore((state) => state.status);
+  const trackData = useAppStore((state) => state.trackData);
+  const audioFile = useAppStore((state) => state.audioFile);
+  const onRideFinish = useAppStore((state) => state.actions.handleRideFinish);
 
-const ThreeCanvas: React.FC<ThreeCanvasProps> = ({ status, trackData, audioFile, onRideFinish }) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const animationFrameId = useRef<number | null>(null);
   const trackGlowMaterial = useRef<THREE.MeshStandardMaterial | null>(null);
