@@ -4,6 +4,7 @@ import { analyzeAudio } from './audioProcessor';
 import { generateRideBlueprint } from '../services/geminiService';
 import { buildTrackData } from './trackBuilder';
 import { validateAndRefineBlueprint } from './trackValidator';
+import { runAudioProcessingWorkflow } from './workflow';
 
 interface AppState {
     status: AppStatus;
@@ -12,11 +13,13 @@ interface AppState {
     audioFile: File | null;
     trackData: TrackData | null;
     actions: {
+        setStatus: (status: AppStatus, message?: string) => void;
+        setTrackData: (data: TrackData | null) => void;
+        setErrorMessage: (error: string) => void;
+        setAudioFile: (file: File) => void;
         resetApp: () => void;
         startRide: () => void;
         handleRideFinish: () => void;
-        processAudioFile: (file: File) => Promise<void>;
-        setAudioFile: (file: File) => void;
     };
 }
 
@@ -27,29 +30,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     audioFile: null,
     trackData: null,
     actions: {
+        setStatus: (status: AppStatus, message?: string) => set({ status, statusMessage: message || '' }),
+        setTrackData: (data: TrackData | null) => set({ trackData: data }),
+        setErrorMessage: (error: string) => set({ errorMessage: error, status: AppStatus.Error }),
         setAudioFile: (file: File) => {
             set({ audioFile: file });
-            get().actions.processAudioFile(file);
-        },
-        processAudioFile: async (file: File) => {
-            try {
-                set({ status: AppStatus.Analyzing, statusMessage: 'Reading audio essence...' });
-                const { duration, bpm, energy, spectralCentroid, spectralFlux } = await analyzeAudio(file);
-
-                set({ status: AppStatus.Generating, statusMessage: 'Translating sound into structure...' });
-                const rawBlueprint: RideBlueprint = await generateRideBlueprint(file, duration, bpm, energy, spectralCentroid, spectralFlux);
-
-                set({ statusMessage: 'Refining for physical plausibility...' });
-                const refinedBlueprint = validateAndRefineBlueprint(rawBlueprint);
-
-                set({ statusMessage: 'Constructing ephemeral cathedral...' });
-                const newTrackData = buildTrackData(refinedBlueprint);
-                set({ trackData: newTrackData, status: AppStatus.Ready });
-            } catch (error) {
-                console.error(error);
-                const message = error instanceof Error ? error.message : 'An unknown error occurred.';
-                set({ errorMessage: `Failed to process '${file.name}': ${message}`, status: AppStatus.Error });
-            }
+            runAudioProcessingWorkflow(file); // Trigger the workflow
         },
         startRide: () => {
             if (get().status === AppStatus.Ready && get().trackData && get().audioFile) {

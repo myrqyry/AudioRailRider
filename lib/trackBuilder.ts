@@ -1,6 +1,7 @@
 
 import * as THREE from 'three';
 import { RideBlueprint, TrackSegment, TrackData } from '../types';
+import { RIDE_CONFIG } from './constants';
 
 export const buildTrackData = (blueprint: RideBlueprint): TrackData => {
     const points: THREE.Vector3[] = [];
@@ -27,8 +28,8 @@ export const buildTrackData = (blueprint: RideBlueprint): TrackData => {
     // Add an initial flat segment
     const initialSegmentPoints: THREE.Vector3[] = [];
     const initialSegmentUps: THREE.Vector3[] = [];
-    for(let i=0; i<10; i++){
-        initialSegmentPoints.push(currentPos.clone().add(currentDir.clone().multiplyScalar(i * 2)));
+    for(let i=0; i<RIDE_CONFIG.INITIAL_TRACK_SEGMENT_LENGTH; i++){
+        initialSegmentPoints.push(currentPos.clone().add(currentDir.clone().multiplyScalar(i * RIDE_CONFIG.INITIAL_TRACK_SEGMENT_SPACING)));
         initialSegmentUps.push(currentUp.clone());
     }
     addSegment(initialSegmentPoints, initialSegmentUps);
@@ -42,7 +43,7 @@ export const buildTrackData = (blueprint: RideBlueprint): TrackData => {
     blueprint.track.forEach((segment: TrackSegment) => {
         const segmentPoints: THREE.Vector3[] = [];
         const segmentUps: THREE.Vector3[] = [];
-        const resolution = 100;
+        const resolution = RIDE_CONFIG.TRACK_SEGMENT_RESOLUTION;
 
         segmentDetails.push({
           intensity: segment.intensity,
@@ -141,7 +142,7 @@ export const buildTrackData = (blueprint: RideBlueprint): TrackData => {
         railColor: blueprint.palette[0] || '#ffffff',
         glowColor: blueprint.palette[1] || '#00ffff',
         skyColor1: blueprint.palette[2] || '#0d0a1f',
-        skyColor2: '#000000',
+        skyColor2: RIDE_CONFIG.DEFAULT_SKY_COLOR_2,
         segmentDetails: segmentDetails,
         rideName: blueprint.rideName,
         moodDescription: blueprint.moodDescription
