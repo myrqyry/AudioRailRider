@@ -3,6 +3,7 @@ import { AppStatus, RideBlueprint, TrackData } from '../types';
 import { analyzeAudio } from './audioProcessor';
 import { generateRideBlueprint } from '../services/geminiService';
 import { buildTrackData } from './trackBuilder';
+import { validateAndRefineBlueprint } from './trackValidator';
 
 interface AppState {
     status: AppStatus;
@@ -33,13 +34,16 @@ export const useAppStore = create<AppState>((set, get) => ({
         processAudioFile: async (file: File) => {
             try {
                 set({ status: AppStatus.Analyzing, statusMessage: 'Reading audio essence...' });
-                const { duration, bpm, energy } = await analyzeAudio(file);
+                const { duration, bpm, energy, spectralCentroid, spectralFlux } = await analyzeAudio(file);
 
                 set({ status: AppStatus.Generating, statusMessage: 'Translating sound into structure...' });
-                const blueprint: RideBlueprint = await generateRideBlueprint(file, duration, bpm, energy);
+                const rawBlueprint: RideBlueprint = await generateRideBlueprint(file, duration, bpm, energy, spectralCentroid, spectralFlux);
+
+                set({ statusMessage: 'Refining for physical plausibility...' });
+                const refinedBlueprint = validateAndRefineBlueprint(rawBlueprint);
 
                 set({ statusMessage: 'Constructing ephemeral cathedral...' });
-                const newTrackData = buildTrackData(blueprint);
+                const newTrackData = buildTrackData(refinedBlueprint);
                 set({ trackData: newTrackData, status: AppStatus.Ready });
             } catch (error) {
                 console.error(error);

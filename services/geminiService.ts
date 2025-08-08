@@ -24,9 +24,13 @@ Here are the available track components:
   - 'length': The forward distance covered during the roll (e.g., 100 to 200).
 `;
 
-const PROMPT_TEXT = (duration: number, bpm: number, energy: number) => `
-You have been given an audio file that is ${duration.toFixed(0)} seconds long.
-It has a tempo of approximately ${bpm.toFixed(0)} BPM and an overall energy level of ${energy.toFixed(2)} (out of 1).
+const PROMPT_TEXT = (duration: number, bpm: number, energy: number, spectralCentroid: number, spectralFlux: number) => `
+You have been given an audio file with the following audio analysis:
+- Duration: ${duration.toFixed(0)} seconds
+- Tempo: ${bpm.toFixed(0)} BPM
+- Overall Energy: ${energy.toFixed(2)} (0 to 1 scale)
+- Spectral Centroid (Brightness): ${spectralCentroid.toFixed(2)}. Higher values mean a "brighter" or "sharper" sound.
+- Spectral Flux (Rate of Change): ${spectralFlux.toFixed(2)}. Higher values mean the sound's timbre is changing rapidly.
 
 Listen to the entire track and analyze its emotional arc, dynamics, and rhythm. Your task is to translate this audio experience into a thrilling rollercoaster ride blueprint.
 
@@ -108,7 +112,7 @@ const fileToGenerativePart = async (file: File) => {
   };
 };
 
-export const generateRideBlueprint = async (audioFile: File, duration: number, bpm: number, energy: number): Promise<RideBlueprint> => {
+export const generateRideBlueprint = async (audioFile: File, duration: number, bpm: number, energy: number, spectralCentroid: number, spectralFlux: number): Promise<RideBlueprint> => {
   // Add a new function to validate the API key before making the API call
   const validateApiKey = () => {
     if (!config.apiKey || config.apiKey.trim() === '') {
@@ -124,7 +128,7 @@ export const generateRideBlueprint = async (audioFile: File, duration: number, b
   
   try {
     const audioPart = await fileToGenerativePart(audioFile);
-    const textPart = { text: PROMPT_TEXT(duration, bpm, energy) };
+    const textPart = { text: PROMPT_TEXT(duration, bpm, energy, spectralCentroid, spectralFlux) };
 
     const response = await ai.models.generateContent({
         model: model,

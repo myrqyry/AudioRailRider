@@ -1,12 +1,13 @@
 
 import { Vector3 } from 'three';
 
-// Data extracted from audio analysis, now simplified to just duration.
+// Data extracted from audio analysis
 export interface AudioFeatures {
   duration: number;
   bpm: number;
   energy: number;
-  // Loudness, spectral centroid, and peaks are now analyzed by Gemini.
+  spectralCentroid: number;
+  spectralFlux: number;
 }
 
 // An individual segment of the rollercoaster track as defined by the AI

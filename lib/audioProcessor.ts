@@ -31,30 +31,42 @@ export const analyzeAudio = async (audioFile: File): Promise<AudioFeatures> => {
   const bpmCandidates = await analyzeFullBuffer(audioBuffer);
   const bpm = bpmCandidates.length > 0 ? bpmCandidates[0].tempo : 120;
 
-  // Energy Analysis
+  // Detailed audio analysis using Meyda
   const channelData = audioBuffer.getChannelData(0);
-  Meyda.bufferSize = 512;
+  Meyda.bufferSize = 1024; // A larger buffer size can give more stable results for spectral features
+
   let energy = 0;
-  let count = 0;
+  let spectralCentroid = 0;
+  let spectralFlux = 0;
+  let frameCount = 0;
+
+  const featuresToExtract = ['energy', 'spectralCentroid', 'spectralFlux'];
+
   for (let i = 0; i < channelData.length; i += Meyda.bufferSize) {
       const frame = channelData.slice(i, i + Meyda.bufferSize);
       if (frame.length === Meyda.bufferSize) {
-          const features = Meyda.extract('energy', frame);
+          const features = Meyda.extract(featuresToExtract, frame);
           energy += features.energy;
-          count++;
+          spectralCentroid += features.spectralCentroid;
+          spectralFlux += features.spectralFlux;
+          frameCount++;
       }
   }
-  const averageEnergy = count > 0 ? energy / count : 0;
-  // Normalize energy to a 0-1 scale (this is a rough approximation)
-  const normalizedEnergy = Math.min(averageEnergy / 10, 1);
 
+  const avgEnergy = frameCount > 0 ? energy / frameCount : 0;
+  const avgSpectralCentroid = frameCount > 0 ? spectralCentroid / frameCount : 0;
+  const avgSpectralFlux = frameCount > 0 ? spectralFlux / frameCount : 0;
+
+  // Normalize energy to a 0-1 scale (this is a rough approximation)
+  const normalizedEnergy = Math.min(avgEnergy / 10, 1);
 
   await audioContext.close();
 
-  // Gemini now handles the deep analysis. We only need the duration for the prompt context.
   return {
     duration: audioBuffer.duration,
     bpm: bpm,
-    energy: normalizedEnergy
+    energy: normalizedEnergy,
+    spectralCentroid: avgSpectralCentroid,
+    spectralFlux: avgSpectralFlux,
   };
 };
