@@ -20,6 +20,7 @@ interface AppState {
         resetApp: () => void;
         startRide: () => void;
         handleRideFinish: () => void;
+        startRideAgain: () => void;
     };
 }
 
@@ -34,8 +35,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         setTrackData: (data: TrackData | null) => set({ trackData: data }),
         setErrorMessage: (error: string) => set({ errorMessage: error, status: AppStatus.Error }),
         setAudioFile: (file: File) => {
-            set({ audioFile: file });
-            runAudioProcessingWorkflow(file); // Trigger the workflow
+            // Only update the state. Do not trigger the workflow here.
+            set({ audioFile: file, status: AppStatus.Idle });
         },
         startRide: () => {
             if (get().status === AppStatus.Ready && get().trackData && get().audioFile) {
@@ -52,7 +53,14 @@ export const useAppStore = create<AppState>((set, get) => ({
             });
         },
         handleRideFinish: () => {
-            get().actions.resetApp();
+            if (get().status === AppStatus.Riding) {
+                set({ status: AppStatus.Finished, statusMessage: "Your journey is complete." });
+            }
+        },
+        startRideAgain: () => {
+            if (get().status === AppStatus.Finished && get().trackData && get().audioFile) {
+                set({ status: AppStatus.Riding });
+            }
         },
     }
 }));

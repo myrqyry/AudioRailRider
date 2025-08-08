@@ -1,15 +1,6 @@
 
 import { Vector3 } from 'three';
 
-// Data extracted from audio analysis
-export interface AudioFeatures {
-  duration: number;
-  bpm: number;
-  energy: number;
-  spectralCentroid: number;
-  spectralFlux: number;
-}
-
 // An individual segment of the rollercoaster track as defined by the AI
 export interface TrackSegment {
   component: 'climb' | 'drop' | 'turn' | 'loop' | 'barrelRoll';
@@ -39,6 +30,7 @@ export enum AppStatus {
   Generating = 'GENERATING',
   Ready = 'READY',
   Riding = 'RIDING',
+  Finished = 'FINISHED',
   Error = 'ERROR',
 }
 

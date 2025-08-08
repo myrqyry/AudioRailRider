@@ -24,13 +24,8 @@ Here are the available track components:
   - 'length': The forward distance covered during the roll (e.g., 100 to 200).
 `;
 
-const PROMPT_TEXT = (duration: number, bpm: number, energy: number, spectralCentroid: number, spectralFlux: number) => `
-You have been given an audio file with the following audio analysis:
-- Duration: ${duration.toFixed(0)} seconds
-- Tempo: ${bpm.toFixed(0)} BPM
-- Overall Energy: ${energy.toFixed(2)} (0 to 1 scale)
-- Spectral Centroid (Brightness): ${spectralCentroid.toFixed(2)}. Higher values mean a "brighter" or "sharper" sound.
-- Spectral Flux (Rate of Change): ${spectralFlux.toFixed(2)}. Higher values mean the sound's timbre is changing rapidly.
+const PROMPT_TEXT = (duration: number) => `
+You have been given an audio file that is ${duration.toFixed(0)} seconds long.
 
 Listen to the entire track and analyze its emotional arc, dynamics, and rhythm. Your task is to translate this audio experience into a thrilling rollercoaster ride blueprint.
 
@@ -112,7 +107,7 @@ const fileToGenerativePart = async (file: File) => {
   };
 };
 
-export const generateRideBlueprint = async (audioFile: File, duration: number, bpm: number, energy: number, spectralCentroid: number, spectralFlux: number): Promise<RideBlueprint> => {
+export const generateRideBlueprint = async (audioFile: File, duration: number): Promise<RideBlueprint> => {
   // Add a new function to validate the API key before making the API call
   const validateApiKey = () => {
     if (!config.apiKey || config.apiKey.trim() === '') {
@@ -128,7 +123,7 @@ export const generateRideBlueprint = async (audioFile: File, duration: number, b
   
   try {
     const audioPart = await fileToGenerativePart(audioFile);
-    const textPart = { text: PROMPT_TEXT(duration, bpm, energy, spectralCentroid, spectralFlux) };
+    const textPart = { text: PROMPT_TEXT(duration) };
 
     const response = await ai.models.generateContent({
         model: model,
@@ -141,7 +136,6 @@ export const generateRideBlueprint = async (audioFile: File, duration: number, b
     });
 
     const jsonText = response.text;
-    console.log("Raw Gemini API response:", jsonText); // Log raw response before parsing
     if (!jsonText) {
         throw new Error("The AI returned an empty response. Please try a different song.");
     }
@@ -153,14 +147,7 @@ export const generateRideBlueprint = async (audioFile: File, duration: number, b
           throw new Error("The AI returned an invalid blueprint structure. This can happen with very unusual songs. Please try another one.");
       }
 
-      console.time("[GeminiService] Total track sanitization time");
-      blueprint.track.forEach((segment: any, idx: number) => {
-        const segmentStartTime = performance.now();
-        const originalSegment = JSON.parse(JSON.stringify(segment)); // Deep copy for before state
-        
-        // Log original segment details for all types
-        console.log(`[GeminiService Debug] Segment #${idx} (component: ${segment.component}) before sanitization:`, originalSegment);
-
+      blueprint.track.forEach((segment: any) => {
         // Apply specific sanitization rules
         if (segment.component === 'barrelRoll') {
           let rawRotations = segment.rotations;
@@ -189,12 +176,7 @@ export const generateRideBlueprint = async (audioFile: File, duration: number, b
         if (typeof segment.audioSyncPoint !== 'number' || isNaN(segment.audioSyncPoint)) {
           segment.audioSyncPoint = 0;
         }
-
-        // Log sanitized segment details for all types
-        console.log(`[GeminiService Debug] Segment #${idx} (component: ${segment.component}) after sanitization:`, segment);
-        console.log(`[GeminiService Debug] Segment #${idx} processing time: ${(performance.now() - segmentStartTime).toFixed(2)}ms`);
       });
-      console.timeEnd("[GeminiService] Total track sanitization time");
       
       return blueprint as RideBlueprint;
     } catch (error) {
