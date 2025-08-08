@@ -1,20 +1,6 @@
 
-import { AudioFeatures } from '../types';
-import Meyda from 'meyda';
-import { analyzeFullBuffer } from 'realtime-bpm-analyzer';
-
-if (typeof window === 'undefined') {
-  // This avoids errors during server-side rendering or in non-browser environments.
-  (globalThis as any).AudioContext = class AudioContext {} as any;
-}
-
-/**
- * This function is simplified to only extract audio duration using the Web Audio API.
- * The full, deep analysis of the audio is now performed by the Gemini API.
- * @param audioFile The audio file to analyze.
- * @returns A promise that resolves to an object containing the audio's duration in seconds.
- */
-export const analyzeAudio = async (audioFile: File): Promise<AudioFeatures> => {
+// Simplified to only get duration, which is fast.
+export const analyzeAudio = async (audioFile: File): Promise<{ duration: number }> => {
   const audioContext = new AudioContext();
   const arrayBuffer = await audioFile.arrayBuffer();
   let audioBuffer: AudioBuffer | null = null;

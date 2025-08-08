@@ -8,6 +8,7 @@ interface UseAudioAnalysisProps {
 
 export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null); // Ref for context
   const meydaAnalyzer = useRef<ReturnType<typeof Meyda.createMeydaAnalyzer> | null>(null);
   const featuresRef = useRef<any>(null);
 
@@ -25,6 +26,11 @@ export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) =
         meydaAnalyzer.current.stop();
         meydaAnalyzer.current = null;
       }
+      // Ensure context is closed when not riding
+      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+        audioContextRef.current.close();
+        audioContextRef.current = null;
+      }
       return;
     }
 
@@ -33,6 +39,7 @@ export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) =
     audioRef.current = audio;
 
     const audioContext = new AudioContext();
+    audioContextRef.current = audioContext; // Store it
     const source = audioContext.createMediaElementSource(audio);
     source.connect(audioContext.destination);
 
@@ -48,17 +55,20 @@ export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) =
 
     audio.play()
       .then(() => {
-        console.log("Audio playback started successfully.");
         meydaAnalyzer.current?.start();
       })
       .catch(e => console.error("Audio playback failed:", e));
 
     return () => {
       // This cleanup runs when the component unmounts or dependencies change
-      audio.pause();
-      URL.revokeObjectURL(audio.src);
+      if (audio) {
+        audio.pause();
+        URL.revokeObjectURL(audio.src);
+      }
       meydaAnalyzer.current?.stop();
-      audioContext.close();
+      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+        audioContextRef.current.close();
+      }
     };
   }, [audioFile, status]);
 
