@@ -1,6 +1,6 @@
 
 import React, { useRef, useEffect } from 'react';
-import { AppStatus } from './types';
+import { AppStatus } from '../types';
 import { useAppStore } from './lib/store';
 import { runAudioProcessingWorkflow } from './lib/workflow';
 import { Loader } from './components/Loader';
@@ -18,9 +18,23 @@ const App: React.FC = () => {
 
     const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
-        if (file) {
-            setAudioFile(file);
+        if (!file) return;
+
+        const allowedTypes = new Set(['audio/mpeg', 'audio/wav', 'audio/x-wav']);
+        const maxBytes = 20 * 1024 * 1024; // 20 MB (tune as needed)
+
+        if (!allowedTypes.has(file.type)) {
+            console.warn(`Unsupported file type: ${file.type}`);
+            // TODO: surface this to the user via store if desired
+            return;
         }
+        if (file.size > maxBytes) {
+            console.warn(`File too large: ${(file.size / (1024 * 1024)).toFixed(1)}MB`);
+            // TODO: surface this to the user via store if desired
+            return;
+        }
+
+        setAudioFile(file);
     };
     
     useEffect(() => {

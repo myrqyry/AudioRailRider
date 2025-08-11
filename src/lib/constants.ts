@@ -20,6 +20,32 @@ export const RIDE_CONFIG = {
     INITIAL_TRACK_SEGMENT_LENGTH: 10,
     INITIAL_TRACK_SEGMENT_SPACING: 2,
     DEFAULT_SKY_COLOR_2: '#000000',
-};
+} as const satisfies RideConfig;
 
 export const DEFAULT_SPACING = 1.0;
+
+type HexColor = `#${string}`;
+
+interface RideConfig {
+    // === Camera & Rendering ===
+    CAMERA_BASE_FOV: number;
+    CAMERA_SPEED_FOV_FACTOR: number;
+    CAMERA_MAX_FOV_BOOST: number;
+
+    // === Visual Effects ===
+    STARS_COUNT: number;
+    PARTICLE_COUNT: number;
+    PARTICLE_SPAWN_COUNT: number;
+    PARTICLE_BASE_SIZE: number;
+    PARTICLE_LIFETIME: number;
+    PARTICLE_GRAVITY: number;
+
+    // === Audio Analysis & Ride Logic ===
+    BASS_KICK_THRESHOLD: number;
+
+    // === Track Building ===
+    TRACK_SEGMENT_RESOLUTION: number;
+    INITIAL_TRACK_SEGMENT_LENGTH: number;
+    INITIAL_TRACK_SEGMENT_SPACING: number;
+    DEFAULT_SKY_COLOR_2: HexColor;
+}

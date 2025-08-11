@@ -3,7 +3,7 @@ import { analyzeAudio } from './audioProcessor';
 import { generateRideBlueprint } from '../services/geminiService';
 import { validateAndRefineBlueprint } from './trackValidator';
 import { buildTrackData } from './trackBuilder';
-import { AppStatus } from '../types';
+import { AppStatus } from '../../types';
 
 export const runAudioProcessingWorkflow = async (
   file: File,

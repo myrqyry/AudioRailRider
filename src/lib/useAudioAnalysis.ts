@@ -1,17 +1,9 @@
 import { useRef, useEffect, useState } from 'react';
-import { AppStatus } from '../types';
+import { AppStatus } from '../../types';
 
 // Import the Meyda types from our declaration file
 import type { MeydaAnalyzer } from '../types/meyda';
 
-// Declare the global Meyda object for TypeScript
-declare global {
-  interface Window {
-    // Using a more specific type for Meyda to avoid conflicts
-    Meyda: any; // Using 'any' as a last resort to resolve type conflicts
-    meydaLoaded: Promise<boolean>;
-  }
-}
 
 interface UseAudioAnalysisProps {
   audioFile: File | null;

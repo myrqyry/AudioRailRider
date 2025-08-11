@@ -1,6 +1,6 @@
 
 import * as THREE from 'three';
-import { RideBlueprint, TrackSegment, TrackData } from '../types';
+import { RideBlueprint, TrackSegment, TrackData } from '../../types';
 import { RIDE_CONFIG, DEFAULT_SPACING } from './constants';
 
 export const buildTrackData = (blueprint: RideBlueprint): TrackData => {

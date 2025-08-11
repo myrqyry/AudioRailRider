@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { RideBlueprint } from "../types";
+import { RideBlueprint } from "../../types";
 import { config } from '../config';
 import geminiConfig from '../gemini.config';
 import { analyzeAudio } from "../lib/audioProcessor";

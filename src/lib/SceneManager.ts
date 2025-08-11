@@ -2,9 +2,9 @@ import * as THREE from 'three';
 import { RIDE_CONFIG } from './constants';
 
 export class SceneManager {
-    scene: THREE.Scene;
-    camera: THREE.PerspectiveCamera;
-    renderer: THREE.WebGLRenderer;
+    readonly scene: THREE.Scene;
+    readonly camera: THREE.PerspectiveCamera;
+    readonly renderer: THREE.WebGLRenderer;
     private container: HTMLElement;
     private stars?: THREE.Points;
 

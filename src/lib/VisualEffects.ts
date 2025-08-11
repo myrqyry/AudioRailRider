@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { TrackData } from '../types';
+import { TrackData } from '../../types';
 import { RIDE_CONFIG } from './constants';
 
 const particleVertexShader = `

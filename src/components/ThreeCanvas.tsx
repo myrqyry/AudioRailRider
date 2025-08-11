@@ -1,6 +1,6 @@
 import React, { useRef, useEffect } from 'react';
 import * as THREE from 'three';
-import { AppStatus } from '../types';
+import { AppStatus } from '../../types';
 import { useAudioAnalysis } from '../lib/useAudioAnalysis';
 import { useAppStore } from '../lib/store';
 import { SceneManager } from '../lib/SceneManager';
@@ -28,40 +28,60 @@ const ThreeCanvas: React.FC = () => {
     const container = mountRef.current;
     const clock = new THREE.Clock();
 
-    const sceneManager = new SceneManager(container);
-    const rideCamera = new RideCamera(sceneManager.camera, trackData);
-    const visualEffects = new VisualEffects(sceneManager.scene, trackData);
+  const DEFAULT_PATH_SPEED = 50; // units per second
+  const audioDuration = audioRef.current?.duration;
+  const duration = (audioDuration && isFinite(audioDuration))
+    ? audioDuration
+    : trackData.path.length / DEFAULT_PATH_SPEED;
 
-    const audioDuration = audioRef.current?.duration;
-    const duration = (audioDuration && isFinite(audioDuration)) ? audioDuration : trackData.path.length / 50;
+  const sceneManager = new SceneManager(container);
+  const rideCamera = new RideCamera(sceneManager.camera, trackData);
+  const visualEffects = new VisualEffects(sceneManager.scene, trackData);
 
-    const animate = () => {
-        if (isUnmounting.current) return;
-        animationFrameId.current = requestAnimationFrame(animate);
+  const animate = () => {
+    if (isUnmounting.current) return;
+    animationFrameId.current = requestAnimationFrame(animate);
 
-        const elapsedTime = clock.getElapsedTime();
+    const elapsedTime = clock.getElapsedTime();
 
-        if (status === AppStatus.Riding && audioRef.current && audioRef.current.ended) {
-            onRideFinish();
-            return;
-        }
+    if (
+      status === AppStatus.Riding &&
+      audioRef.current &&
+      audioRef.current.ended
+    ) {
+      onRideFinish();
+      return;
+    }
 
-        const audioTime = audioRef.current?.currentTime || 0;
-        const progress = status === AppStatus.Riding ? (audioTime / duration) : ((elapsedTime * 0.05) % 1);
-        
-        rideCamera.update(progress);
-        visualEffects.update(elapsedTime, featuresRef.current, sceneManager.camera.position);
-        
-        sceneManager.render();
-    };
+    const audioTime = audioRef.current?.currentTime || 0;
+    const progress =
+      status === AppStatus.Riding
+        ? audioTime / duration
+        : (elapsedTime * 0.05) % 1;
+
+    // Wrap per-frame updates and rendering in a try/catch
+    try {
+      rideCamera.update(progress);
+      visualEffects.update(
+        elapsedTime,
+        featuresRef.current,
+        sceneManager.camera.position
+      );
+      sceneManager.render();
+    } catch (error) {
+      console.error('Error during animation frame:', error);
+      // Optionally cancel the animation on critical failures:
+      // cancelAnimationFrame(animationFrameId.current);
+    }
+  };
     
-    animate();
+  animate();
 
-    return () => {
-        isUnmounting.current = true;
-        if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
-        sceneManager.dispose();
-    };
+  return () => {
+    isUnmounting.current = true;
+    if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
+    sceneManager.dispose();
+  };
   }, [status, trackData, audioFile, onRideFinish]);
 
   return <div ref={mountRef} className={`fixed inset-0 z-0 transition-opacity duration-1000 ${status === AppStatus.Riding ? 'opacity-100' : 'opacity-50'}`} />;

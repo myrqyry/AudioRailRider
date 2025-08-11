@@ -1,4 +1,4 @@
-import { RideBlueprint, TrackSegment } from '../types';
+import { RideBlueprint, TrackSegment } from '../../types';
 
 const isIntense = (segment: TrackSegment): boolean => {
     switch (segment.component) {

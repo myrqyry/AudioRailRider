@@ -1,7 +1,7 @@
 import { jsx as _jsx } from "react/jsx-runtime";
 import { useRef, useEffect } from 'react';
 import * as THREE from 'three';
-import { AppStatus } from '../types';
+import { AppStatus } from '../../types';
 import { useAudioAnalysis } from '../lib/useAudioAnalysis';
 import { useAppStore } from '../lib/store';
 import { SceneManager } from '../lib/SceneManager';
@@ -26,8 +26,6 @@ const ThreeCanvas = () => {
         const sceneManager = new SceneManager(container);
         const rideCamera = new RideCamera(sceneManager.camera, trackData);
         const visualEffects = new VisualEffects(sceneManager.scene, trackData);
-        const audioDuration = audioRef.current?.duration;
-        const duration = (audioDuration && isFinite(audioDuration)) ? audioDuration : trackData.path.length / 50;
         const animate = () => {
             if (isUnmounting.current)
                 return;
@@ -38,7 +36,27 @@ const ThreeCanvas = () => {
                 return;
             }
             const audioTime = audioRef.current?.currentTime || 0;
-            const progress = status === AppStatus.Riding ? (audioTime / duration) : ((elapsedTime * 0.05) % 1);
+            
+            let effectiveDuration;
+            if (status === AppStatus.Riding) {
+                const currentAudioDuration = audioRef.current?.duration;
+                const computedDuration = (currentAudioDuration && isFinite(currentAudioDuration)) ? currentAudioDuration : trackData.path.length / 50;
+                const epsilon = 1e-9; // Small value to prevent division by zero
+                effectiveDuration = Math.max(epsilon, computedDuration);
+            } else {
+                // For non-riding status, elapsedTime is used directly with modulo 1
+                effectiveDuration = 1; // Not directly used for progress calculation in this branch due to modulo
+            }
+
+            let progress;
+            if (status === AppStatus.Riding) {
+                progress = audioTime / effectiveDuration;
+            } else {
+                progress = (elapsedTime * 0.05) % 1;
+            }
+            // Clamp progress to [0, 1]
+            progress = Math.min(1, Math.max(0, progress));
+            
             rideCamera.update(progress);
             visualEffects.update(elapsedTime, featuresRef.current, sceneManager.camera.position);
             sceneManager.render();

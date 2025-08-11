@@ -5,14 +5,10 @@ const FALLBACK_ENERGY = 0.5;
 const FALLBACK_SPECTRAL_CENTROID = 1000;
 const FALLBACK_SPECTRAL_FLUX = 0.1;
 
-// Declare global Meyda type
+// Meyda is loaded from CDN and attached to window
 declare global {
   interface Window {
-    Meyda: {
-      createMeydaAnalyzer: (options: any) => any;
-      extract: (features: string[], buffer: Float32Array, previousBuffer?: Float32Array) => any;
-      bufferSize: number;
-    };
+    Meyda?: unknown;
   }
 }
 
@@ -143,19 +139,19 @@ export const analyzeAudio = async (audioFile: File): Promise<AudioFeatures> => {
   try {
     console.log('Meyda global object:', window.Meyda); // Debug log
     
-    if (!window.Meyda || !window.Meyda.extract) {
+    if (!window.Meyda || !(window.Meyda as any).extract) {
       throw new Error('Meyda not properly loaded. Check browser console for details.');
     }
     
     // Set buffer size
-    window.Meyda.bufferSize = MeydaBufferSize;
+    (window.Meyda as any).bufferSize = MeydaBufferSize;
     
     // Process the audio buffer in chunks
     for (let i = 0; i < channelData.length; i += MeydaBufferSize) {
       const frame = channelData.slice(i, i + MeydaBufferSize);
       if (frame.length === MeydaBufferSize) {
         // Extract features directly without creating an analyzer
-        const features = window.Meyda.extract(
+        const features = (window.Meyda as any).extract(
           ['energy', 'spectralCentroid', 'spectralFlux'],
           frame
         );
