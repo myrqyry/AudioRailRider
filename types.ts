@@ -52,3 +52,11 @@ export interface TrackData {
     rideName: string;
     moodDescription: string;
 }
+
+export interface AudioFeatures {
+ duration: number;
+ bpm: number;
+ energy: number;
+ spectralCentroid: number;
+ spectralFlux: number;
+}

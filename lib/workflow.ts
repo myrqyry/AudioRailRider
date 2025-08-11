@@ -10,12 +10,12 @@ export const runAudioProcessingWorkflow = async (file: File) => {
 
   try {
     setStatus(AppStatus.Analyzing, 'Reading audio essence...');
-    const { duration } = await analyzeAudio(file); // Only get duration
-
+    const { duration, bpm, energy, spectralCentroid, spectralFlux } = await analyzeAudio(file);
+ 
     setStatus(AppStatus.Generating, 'Translating sound into structure...');
     // Pass only the essential data to Gemini service.
-    const rawBlueprint = await generateRideBlueprint(file, duration);
-
+    const rawBlueprint = await generateRideBlueprint(file, duration, bpm, energy, spectralCentroid, spectralFlux);
+ 
     setStatus(AppStatus.Generating, 'Refining for physical plausibility...');
     const refinedBlueprint = validateAndRefineBlueprint(rawBlueprint);
 

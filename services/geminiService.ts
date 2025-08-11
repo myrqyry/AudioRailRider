@@ -25,8 +25,14 @@ Here are the available track components:
   - 'length': The forward distance covered during the roll (e.g., 100 to 200).
 `;
 
-const PROMPT_TEXT = (duration: number) => `
+const PROMPT_TEXT = (duration: number, bpm: number, energy: number, spectralCentroid: number, spectralFlux: number) => `
 You have been given an audio file that is ${duration.toFixed(0)} seconds long.
+
+Audio analysis summary:
+- BPM: ${Math.round(bpm)} BPM
+- Energy (0-1): ${energy.toFixed(2)}
+- Spectral Centroid (Hz): ${Math.round(spectralCentroid)}
+- Spectral Flux: ${spectralFlux.toFixed(3)}
 
 Listen to the entire track and analyze its emotional arc, dynamics, and rhythm. Your task is to translate this audio experience into a thrilling rollercoaster ride blueprint.
 
