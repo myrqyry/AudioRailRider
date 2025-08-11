@@ -1,5 +1,17 @@
-import { useRef, useEffect } from 'react';
-import Meyda from 'meyda';
+import { useRef, useEffect, useState } from 'react';
+import { AppStatus } from '../types';
+
+// Import the Meyda types from our declaration file
+import type { MeydaAnalyzer } from '../types/meyda';
+
+// Declare the global Meyda object for TypeScript
+declare global {
+  interface Window {
+    // Using a more specific type for Meyda to avoid conflicts
+    Meyda: any; // Using 'any' as a last resort to resolve type conflicts
+    meydaLoaded: Promise<boolean>;
+  }
+}
 
 interface UseAudioAnalysisProps {
   audioFile: File | null;
@@ -7,14 +19,36 @@ interface UseAudioAnalysisProps {
 }
 
 export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) => {
+  const [meydaReady, setMeydaReady] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null); // Ref for context
-  const meydaAnalyzer = useRef<ReturnType<typeof Meyda.createMeydaAnalyzer> | null>(null);
-  const featuresRef = useRef<any>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const meydaAnalyzer = useRef<MeydaAnalyzer | null>(null);
+  const featuresRef = useRef<Record<string, any> | null>(null);
+
+  // Wait for Meyda to be loaded
+  useEffect(() => {
+    const checkMeyda = async () => {
+      try {
+        const loaded = await window.meydaLoaded;
+        if (loaded && window.Meyda) {
+          console.log('Meyda is ready to use');
+          setMeydaReady(true);
+        } else {
+          console.error('Meyda failed to load');
+        }
+      } catch (error) {
+        console.error('Error loading Meyda:', error);
+      }
+    };
+
+    checkMeyda();
+  }, []);
 
   useEffect(() => {
+    if (!meydaReady) return;
+    
     console.log(`[useAudioAnalysis] useEffect triggered. Status: ${status}, AudioFile: ${audioFile ? audioFile.name : 'null'}`);
-    if (status !== 'Riding' || !audioFile) {
+    if (status !== AppStatus.Riding || !audioFile) {
       console.log("[useAudioAnalysis] Cleaning up audio analysis resources.");
       // Cleanup logic
       if (audioRef.current) {
@@ -24,10 +58,10 @@ export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) =
         }
         audioRef.current = null;
       }
-      if (meydaAnalyzer.current) {
+      if (meydaAnalyzer.current && typeof meydaAnalyzer.current.stop === 'function') {
         meydaAnalyzer.current.stop();
-        meydaAnalyzer.current = null;
       }
+      meydaAnalyzer.current = null;
       // Ensure context is closed when not riding
       if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
         audioContextRef.current.close();
@@ -47,16 +81,25 @@ export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) =
     source.connect(audioContext.destination);
     console.log("[useAudioAnalysis] AudioContext created and source connected.");
 
-    meydaAnalyzer.current = Meyda.createMeydaAnalyzer({
-      audioContext,
-      source,
-      bufferSize: 512,
-      featureExtractors: ['loudness', 'mfcc', 'spectralCentroid', 'rms'],
-      callback: (features) => {
-        featuresRef.current = features;
-        // console.log("[useAudioAnalysis] Meyda features extracted:", features); // Too verbose, uncomment if detailed feature logs needed
-      },
-    });
+    // Setup Meyda analyzer
+    if (window.Meyda) {
+      try {
+        // Use type assertion to tell TypeScript we know what we're doing
+        const meyda = window.Meyda as any;
+        meydaAnalyzer.current = meyda.createMeydaAnalyzer({
+          audioContext,
+          source: source,
+          bufferSize: 512,
+          featureExtractors: ['rms', 'spectralCentroid', 'spectralRolloff', 'spectralFlatness'],
+          callback: (features: any) => {
+            featuresRef.current = features;
+          },
+        });
+      } catch (error) {
+        console.error('Error creating Meyda analyzer:', error);
+      }
+    }
+
     console.log("[useAudioAnalysis] Meyda Analyzer created.");
 
     audio.play()
