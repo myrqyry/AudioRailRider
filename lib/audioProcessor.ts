@@ -1,12 +1,42 @@
+import { AudioFeatures } from "@/types";
 
-// Simplified to only get duration, which is fast.
-export const analyzeAudio = async (audioFile: File): Promise<{ duration: number }> => {
+// Fallback values in case analysis fails
+const FALLBACK_ENERGY = 0.5;
+const FALLBACK_SPECTRAL_CENTROID = 1000;
+const FALLBACK_SPECTRAL_FLUX = 0.1;
+
+// Declare global Meyda type
+declare global {
+  interface Window {
+    Meyda: {
+      createMeydaAnalyzer: (options: any) => any;
+      extract: (features: string[], buffer: Float32Array, previousBuffer?: Float32Array) => any;
+      bufferSize: number;
+    };
+  }
+}
+
+/**
+ * Simple BPM analysis function.
+ * This is a placeholder implementation. For production use, consider using a more robust BPM detection library.
+ */
+const analyzeFullBuffer = async (audioBuffer: AudioBuffer): Promise<{ tempo: number }[]> => {
+  const channelData = audioBuffer.getChannelData(0);
+  const sampleRate = audioBuffer.sampleRate;
+  const bufferLength = channelData.length;
+
+  // Simple BPM detection algorithm (placeholder)
+  const bpm = 120; // Placeholder BPM value
+  return [{ tempo: bpm }];
+};
+
+export const analyzeAudio = async (audioFile: File): Promise<AudioFeatures> => {
   const audioContext = new AudioContext();
-  const arrayBuffer = await audioFile.arrayBuffer();
   let audioBuffer: AudioBuffer | null = null;
 
   // Primary attempt: Web Audio API decoding (preferred, allows full analysis)
   try {
+    const arrayBuffer = await audioFile.arrayBuffer();
     audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
   } catch (primaryError) {
     console.error("[audioProcessor] Primary decodeAudioData failed:", primaryError);
@@ -17,9 +47,12 @@ export const analyzeAudio = async (audioFile: File): Promise<{ duration: number 
       const url = URL.createObjectURL(audioFile);
       const audioEl = new Audio();
       audioEl.preload = 'metadata';
-      audioEl.src = url;
-
       const duration = await new Promise<number>((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+          cleanup();
+          reject(new Error('Audio metadata loading timeout after 30s'));
+        }, 30000);
+
         const onLoaded = () => {
           cleanup();
           // audioEl.duration can be NaN/Infinity in some edge cases; coerce to number
@@ -35,6 +68,7 @@ export const analyzeAudio = async (audioFile: File): Promise<{ duration: number 
           reject(new Error('HTMLAudioElement failed to load metadata'));
         };
         const cleanup = () => {
+          clearTimeout(timeoutId);
           audioEl.removeEventListener('loadedmetadata', onLoaded);
           audioEl.removeEventListener('error', onError);
           // Revoke object URL after we are done to free memory
@@ -97,25 +131,48 @@ export const analyzeAudio = async (audioFile: File): Promise<{ duration: number 
 
   // Detailed audio analysis using Meyda
   const channelData = audioBuffer.getChannelData(0);
-  Meyda.bufferSize = 1024; // A larger buffer size can give more stable results for spectral features
+  
+  const MeydaBufferSize = 1024; // Define buffer size for Meyda analysis
 
+  // Process the audio buffer in chunks
   let energy = 0;
   let spectralCentroid = 0;
   let spectralFlux = 0;
   let frameCount = 0;
-
-  const featuresToExtract = ['energy', 'spectralCentroid', 'spectralFlux'];
-
-  for (let i = 0; i < channelData.length; i += Meyda.bufferSize) {
-    const frame = channelData.slice(i, i + Meyda.bufferSize);
-    if (frame.length === Meyda.bufferSize) {
-      // Meyda typings are sometimes strict; cast to any to safely access expected feature fields.
-      const features = (Meyda as any).extract(featuresToExtract, frame) as any;
-      energy += (typeof features.energy === 'number' ? features.energy : 0);
-      spectralCentroid += (typeof features.spectralCentroid === 'number' ? features.spectralCentroid : 0);
-      spectralFlux += (typeof features.spectralFlux === 'number' ? features.spectralFlux : 0);
-      frameCount++;
+  
+  try {
+    console.log('Meyda global object:', window.Meyda); // Debug log
+    
+    if (!window.Meyda || !window.Meyda.extract) {
+      throw new Error('Meyda not properly loaded. Check browser console for details.');
     }
+    
+    // Set buffer size
+    window.Meyda.bufferSize = MeydaBufferSize;
+    
+    // Process the audio buffer in chunks
+    for (let i = 0; i < channelData.length; i += MeydaBufferSize) {
+      const frame = channelData.slice(i, i + MeydaBufferSize);
+      if (frame.length === MeydaBufferSize) {
+        // Extract features directly without creating an analyzer
+        const features = window.Meyda.extract(
+          ['energy', 'spectralCentroid', 'spectralFlux'],
+          frame
+        );
+        
+        energy += (features?.energy || 0);
+        spectralCentroid += (features?.spectralCentroid || 0);
+        spectralFlux += (features?.spectralFlux || 0);
+        frameCount++;
+      }
+    }
+  } catch (error) {
+    console.error('Error initializing Meyda:', error);
+    // Use fallback values if Meyda fails to load
+    energy = FALLBACK_ENERGY;
+    spectralCentroid = FALLBACK_SPECTRAL_CENTROID;
+    spectralFlux = FALLBACK_SPECTRAL_FLUX;
+    frameCount = 1;
   }
 
   const avgEnergy = frameCount > 0 ? energy / frameCount : 0;

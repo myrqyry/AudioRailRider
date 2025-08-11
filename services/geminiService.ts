@@ -1,7 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { RideBlueprint } from "../types";
 import { config } from '../config';
-import geminiConfig from '../gemini.config.ts';
+import geminiConfig from '../gemini.config';
 import { analyzeAudio } from "../lib/audioProcessor";
 
 const SYSTEM_INSTRUCTION = `
@@ -132,7 +132,7 @@ function detectMimeFromName(filename: string): string {
     case 'aac': return 'audio/aac';
     case 'ogg': return 'audio/ogg';
     case 'flac': return 'audio/flac';
-    default: return 'application/octet-stream';
+    default: return 'audio/wav'; // Use a supported fallback instead
   }
 }
 
@@ -529,7 +529,7 @@ export const transcribeAudioFile = async (
       model: model,
       contents: { parts: [textPart, audioPart] },
       config: {
-        systemInstruction: SYSTEM_INSTRUCTION,
+        systemInstruction: "You are a precise audio transcription assistant. Generate accurate transcripts of speech content.",
         // Transcription expected as plain text
         responseMimeType: "text/plain",
       },

@@ -53,9 +53,12 @@ function detectMimeFromName(filename) {
   }
 
   const stat = fs.statSync(resolved);
+  if (!stat.isFile()) {
+    console.error('Path is not a regular file:', resolved);
+    process.exit(4);
+  }
   const size = stat.size;
   const name = path.basename(resolved);
-
   // Try to infer MIME from extension (this mirrors prepareAudioPart fallback).
   const detectedMime = detectMimeFromName(name);
 
@@ -77,16 +80,22 @@ function detectMimeFromName(filename) {
   // Additional heuristic: print a guess for file.type if available via simple "magic" check (very limited)
   // We'll try to read the first bytes to detect an MP3 frame header or ID3 tag
   try {
-    const fd = fs.openSync(resolved, 'r');
+    let fd;
     const header = Buffer.alloc(16);
-    fs.readSync(fd, header, 0, 16, 0);
-    fs.closeSync(fd);
+    try {
+      fd = fs.openSync(resolved, 'r');
+      fs.readSync(fd, header, 0, 16, 0);
+    } finally {
+      if (fd !== undefined) {
+        try { fs.closeSync(fd); } catch {}
+      }
+    }
 
     const headerStr = header.toString('utf8', 0, 3);
     if (headerStr === 'ID3') {
       console.log('Header heuristic: ID3 tag detected (likely MP3)');
     } else {
-      // Check for MP3 frame sync (0xFF 0xFB) at start
+      // Check for MP3 11-bit frame sync (0xFFE) at start
       if (header[0] === 0xFF && (header[1] & 0xE0) === 0xE0) {
         console.log('Header heuristic: MP3 frame sync detected (likely MP3)');
       } else {

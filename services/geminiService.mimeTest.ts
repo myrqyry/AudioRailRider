@@ -12,6 +12,7 @@
  */
 
 import { prepareAudioPart } from './geminiService';
+import { GoogleGenAI } from '@google/genai'; // Regular import
 
 type MockFileLike = {
   name: string;
@@ -42,10 +43,152 @@ const mockAi = {
   },
 };
 
+class MockAIClient extends (GoogleGenAI as any) {
+  files = {
+    async upload({ file, config }: { file: any; config?: { mimeType?: string } }) {
+      await new Promise((r) => setTimeout(r, 10));
+      return { uri: `file://uploaded/${file.name}`, mimeType: config?.mimeType ?? file.type ?? 'application/octet-stream' };
+    },
+    list: () => {},
+    download: () => {},
+    listInternal: () => {},
+    delete: () => {},
+    downloadInternal: () => {},
+  };
+
+  // Mock other properties as needed
+protected apiClient = {
+  clientOptions: {},
+  baseUrlFromProjectLocation: () => "",
+  normalizeAuthParameters: () => {},
+  isVertexAI: () => false,
+  getApiKey: () => "",
+  getProject: () => "",
+  getLocation: () => "",
+  getApiVersion: () => "",
+  getHeaders: () => {},
+  getWebsocketBaseUrl: () => "",
+  getBaseUrl: () => "",
+  getRequestUrl: () => "",
+  getRequestUrlInternal: () => "",
+  getBaseResourcePath: () => "",
+  setBaseUrl: () => {},
+  constructUrl: () => "",
+  shouldPrependVertexProjectPath: () => false,
+  request: () => {},
+  // Added missing methods
+  patchHttpOptions: () => {},
+  requestStream: () => {},
+  includeExtraHttpOptionsToRequestInit: () => {},
+  unaryApiCall: () => {},
+  getFullUrl: () => "",
+  getAuthHeaders: () => {},
+  isRetryableError: () => false,
+  retryRequest: () => {},
+  processHttpResponse: () => {}
+};
+  protected vertexai = false;
+  protected models = {
+    apiClient: {},
+    generateContent: () => {},
+    maybeMoveToResponseJsonSchem: () => {},
+    generateContentStream: () => {},
+    list: () => {},
+    get: () => {},
+    delete: () => {},
+    tune: () => {},
+    listInternal: () => {},
+    getInternal: () => {},
+    deleteInternal: () => {},
+    tuneInternal: () => {},
+    processParamsMaybeAddMcpUsage: () => {},
+    initAfcToolsMap: () => {},
+    processAfcStream: () => {},
+    generateImages: () => {},
+    editImage: () => {},
+    upscaleImage: () => {},
+    generateVideos: () => {},
+    generateContentInternal: () => {},
+  };
+  protected live = {
+    apiClient: {},
+    auth: {},
+    webSocketFactory: {},
+    music: {},
+    connect: () => {},
+    isCallableTool: () => false,
+  };
+  protected batches = {
+    apiClient: {},
+    create: () => {},
+    list: () => {},
+    createInternal: () => {},
+    listInternal: () => {},
+    get: () => {},
+    delete: () => {},
+    getInternal: () => {},
+    deleteInternal: () => {},
+    cancel: () => {},
+  };
+  protected chats = {
+    modelsModule: {},
+    apiClient: {},
+    create: () => {},
+    list: () => {},
+    createInternal: () => {},
+    listInternal: () => {},
+    get: () => {},
+    delete: () => {},
+    getInternal: () => {},
+    deleteInternal: () => {},
+  };
+  protected caches = {
+    apiClient: {},
+    list: () => {},
+    create: () => {},
+    get: () => {},
+    delete: () => {},
+    listInternal: () => {},
+    createInternal: () => {},
+    getInternal: () => {},
+    deleteInternal: () => {},
+    update: () => {},
+  };
+  protected operations = {
+    apiClient: {},
+    getVideosOperation: () => {},
+    get: () => {},
+    getVideosOperationInternal: () => {},
+    fetchPredictVideosOperationInternal: () => {},
+    getInternal: () => {},
+  };
+  protected authTokens = {
+    apiClient: {},
+    create: () => {},
+    list: () => {},
+    createInternal: () => {},
+    listInternal: () => {},
+    get: () => {},
+    delete: () => {},
+    getInternal: () => {},
+    deleteInternal: () => {},
+  };
+  protected tunings = {
+    apiClient: {},
+    get: () => {},
+    list: () => {},
+    tune: () => {},
+    getInternal: () => {},
+    listInternal: () => {},
+    tuneInternal: () => {},
+    tuneMldevInternal: () => {},
+  };
+}
+
 async function runTestCase(testName: string, file: MockFileLike) {
   try {
-    const part = await prepareAudioPart((mockAi as any), (file as any));
-    const mode = (part as any).inlineData ? 'inline' : (part as any).fileData ? 'upload' : 'unknown';
+    const part = await prepareAudioPart(mockAi as any, file as File);
+    const mode = 'inlineData' in part ? 'inline' : 'fileData' in part ? 'upload' : 'unknown';
     console.log(`[PASS] ${testName} => accepted. Mode: ${mode}. Detected mime (returned):`, (part as any).fileData?.mimeType ?? (part as any).inlineData?.mimeType);
     return { ok: true, mode, part };
   } catch (err: any) {
@@ -96,12 +239,19 @@ async function runTestCase(testName: string, file: MockFileLike) {
     console.log(`${s.ok ? '[OK] ' : '[ERR]'} ${s.name} ${s.info ? JSON.stringify(s.info) : ''}`);
   }
 
-  const allPassed = summary.every((s) => s.ok);
-  console.log('\nAll tests passed:', allPassed);
-  if (!allPassed) {
-    console.log('Note: Failures are expected for unsupported MIME types and mismatches where file.type takes precedence.');
-    process.exitCode = 1;
-  } else {
-    process.exitCode = 0;
-  }
+  // Separate positive and negative test expectations
+  const positiveTests = summary.filter(
+    s => s.name.startsWith('supported-mime') || s.name.startsWith('ext-fallback')
+  );
+  const negativeTests = summary.filter(s => !positiveTests.includes(s));
+  
+  const positivesPassed = positiveTests.every(s => s.ok);
+  const negativesPassed = negativeTests.every(s => !s.ok); // these should fail
+  
+  const allTestsBehavedCorrectly = positivesPassed && negativesPassed;
+  console.log('\nAll positive tests passed:', positivesPassed);
+  console.log('All negative tests failed as expected:', negativesPassed);
+  console.log('Overall test result:', allTestsBehavedCorrectly ? 'PASS' : 'FAIL');
+  
+  process.exitCode = allTestsBehavedCorrectly ? 0 : 1;
 })();

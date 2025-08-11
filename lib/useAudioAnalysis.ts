@@ -70,9 +70,12 @@ export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) =
     return () => {
       console.log("[useAudioAnalysis] Running cleanup on unmount/dependency change.");
       // This cleanup runs when the component unmounts or dependencies change
-      if (audio) {
-        audio.pause();
-        URL.revokeObjectURL(audio.src);
+      if (audioRef.current) {
+        audioRef.current.pause();
+        if (audioRef.current.src) {
+          URL.revokeObjectURL(audioRef.current.src);
+        }
+        audioRef.current = null;
       }
       meydaAnalyzer.current?.stop();
       if (audioContextRef.current && audioContextRef.current.state !== 'closed') {

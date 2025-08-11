@@ -2,6 +2,7 @@
 // Node-based diagnostic to mimic prepareAudioPart's MIME detection + inline/upload decision.
 // This does NOT call any network APIs and is safe to run locally.
 // Usage: node scripts/check_mp3.cjs "/path/to/file.mp3"
+// @ts-nocheck - This file is CommonJS and doesn't need TypeScript checking
 
 const fs = require('fs');
 const path = require('path');
@@ -52,7 +53,18 @@ function detectMimeFromName(filename) {
     process.exit(3);
   }
 
-  const stat = fs.statSync(resolved);
+  let stat;
+  try {
+    stat = fs.statSync(resolved);
+  } catch (err) {
+    console.error('Unable to stat path:', resolved, '-', err.message);
+    process.exit(3);
+  }
+  if (!stat.isFile()) {
+    console.error('Path is not a regular file:', resolved);
+    process.exit(3);
+  }
+
   const size = stat.size;
   const name = path.basename(resolved);
 
@@ -65,36 +77,25 @@ function detectMimeFromName(filename) {
   console.log('Size (bytes):', size);
   console.log('Size (MB):', (size / (1024 * 1024)).toFixed(2));
   console.log('Detected MIME (from extension):', detectedMime);
-  console.log('Is supported MIME according to SUPPORTED_AUDIO_MIME_TYPES?:', SUPPORTED_AUDIO_MIME_TYPES.has(detectedMime));
-  console.log('Max inline bytes threshold:', MAX_INLINE_BYTES, `(${(MAX_INLINE_BYTES / (1024*1024)).toFixed(2)} MB)`);
-
-  if (size <= MAX_INLINE_BYTES) {
-    console.log('Decision: INLINE (would use inlineAudioPartFromFile -> FileReader base64 path)');
-  } else {
-    console.log('Decision: UPLOAD (would call ai.files.upload and expect { uri, mimeType } )');
-  }
-
-  // Additional heuristic: print a guess for file.type if available via simple "magic" check (very limited)
-  // We'll try to read the first bytes to detect an MP3 frame header or ID3 tag
+  let fd;
+  const header = Buffer.alloc(16);
   try {
-    const fd = fs.openSync(resolved, 'r');
-    const header = Buffer.alloc(16);
-    fs.readSync(fd, header, 0, 16, 0);
-    fs.closeSync(fd);
-
+    fd = fs.openSync(resolved, 'r');
+    const bytesRead = fs.readSync(fd, header, 0, header.length, 0);
     const headerStr = header.toString('utf8', 0, 3);
-    if (headerStr === 'ID3') {
+    if (bytesRead >= 3 && headerStr === 'ID3') {
       console.log('Header heuristic: ID3 tag detected (likely MP3)');
+    } else if (bytesRead >= 2 && header[0] === 0xFF && (header[1] & 0xE0) === 0xE0) {
+      console.log('Header heuristic: MP3 frame sync detected (likely MP3)');
     } else {
-      // Check for MP3 frame sync (0xFF 0xFB) at start
-      if (header[0] === 0xFF && (header[1] & 0xE0) === 0xE0) {
-        console.log('Header heuristic: MP3 frame sync detected (likely MP3)');
-      } else {
-        console.log('Header heuristic: no ID3 or MP3 frame sync found in first 16 bytes (this is not definitive)');
-      }
+      console.log('Header heuristic: no ID3 or MP3 frame sync found in first 16 bytes (this is not definitive)');
     }
   } catch (err) {
     console.error('Failed to read file header for heuristic detection:', err);
+  } finally {
+    if (typeof fd === 'number') {
+      try { fs.closeSync(fd); } catch (_) {}
+    }
   }
 
   console.log('--- End diagnostic ---');
