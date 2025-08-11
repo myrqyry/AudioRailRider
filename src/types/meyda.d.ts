@@ -2,10 +2,10 @@
 
 // Define the MeydaAnalyzer type
 type MeydaAnalyzer = {
-  get: (data?: Float32Array) => any;
+  get: (features?: string | string[]) => any;
   start: () => void;
   stop: () => void;
-  connect: () => void;
+  connect: (destination?: AudioNode) => void;
   disconnect: () => void;
 };
 
@@ -15,19 +15,13 @@ declare global {
     Meyda: {
       createMeydaAnalyzer: (options: {
         audioContext: AudioContext;
-        source?: MediaElementAudioSourceNode | null;
+        source?: AudioNode | null;
         bufferSize?: number;
-        featureExtractors: string[];
+        featureExtractors?: string[];
         callback?: (features: any) => void;
-        windowingFunction?: 'boxcar' | 'hann' | 'triangle' | 'hamming';
+        windowingFunction?: string;
         fftSize?: number;
-      }) => {
-        get: (data?: Float32Array) => any;
-        start: () => void;
-        stop: () => void;
-        connect: () => void;
-        disconnect: () => void;
-      };
+      }) => MeydaAnalyzer;
       extract: (feature: string | string[], signal: Float32Array, previousSignal?: Float32Array) => any;
       bufferSize: number;
       sampleRate: number;

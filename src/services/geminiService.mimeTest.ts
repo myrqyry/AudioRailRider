@@ -34,14 +34,6 @@ const SUPPORTED_MIMES = Array.from(new Set(Object.values(SUPPORTED_EXT_TO_MIME))
 
 const LARGE_FILE_SIZE = 25 * 1024 * 1024; // 25MB to force upload path
 
-const mockAi = {
-  files: {
-    async upload({ file, config }: { file: any; config?: { mimeType?: string } }) {
-      await new Promise((r) => setTimeout(r, 10));
-      return { uri: `file://uploaded/${file.name}`, mimeType: config?.mimeType ?? file.type ?? 'application/octet-stream' };
-    },
-  },
-};
 
 class MockAIClient extends (GoogleGenAI as any) {
   files = {

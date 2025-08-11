@@ -75,11 +75,23 @@ export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) =
 
     // Setup Meyda analyzer
     if (window.Meyda) {
-      try {
-        // Use type assertion to tell TypeScript we know what we're doing
-        const meyda = window.Meyda as any;
-        meydaAnalyzer.current = meyda.createMeydaAnalyzer({
-          audioContext,
+    const audioContext = new AudioContext();
+    // Resume context if it's suspended due to browser autoplay policy
+    if (audioContext.state === 'suspended') {
+      audioContext.resume().catch(e =>
+        console.error('[useAudioAnalysis] Failed to resume AudioContext:', e)
+      );
+    }
+    audioContextRef.current = audioContext; // Store it
+    const source = audioContext.createMediaElementSource(audio);
+    source.connect(audioContext.destination);
+    console.log("[useAudioAnalysis] AudioContext created and source connected.");
+      );
+    }
+    audioContextRef.current = audioContext; // Store it
+    const source = audioContext.createMediaElementSource(audio);
+    source.connect(audioContext.destination);
+    console.log("[useAudioAnalysis] AudioContext created and source connected.");
           source: source,
           bufferSize: 512,
           featureExtractors: ['rms', 'spectralCentroid', 'spectralRolloff', 'spectralFlatness'],

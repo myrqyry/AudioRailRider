@@ -1,13 +1,17 @@
 export type AppStatus = 'idle' | 'loading' | 'processing' | 'error' | 'success' | 'ready' | 'finished' | 'analyzing' | 'generating' | 'riding';
-export const AppStatus = {
-  Idle: 'idle' as AppStatus,
-  Loading: 'loading' as AppStatus,
-  Processing: 'processing' as AppStatus,
-  Error: 'error' as AppStatus,
-  Success: 'success' as AppStatus,
-  Ready: 'ready' as AppStatus,
-  Finished: 'finished' as AppStatus,
-  Analyzing: 'analyzing' as AppStatus,
-  Generating: 'generating' as AppStatus,
-  Riding: 'riding' as AppStatus,
+// src/types/index.d.ts
+
+export declare const AppStatus: {
+  readonly Idle: 'idle';
+  readonly Loading: 'loading';
+  readonly Processing: 'processing';
+  readonly Error: 'error';
+  readonly Success: 'success';
+  readonly Ready: 'ready';
+  readonly Finished: 'finished';
+  readonly Analyzing: 'analyzing';
+  readonly Generating: 'generating';
+  readonly Riding: 'riding';
 };
+
+export type AppStatus = typeof AppStatus[keyof typeof AppStatus];

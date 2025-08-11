@@ -110,7 +110,12 @@ export const buildTrackData = (blueprint: RideBlueprint): TrackData => {
                     );
                     const up = new THREE.Vector3(0, Math.cos(loopAngle), -Math.sin(loopAngle));
                     
-                    const matrix = new THREE.Matrix4().lookAt(currentPos, loopCenter, currentUp);
+                    const matrix = new THREE.Matrix4().makeBasis(
+                        currentDir.clone().cross(currentUp).normalize(), // right
+                        currentUp,                                        // up  
+                        currentDir                                        // forward
+                    );
+                    matrix.setPosition(currentPos);
                     point.applyMatrix4(matrix);
                     up.transformDirection(matrix);
 
