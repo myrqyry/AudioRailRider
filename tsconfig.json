@@ -21,7 +21,8 @@
     },
     // "allowImportingTsExtensions": true,
     "noEmit": false,
-    "types": ["vite/client", "node"]
+    "types": ["vite/client", "node"],
+    "esModuleInterop": true
   },
   "include": ["src"]
 }

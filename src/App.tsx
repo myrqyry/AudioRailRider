@@ -1,5 +1,5 @@
 
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useCallback } from 'react';
 import { AppStatus } from '../types';
 import { useAppStore } from './lib/store';
 import { runAudioProcessingWorkflow } from './lib/workflow';
@@ -16,7 +16,7 @@ const App: React.FC = () => {
     const { setAudioFile, startRide, resetApp, startRideAgain } = useAppStore((state) => state.actions);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
-    const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         if (!file) return;
 
@@ -35,7 +35,7 @@ const App: React.FC = () => {
         }
 
         setAudioFile(file);
-    };
+    }, [setAudioFile]);
     
     useEffect(() => {
         if (status === AppStatus.Idle && fileInputRef.current) {

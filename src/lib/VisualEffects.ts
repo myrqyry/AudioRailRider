@@ -130,9 +130,11 @@ export class VisualEffects {
         const startTimes = geometry.attributes.startTime as THREE.BufferAttribute;
 
         const spawnCount = RIDE_CONFIG.PARTICLE_SPAWN_COUNT;
-        for (let i = 0; i < spawnCount; i++) {
-            const pIndex = this.particleCursor;
+        const particleCount = RIDE_CONFIG.PARTICLE_COUNT;
+        const startCursor = this.particleCursor;
 
+        for (let i = 0; i < spawnCount; i++) {
+            const pIndex = (startCursor + i) % particleCount;
             positions.setXYZ(pIndex, cameraPosition.x, cameraPosition.y, cameraPosition.z);
             velocities.setXYZ(
                 pIndex,
@@ -141,8 +143,19 @@ export class VisualEffects {
                 (Math.random() - 0.5) * 20
             );
             startTimes.setX(pIndex, elapsedTime);
+        }
 
-            this.particleCursor = (this.particleCursor + 1) % RIDE_CONFIG.PARTICLE_COUNT;
+        const endCursor = (startCursor + spawnCount) % particleCount;
+        this.particleCursor = endCursor;
+
+        if (endCursor > startCursor) {
+            positions.updateRange = { offset: startCursor * 3, count: spawnCount * 3 };
+            velocities.updateRange = { offset: startCursor * 3, count: spawnCount * 3 };
+            startTimes.updateRange = { offset: startCursor, count: spawnCount };
+        } else {
+            positions.updateRange = { offset: 0, count: -1 };
+            velocities.updateRange = { offset: 0, count: -1 };
+            startTimes.updateRange = { offset: 0, count: -1 };
         }
 
         positions.needsUpdate = true;

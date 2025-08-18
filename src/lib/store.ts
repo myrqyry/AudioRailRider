@@ -39,27 +39,47 @@ export const useAppStore = create<AppState>((set, get) => ({
             set({ audioFile: file, status: AppStatus.Idle });
         },
         startRide: () => {
-            if (get().status === AppStatus.Ready && get().trackData && get().audioFile) {
-                set({ status: AppStatus.Riding });
+            try {
+                if (get().status === AppStatus.Ready && get().trackData && get().audioFile) {
+                    set({ status: AppStatus.Riding });
+                }
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                set({ errorMessage: `Failed to start ride: ${message}`, status: AppStatus.Error });
             }
         },
         resetApp: () => {
-            set({
-                status: AppStatus.Idle,
-                errorMessage: '',
-                statusMessage: '',
-                audioFile: null,
-                trackData: null,
-            });
+            try {
+                set({
+                    status: AppStatus.Idle,
+                    errorMessage: '',
+                    statusMessage: '',
+                    audioFile: null,
+                    trackData: null,
+                });
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                set({ errorMessage: `Failed to reset app: ${message}`, status: AppStatus.Error });
+            }
         },
         handleRideFinish: () => {
-            if (get().status === AppStatus.Riding) {
-                set({ status: AppStatus.Finished, statusMessage: "Your journey is complete." });
+            try {
+                if (get().status === AppStatus.Riding) {
+                    set({ status: AppStatus.Finished, statusMessage: "Your journey is complete." });
+                }
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                set({ errorMessage: `Failed to handle ride finish: ${message}`, status: AppStatus.Error });
             }
         },
         startRideAgain: () => {
-            if (get().status === AppStatus.Finished && get().trackData && get().audioFile) {
-                set({ status: AppStatus.Riding });
+            try {
+                if (get().status === AppStatus.Finished && get().trackData && get().audioFile) {
+                    set({ status: AppStatus.Riding });
+                }
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                set({ errorMessage: `Failed to start ride again: ${message}`, status: AppStatus.Error });
             }
         },
     }

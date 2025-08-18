@@ -1,11 +1,11 @@
 
-import React from 'react';
+import React, { memo } from 'react';
 
 export interface LoaderProps {
   message: string;
 }
 
-export const Loader: React.FC<LoaderProps> = ({ message }) => {
+export const Loader: React.FC<LoaderProps> = memo(({ message }) => {
   return (
     <div
       className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm"

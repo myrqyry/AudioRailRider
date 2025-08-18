@@ -61,8 +61,12 @@ export const buildTrackData = (blueprint: RideBlueprint): TrackData => {
         switch (segment.component) {
             case 'climb':
             case 'drop': {
-                const angle = THREE.MathUtils.degToRad(segment.angle || (segment.component === 'climb' ? 15 : -40));
-                const length = segment.length || 150;
+                const angleValue = segment.angle ?? (segment.component === 'climb' ? 15 : -40);
+                const angle = THREE.MathUtils.degToRad(THREE.MathUtils.clamp(angleValue, -90, 90));
+
+                const lengthValue = segment.length ?? 150;
+                const length = Math.max(10, lengthValue);
+
                 const dir_horizontal = currentDir.clone();
                 dir_horizontal.y = 0;
                 dir_horizontal.normalize();
@@ -79,8 +83,12 @@ export const buildTrackData = (blueprint: RideBlueprint): TrackData => {
                 break;
             }
             case 'turn': {
-                const radius = segment.radius || 80;
-                const angle = THREE.MathUtils.degToRad(segment.angle || 90);
+                const radiusValue = segment.radius ?? 80;
+                const radius = Math.max(10, radiusValue);
+
+                const angleValue = segment.angle ?? 90;
+                const angle = THREE.MathUtils.degToRad(THREE.MathUtils.clamp(angleValue, -360, 360));
+
                 const direction = segment.direction === 'left' ? 1 : -1;
 
                 const turnAxis = new THREE.Vector3(0, 1, 0);
@@ -97,7 +105,8 @@ export const buildTrackData = (blueprint: RideBlueprint): TrackData => {
                 break;
             }
             case 'loop': {
-                const radius = segment.radius || 50;
+                const radiusValue = segment.radius ?? 50;
+                const radius = Math.max(10, radiusValue);
                 const loopCenter = currentPos.clone().add(currentDir.clone().multiplyScalar(radius));
                 
                 for (let i = 1; i <= resolution; i++) {
@@ -125,8 +134,11 @@ export const buildTrackData = (blueprint: RideBlueprint): TrackData => {
                 break;
             }
             case 'barrelRoll': {
-                const rotations = segment.rotations || 1;
-                const length = segment.length || 150;
+                const rotationsValue = segment.rotations ?? 1;
+                const rotations = Math.max(1, Math.round(rotationsValue));
+
+                const lengthValue = segment.length ?? 150;
+                const length = Math.max(10, lengthValue);
                 const endPos = currentPos.clone().add(currentDir.clone().multiplyScalar(length));
 
                 for (let i = 1; i <= resolution; i++) {

@@ -1,5 +1,6 @@
 import { useRef, useEffect, useState } from 'react';
 import { AppStatus } from '../../types';
+import { useAppStore } from './store';
 
 // Import the Meyda types from our declaration file
 import type { MeydaAnalyzer } from '../types/meyda';
@@ -17,6 +18,8 @@ export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) =
   const meydaAnalyzer = useRef<MeydaAnalyzer | null>(null);
   const featuresRef = useRef<Record<string, any> | null>(null);
 
+  const { setErrorMessage } = useAppStore((state) => state.actions);
+
   // Wait for Meyda to be loaded
   useEffect(() => {
     const checkMeyda = async () => {
@@ -27,110 +30,83 @@ export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) =
           setMeydaReady(true);
         } else {
           console.error('Meyda failed to load');
+          setErrorMessage('Meyda audio analysis library failed to load. Please check your internet connection and try again.');
         }
       } catch (error) {
         console.error('Error loading Meyda:', error);
+        setErrorMessage('An error occurred while loading the audio analysis library.');
       }
     };
 
     checkMeyda();
-  }, []);
+  }, [setErrorMessage]);
 
   useEffect(() => {
-    if (!meydaReady) return;
-    
-    console.log(`[useAudioAnalysis] useEffect triggered. Status: ${status}, AudioFile: ${audioFile ? audioFile.name : 'null'}`);
-    if (status !== AppStatus.Riding || !audioFile) {
-      console.log("[useAudioAnalysis] Cleaning up audio analysis resources.");
-      // Cleanup logic
+    if (!meydaReady || status !== AppStatus.Riding || !audioFile) {
       if (audioRef.current) {
         audioRef.current.pause();
-        if (audioRef.current.src) {
-          URL.revokeObjectURL(audioRef.current.src);
+        if (audioRef.current.src.startsWith('blob:')) {
+            URL.revokeObjectURL(audioRef.current.src);
         }
         audioRef.current = null;
       }
-      if (meydaAnalyzer.current && typeof meydaAnalyzer.current.stop === 'function') {
+      if (meydaAnalyzer.current) {
         meydaAnalyzer.current.stop();
+        meydaAnalyzer.current = null;
       }
-      meydaAnalyzer.current = null;
-      // Ensure context is closed when not riding
       if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-        audioContextRef.current.close();
-        audioContextRef.current = null;
+        audioContextRef.current.close().then(() => {
+            audioContextRef.current = null;
+        });
       }
       return;
     }
 
-    console.log("[useAudioAnalysis] Setting up audio analysis resources for 'Riding' status.");
-    // Setup logic
     const audio = new Audio(URL.createObjectURL(audioFile));
     audioRef.current = audio;
 
-    const audioContext = new AudioContext();
-    audioContextRef.current = audioContext; // Store it
-    const source = audioContext.createMediaElementSource(audio);
-    source.connect(audioContext.destination);
-    console.log("[useAudioAnalysis] AudioContext created and source connected.");
+    if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+    }
+    const audioContext = audioContextRef.current;
 
-    // Setup Meyda analyzer
-    if (window.Meyda) {
-    const audioContext = new AudioContext();
-    // Resume context if it's suspended due to browser autoplay policy
     if (audioContext.state === 'suspended') {
-      audioContext.resume().catch(e =>
-        console.error('[useAudioAnalysis] Failed to resume AudioContext:', e)
-      );
-    }
-    audioContextRef.current = audioContext; // Store it
-    const source = audioContext.createMediaElementSource(audio);
-    source.connect(audioContext.destination);
-    console.log("[useAudioAnalysis] AudioContext created and source connected.");
-      );
-    }
-    audioContextRef.current = audioContext; // Store it
-    const source = audioContext.createMediaElementSource(audio);
-    source.connect(audioContext.destination);
-    console.log("[useAudioAnalysis] AudioContext created and source connected.");
-          source: source,
-          bufferSize: 512,
-          featureExtractors: ['rms', 'spectralCentroid', 'spectralRolloff', 'spectralFlatness'],
-          callback: (features: any) => {
-            featuresRef.current = features;
-          },
-        });
-      } catch (error) {
-        console.error('Error creating Meyda analyzer:', error);
-      }
+      audioContext.resume().catch(e => console.error('Failed to resume AudioContext:', e));
     }
 
-    console.log("[useAudioAnalysis] Meyda Analyzer created.");
+    const source = audioContext.createMediaElementSource(audio);
+    source.connect(audioContext.destination);
+
+    if (window.Meyda) {
+      meydaAnalyzer.current = window.Meyda.createMeydaAnalyzer({
+        audioContext: audioContext,
+        source: source,
+        bufferSize: 512,
+        featureExtractors: ['loudness'],
+        callback: (features: any) => {
+          featuresRef.current = features;
+        },
+      });
+    }
 
     audio.play()
       .then(() => {
-        console.log("[useAudioAnalysis] Audio playback started successfully.");
         meydaAnalyzer.current?.start();
-        console.log("[useAudioAnalysis] Meyda Analyzer started.");
       })
-      .catch(e => console.error("[useAudioAnalysis] Audio playback failed:", e));
+      .catch(e => console.error("Audio playback failed:", e));
 
     return () => {
-      console.log("[useAudioAnalysis] Running cleanup on unmount/dependency change.");
-      // This cleanup runs when the component unmounts or dependencies change
       if (audioRef.current) {
         audioRef.current.pause();
-        if (audioRef.current.src) {
+        if (audioRef.current.src.startsWith('blob:')) {
           URL.revokeObjectURL(audioRef.current.src);
         }
-        audioRef.current = null;
       }
-      meydaAnalyzer.current?.stop();
-      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-        audioContextRef.current.close();
-        console.log("[useAudioAnalysis] AudioContext closed during cleanup.");
+      if (meydaAnalyzer.current) {
+        meydaAnalyzer.current.stop();
       }
     };
-  }, [audioFile, status]);
+  }, [audioFile, status, meydaReady]);
 
   return { audioRef, featuresRef };
 };

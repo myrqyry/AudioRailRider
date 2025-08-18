@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, memo } from 'react';
 import * as THREE from 'three';
 import { AppStatus } from '../../types';
 import { useAudioAnalysis } from '../lib/useAudioAnalysis';
@@ -79,7 +79,10 @@ const ThreeCanvas: React.FC = () => {
 
   return () => {
     isUnmounting.current = true;
-    if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
+    if (animationFrameId.current) {
+      cancelAnimationFrame(animationFrameId.current);
+    }
+    visualEffects.dispose();
     sceneManager.dispose();
   };
   }, [status, trackData, audioFile, onRideFinish]);
@@ -87,4 +90,4 @@ const ThreeCanvas: React.FC = () => {
   return <div ref={mountRef} className={`fixed inset-0 z-0 transition-opacity duration-1000 ${status === AppStatus.Riding ? 'opacity-100' : 'opacity-50'}`} />;
 };
 
-export default ThreeCanvas;
+export default memo(ThreeCanvas);

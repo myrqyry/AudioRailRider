@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { RideBlueprint } from "../../types";
+import { GeminiFileUploadResponse, GeminiListFilesResponse, GeminiFileMetadata, GeminiListFilesApiResponse, GeminiGetFileMetadataResponse, GeminiDownloadFileResponse } from "../types/gemini";
 import { config } from '../config';
 import geminiConfig from '../gemini.config';
 import { analyzeAudio } from "../lib/audioProcessor";
@@ -187,16 +188,15 @@ const inlineAudioPartFromFile = async (file: File): Promise<{ inlineData: { mime
     const durationSeconds = typeof features.duration === 'number' && isFinite(features.duration) ? features.duration : NaN;
 
     if (!isNaN(durationSeconds)) {
-      // Simple heuristic: estimate tokens from duration.
-      // NOTE: This is a coarse heuristic for planning purposes (tokens/sec chosen conservatively).
-      const TOKENS_PER_SECOND = 15; // conservative heuristic
+      const TOKENS_PER_SECOND = 15;
       const estimatedTokens = Math.ceil(durationSeconds * TOKENS_PER_SECOND);
       console.log(`[GeminiService] Audio duration estimate for '${file.name}': ${durationSeconds.toFixed(2)}s. Estimated tokens: ${estimatedTokens}`);
     } else {
-      console.debug(`[GeminiService] Could not determine duration for '${file.name}'.`);
+      console.warn(`[GeminiService] Could not determine duration for '${file.name}'.`);
     }
   } catch (err) {
-    console.debug('[GeminiService] Duration/token estimation for inline audio failed (non-fatal):', err);
+    console.error('[GeminiService] Audio analysis for token estimation failed:', err);
+    throw new Error('Failed to analyze audio for token estimation.');
   }
 
   // Return inline payload (keeps previous shape for compatibility)
@@ -211,24 +211,25 @@ const inlineAudioPartFromFile = async (file: File): Promise<{ inlineData: { mime
 // Add centralized Files API helpers to normalize SDK behavior and provide list/get/delete/download utilities.
 // These helpers wrap (ai as any).files.* calls and normalize returned shapes for the rest of the service.
 // Note: We intentionally use loose typing (any) for SDK calls because runtime SDK shapes may vary across versions.
-export const uploadFile = async (ai: GoogleGenAI, file: File, mimeType?: string) => {
+export const uploadFile = async (ai: GoogleGenAI, file: File, mimeType?: string): Promise<GeminiFileMetadata> => {
   try {
     const payload = { file, config: { mimeType } };
-    // Prefer the SDK method if available
-    const raw = await (ai as any).files.upload(payload);
-    // Normalize common shapes
-    const uri = raw?.uri || raw?.fileUri || raw?.id || raw?.name && `file://${raw.name}` || null;
-    const normalized = {
-      uri,
-      mimeType: raw?.mimeType || raw?.contentType || mimeType || (file && (file as any).type) || 'application/octet-stream',
-      name: raw?.name || file.name,
-      size: raw?.size || (file && (file as any).size) || null,
-      raw,
-    };
-    if (!normalized.uri) {
+    const raw: GeminiFileUploadResponse = await (ai as any).files.upload(payload);
+    const uri = raw?.uri || raw?.fileUri || raw?.id || (raw?.name && `file://${raw.name}`) || null;
+
+    if (!uri) {
       console.error('[GeminiService] uploadFile: upload did not return a URI', raw);
       throw new Error('Files API upload did not return a URI.');
     }
+
+    const normalized: GeminiFileMetadata = {
+      uri,
+      mimeType: raw?.mimeType || raw?.contentType || mimeType || file.type || 'application/octet-stream',
+      name: raw?.name || file.name,
+      size: raw?.size || file.size || null,
+      raw,
+    };
+
     return normalized;
   } catch (err: any) {
     console.error('[GeminiService] uploadFile failed:', err);
@@ -236,13 +237,12 @@ export const uploadFile = async (ai: GoogleGenAI, file: File, mimeType?: string)
   }
 };
 
-export const listFiles = async (ai: GoogleGenAI, opts?: { pageSize?: number; pageToken?: string }) => {
+export const listFiles = async (ai: GoogleGenAI, opts?: { pageSize?: number; pageToken?: string }): Promise<GeminiListFilesResponse> => {
   try {
     const args: any = opts ? { ...opts } : {};
-    const res = await (ai as any).files.list(args);
-    // Normalize to { files: [], nextPageToken }
-    const files = res?.files || res?.items || res?.results || [];
-    const nextPageToken = res?.nextPageToken || res?.next_page_token || null;
+    const res: GeminiListFilesApiResponse = await (ai as any).files.list(args);
+    const files: GeminiFileMetadata[] = res?.files || res?.items || res?.results || [];
+    const nextPageToken = res?.nextPageToken || res?.next_page_token || undefined;
     return { files, nextPageToken, raw: res };
   } catch (err: any) {
     console.error('[GeminiService] listFiles failed:', err);
@@ -250,18 +250,17 @@ export const listFiles = async (ai: GoogleGenAI, opts?: { pageSize?: number; pag
   }
 };
 
-export const getFileMetadata = async (ai: GoogleGenAI, fileUri: string) => {
+export const getFileMetadata = async (ai: GoogleGenAI, fileUri: string): Promise<GeminiFileMetadata | null> => {
   try {
-    const res = await (ai as any).files.get({ uri: fileUri });
-    // Some SDKs return the file object directly; others wrap it.
-    return res?.file || res || null;
+    const res: GeminiGetFileMetadataResponse = await (ai as any).files.get({ uri: fileUri });
+    return res?.file || (res as GeminiFileMetadata) || null;
   } catch (err: any) {
     console.error('[GeminiService] getFileMetadata failed:', err);
     throw err;
   }
 };
 
-export const deleteFile = async (ai: GoogleGenAI, fileUri: string) => {
+export const deleteFile = async (ai: GoogleGenAI, fileUri: string): Promise<{ success: boolean }> => {
   try {
     // Some SDKs expect { uri } others { fileUri } - try both shapes
     const res = await (ai as any).files.delete?.({ uri: fileUri }) ?? await (ai as any).files.delete?.({ fileUri }) ?? null;
@@ -272,12 +271,10 @@ export const deleteFile = async (ai: GoogleGenAI, fileUri: string) => {
   }
 };
 
-export const downloadFile = async (ai: GoogleGenAI, fileUri: string) => {
+export const downloadFile = async (ai: GoogleGenAI, fileUri: string): Promise<GeminiDownloadFileResponse | null> => {
   try {
-    // Attempt SDK download helper
-    const res = await (ai as any).files.download?.({ uri: fileUri }) ?? await (ai as any).files.download?.({ fileUri }) ?? null;
+    const res: GeminiDownloadFileResponse = await (ai as any).files.download?.({ uri: fileUri }) ?? await (ai as any).files.download?.({ fileUri }) ?? null;
     if (!res) {
-      // If SDK doesn't provide download, attempt to GET the fileUri if it's an HTTP URL
       if (typeof fileUri === 'string' && (fileUri.startsWith('http://') || fileUri.startsWith('https://'))) {
         const fetchRes = await fetch(fileUri);
         const arrayBuffer = await fetchRes.arrayBuffer();
@@ -285,19 +282,15 @@ export const downloadFile = async (ai: GoogleGenAI, fileUri: string) => {
       }
       return res;
     }
-    // If SDK returns an object with base64 'data' field, convert to Uint8Array
     if (typeof res.data === 'string') {
       try {
         const b64 = res.data.replace(/^data:.*;base64,/, '');
-        // Use a safe runtime check for Buffer to avoid TS errors when targeting both node and browser.
         const binary = (typeof Buffer !== 'undefined') ? Buffer.from(b64, 'base64') : Uint8Array.from(atob(b64), c => c.charCodeAt(0));
         return { buffer: binary, size: (binary as any).length ?? (binary as any).byteLength ?? null, raw: res };
       } catch (e) {
-        // Fallback: return raw
         return { raw: res };
       }
     }
-    // If SDK exposes arrayBuffer() or stream, return raw
     return res;
   } catch (err: any) {
     console.error('[GeminiService] downloadFile failed:', err);
