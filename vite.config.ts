@@ -7,12 +7,9 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
-      // Ensure proper resolution of Meyda
-      'meyda': 'meyda/dist/web',
     },
   },
   optimizeDeps: {
-    include: ['meyda'],
     esbuildOptions: {
       // This ensures proper handling of browser field in package.json
       mainFields: ['browser', 'module', 'main'],
