@@ -26,6 +26,14 @@ const analyzeFullBuffer = async (audioBuffer: AudioBuffer): Promise<{ tempo: num
   return [{ tempo: bpm }];
 };
 
+/**
+ * Analyzes an audio file to extract features like duration, BPM, and energy.
+ * It first attempts to use the Web Audio API for a full analysis. If that fails,
+ * it falls back to using an HTMLAudioElement to at least get the duration.
+ * @param audioFile The audio file to analyze.
+ * @returns A promise that resolves to an AudioFeatures object.
+ * @throws An error if the audio file cannot be decoded.
+ */
 export const analyzeAudio = async (audioFile: File): Promise<AudioFeatures> => {
   const audioContext = new AudioContext();
   let audioBuffer: AudioBuffer | null = null;

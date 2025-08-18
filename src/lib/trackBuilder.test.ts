@@ -1,6 +1,5 @@
 import { buildTrackData } from './trackBuilder';
 import { RideBlueprint } from '../../types';
-
 import { RIDE_CONFIG } from './constants';
 
 describe('buildTrackData', () => {

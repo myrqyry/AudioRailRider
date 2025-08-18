@@ -40,6 +40,9 @@ const particleFragmentShader = `
   }
 `;
 
+/**
+ * Manages the visual effects in the scene, including the track and particles.
+ */
 export class VisualEffects {
     private scene: THREE.Scene;
     private trackGlowMaterial: THREE.MeshStandardMaterial;
@@ -97,6 +100,12 @@ export class VisualEffects {
         this.scene.add(this.particleSystem);
     }
 
+    /**
+     * Updates the visual effects each frame.
+     * @param elapsedTime The elapsed time in seconds.
+     * @param audioFeatures The audio features for the current frame.
+     * @param cameraPosition The current position of the camera.
+     */
     update(elapsedTime: number, audioFeatures: any, cameraPosition: THREE.Vector3) {
         // Validate and update uniform values
         this.particleMaterial.uniforms.time.value = elapsedTime;
@@ -123,7 +132,7 @@ export class VisualEffects {
         }
     }
 
-    private spawnParticles(elapsedTime: number, cameraPosition: THREE.Vector3) {
+    public spawnParticles(elapsedTime: number, cameraPosition: THREE.Vector3) {
         const geometry = this.particleSystem.geometry as THREE.BufferGeometry;
         const positions = geometry.attributes.position as THREE.BufferAttribute;
         const velocities = geometry.attributes.velocity as THREE.BufferAttribute;
@@ -163,6 +172,9 @@ export class VisualEffects {
         startTimes.needsUpdate = true;
     }
 
+    /**
+     * Disposes of the visual effects and their resources.
+     */
     public dispose(): void {
         if (this.particleSystem) {
             this.scene.remove(this.particleSystem);

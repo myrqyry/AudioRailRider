@@ -211,6 +211,13 @@ const inlineAudioPartFromFile = async (file: File): Promise<{ inlineData: { mime
 // Add centralized Files API helpers to normalize SDK behavior and provide list/get/delete/download utilities.
 // These helpers wrap (ai as any).files.* calls and normalize returned shapes for the rest of the service.
 // Note: We intentionally use loose typing (any) for SDK calls because runtime SDK shapes may vary across versions.
+/**
+ * Uploads a file to the Gemini API.
+ * @param ai The GoogleGenAI instance.
+ * @param file The file to upload.
+ * @param mimeType The MIME type of the file.
+ * @returns A promise that resolves to the file metadata.
+ */
 export const uploadFile = async (ai: GoogleGenAI, file: File, mimeType?: string): Promise<GeminiFileMetadata> => {
   try {
     const payload = { file, config: { mimeType } };
@@ -237,6 +244,12 @@ export const uploadFile = async (ai: GoogleGenAI, file: File, mimeType?: string)
   }
 };
 
+/**
+ * Lists files in the Gemini API.
+ * @param ai The GoogleGenAI instance.
+ * @param opts Options for pagination.
+ * @returns A promise that resolves to a list of files.
+ */
 export const listFiles = async (ai: GoogleGenAI, opts?: { pageSize?: number; pageToken?: string }): Promise<GeminiListFilesResponse> => {
   try {
     const args: any = opts ? { ...opts } : {};
@@ -250,6 +263,12 @@ export const listFiles = async (ai: GoogleGenAI, opts?: { pageSize?: number; pag
   }
 };
 
+/**
+ * Gets the metadata for a file from the Gemini API.
+ * @param ai The GoogleGenAI instance.
+ * @param fileUri The URI of the file.
+ * @returns A promise that resolves to the file metadata.
+ */
 export const getFileMetadata = async (ai: GoogleGenAI, fileUri: string): Promise<GeminiFileMetadata | null> => {
   try {
     const res: GeminiGetFileMetadataResponse = await (ai as any).files.get({ uri: fileUri });
@@ -260,6 +279,12 @@ export const getFileMetadata = async (ai: GoogleGenAI, fileUri: string): Promise
   }
 };
 
+/**
+ * Deletes a file from the Gemini API.
+ * @param ai The GoogleGenAI instance.
+ * @param fileUri The URI of the file to delete.
+ * @returns A promise that resolves to an object indicating success.
+ */
 export const deleteFile = async (ai: GoogleGenAI, fileUri: string): Promise<{ success: boolean }> => {
   try {
     // Some SDKs expect { uri } others { fileUri } - try both shapes
@@ -271,6 +296,12 @@ export const deleteFile = async (ai: GoogleGenAI, fileUri: string): Promise<{ su
   }
 };
 
+/**
+ * Downloads a file from the Gemini API.
+ * @param ai The GoogleGenAI instance.
+ * @param fileUri The URI of the file to download.
+ * @returns A promise that resolves to the downloaded file data.
+ */
 export const downloadFile = async (ai: GoogleGenAI, fileUri: string): Promise<GeminiDownloadFileResponse | null> => {
   try {
     const res: GeminiDownloadFileResponse = await (ai as any).files.download?.({ uri: fileUri }) ?? await (ai as any).files.download?.({ fileUri }) ?? null;
@@ -306,6 +337,15 @@ export const downloadFile = async (ai: GoogleGenAI, fileUri: string): Promise<Ge
  * @param ai Instance of GoogleGenAI client (used for files.upload)
  * @param file File/Blob to prepare
  * @param maxInlineBytes Threshold for inline vs upload (default 20 MB)
+ */
+/**
+ * Prepares an audio part for a Gemini API request.
+ * It will upload the file if it's larger than the inline byte limit,
+ * otherwise it will encode it as a base64 string.
+ * @param ai The GoogleGenAI instance.
+ * @param file The audio file to prepare.
+ * @param maxInlineBytes The maximum size in bytes for inline data.
+ * @returns A promise that resolves to the prepared audio part.
  */
 export const prepareAudioPart = async (ai: GoogleGenAI, file: File, maxInlineBytes = MAX_INLINE_BYTES) => {
   // Normalize MIME: if file.type is present, strip any parameters (e.g., "audio/mpeg; charset=binary").
@@ -365,6 +405,16 @@ console.debug('[GeminiService] prepareAudioPart diagnostic: fileName=' + file.na
   }
 };
 
+/**
+ * Generates a ride blueprint from an audio file and its features.
+ * @param audioFile The audio file.
+ * @param duration The duration of the audio in seconds.
+ * @param bpm The beats per minute of the audio.
+ * @param energy The energy of the audio.
+ * @param spectralCentroid The spectral centroid of the audio.
+ * @param spectralFlux The spectral flux of the audio.
+ * @returns A promise that resolves to the generated ride blueprint.
+ */
 export const generateRideBlueprint = async (audioFile: File, duration: number, bpm: number, energy: number, spectralCentroid: number, spectralFlux: number): Promise<RideBlueprint> => {
   // Add a new function to validate the API key before making the API call
   const validateApiKey = () => {
@@ -462,6 +512,12 @@ export const generateRideBlueprint = async (audioFile: File, duration: number, b
 // Transcribe an audio file (optionally limited to a timestamp range).
 // Accepts File | Blob for convenience; if a Blob is provided we create a File wrapper.
 // timestamps: optional object with start/end in "MM:SS" format.
+/**
+ * Transcribes an audio file using the Gemini API.
+ * @param file The audio file to transcribe.
+ * @param timestamps Optional start and end timestamps for transcription.
+ * @returns A promise that resolves to the transcript.
+ */
 export const transcribeAudioFile = async (
   file: File | Blob,
   timestamps?: { start?: string; end?: string }
@@ -554,6 +610,11 @@ export const transcribeAudioFile = async (
   }
 };
 
+/**
+ * Counts the number of tokens in an audio file using the Gemini API.
+ * @param file The audio file to count tokens for.
+ * @returns A promise that resolves to the total number of tokens.
+ */
 export const countAudioTokens = async (file: File | Blob): Promise<{ totalTokens: number }> => {
   // Validate API key (same policy as other Gemini helpers)
   const validateApiKey = () => {
@@ -631,6 +692,11 @@ export const countAudioTokens = async (file: File | Blob): Promise<{ totalTokens
  * Returns both the parsed RideBlueprint (typed) and the raw text returned by the model.
  *
  * Note: Reuses the project's RideBlueprint Type declared in ../types.
+ */
+/**
+ * Generates structured data from a prompt using the Gemini API.
+ * @param prompt The prompt to generate data from.
+ * @returns A promise that resolves to the generated data and the raw response.
  */
 export const generateStructuredData = async (prompt: string): Promise<{ data: RideBlueprint; raw: string }> => {
   // Validate API key is present and avoid hardcoding secrets
