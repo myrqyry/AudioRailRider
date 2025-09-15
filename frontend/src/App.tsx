@@ -1,6 +1,5 @@
-
 import React, { useRef, useEffect, useCallback } from 'react';
-import { AppStatus } from '../types';
+import { AppStatus } from 'shared/types';
 import { useAppStore } from './lib/store';
 import { runAudioProcessingWorkflow } from './lib/workflow';
 import { Loader } from './components/Loader';

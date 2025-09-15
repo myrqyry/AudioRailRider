@@ -1,7 +1,6 @@
-
 import * as THREE from 'three';
-import { RideBlueprint, TrackSegment, TrackData } from '../../types';
-import { RIDE_CONFIG, DEFAULT_SPACING } from './constants';
+import { RideBlueprint, TrackSegment, TrackData } from 'shared/types';
+import { RIDE_CONFIG, DEFAULT_SPACING } from 'shared/constants';
 
 /**
  * Builds the 3D track data from a ride blueprint.

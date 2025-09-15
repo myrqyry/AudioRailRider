@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { TrackData } from '../../types';
-import { RIDE_CONFIG } from './constants';
+import { TrackData } from 'shared/types';
+import { RIDE_CONFIG } from 'shared/constants';
 
 const particleVertexShader = `
   attribute vec3 velocity;
@@ -109,8 +109,6 @@ export class VisualEffects {
     update(elapsedTime: number, audioFeatures: any, cameraPosition: THREE.Vector3) {
         // Validate and update uniform values
         this.particleMaterial.uniforms.time.value = elapsedTime;
-        this.particleMaterial.uniforms.lifetime.value = RIDE_CONFIG.PARTICLE_LIFETIME;
-        this.particleMaterial.uniforms.gravity.value = RIDE_CONFIG.PARTICLE_GRAVITY;
 
         if (audioFeatures && audioFeatures.loudness) {
             if (!audioFeatures.loudness.specific || !Array.isArray(audioFeatures.loudness.specific)) {

@@ -1,6 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { RideBlueprint } from "../../types";
-import { GeminiFileUploadResponse, GeminiListFilesResponse, GeminiFileMetadata, GeminiListFilesApiResponse, GeminiGetFileMetadataResponse, GeminiDownloadFileResponse } from "../types/gemini";
+import { RideBlueprint } from 'shared/types';
+import { GeminiFileUploadResponse, GeminiListFilesResponse, GeminiFileMetadata, GeminiListFilesApiResponse, GeminiGetFileMetadataResponse, GeminiDownloadFileResponse } from 'shared/types/gemini';
 import { config } from '../config';
 import geminiConfig from '../gemini.config';
 import { analyzeAudio } from "../lib/audioProcessor";

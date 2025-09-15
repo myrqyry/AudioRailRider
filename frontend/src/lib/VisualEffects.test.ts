@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { VisualEffects } from './VisualEffects';
 import { RIDE_CONFIG } from './constants';
-import { TrackData } from '../../types';
+import { TrackData } from 'shared/types';
 
 describe('VisualEffects', () => {
   let scene: THREE.Scene;

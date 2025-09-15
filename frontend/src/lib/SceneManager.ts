@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { RIDE_CONFIG } from './constants';
+import { RIDE_CONFIG } from 'shared/constants';
 
 export class SceneManager {
     readonly scene: THREE.Scene;

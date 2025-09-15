@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, memo } from 'react';
 import * as THREE from 'three';
-import { AppStatus } from '../../types';
+import { AppStatus, TrackData } from 'shared/types';
 import { useAudioAnalysis } from '../lib/useAudioAnalysis';
 import { useAppStore } from '../lib/store';
 import { SceneManager } from '../lib/SceneManager';

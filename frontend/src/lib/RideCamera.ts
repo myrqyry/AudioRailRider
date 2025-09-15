@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { TrackData } from '../../types';
-import { RIDE_CONFIG } from './constants';
+import { TrackData } from 'shared/types';
+import { RIDE_CONFIG } from 'shared/constants';
 
 export class RideCamera {
     readonly camera: THREE.PerspectiveCamera;

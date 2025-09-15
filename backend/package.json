@@ -1,0 +1,9 @@
+{
+  "name": "audiorailrider-backend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "poetry run uvicorn main:app --reload --host 0.0.0.0 --port 8000",
+    "start": "poetry run python main.py"
+  }
+}

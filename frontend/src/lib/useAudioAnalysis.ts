@@ -1,9 +1,9 @@
 import { useRef, useEffect, useState } from 'react';
-import { AppStatus } from '../../types';
+import { AppStatus } from 'shared/types';
 import { useAppStore } from './store';
 
 // Import the Meyda types from our declaration file
-import type { MeydaAnalyzer } from '../types/meyda';
+import type { MeydaAnalyzer } from 'shared/types/meyda';
 
 
 interface UseAudioAnalysisProps {

@@ -1,4 +1,4 @@
-import { AudioFeatures } from "@/types";
+import { AudioFeatures } from "shared/types";
 
 // Fallback values in case analysis fails
 const FALLBACK_ENERGY = 0.5;
@@ -144,39 +144,52 @@ export const analyzeAudio = async (audioFile: File): Promise<AudioFeatures> => {
   let spectralFlux = 0;
   let frameCount = 0;
   
-  try {
-    console.log('Meyda global object:', window.Meyda); // Debug log
-    
-    if (!window.Meyda || !(window.Meyda as any).extract) {
-      throw new Error('Meyda not properly loaded. Check browser console for details.');
-    }
-    
-    // Set buffer size
-    (window.Meyda as any).bufferSize = MeydaBufferSize;
-    
-    // Process the audio buffer in chunks
-    for (let i = 0; i < channelData.length; i += MeydaBufferSize) {
-      const frame = channelData.slice(i, i + MeydaBufferSize);
-      if (frame.length === MeydaBufferSize) {
-        // Extract features directly without creating an analyzer
-        const features = (window.Meyda as any).extract(
-          ['energy', 'spectralCentroid', 'spectralFlux'],
-          frame
-        );
-        
-        energy += (features?.energy || 0);
-        spectralCentroid += (features?.spectralCentroid || 0);
-        spectralFlux += (features?.spectralFlux || 0);
-        frameCount++;
+  // Use Meyda for per-frame energy and spectral centroid when available, but
+  // avoid calling Meyda's built-in 'spectralFlux' extractor because in some
+  // runtime bundles it can throw due to internal state assumptions. Instead
+  // compute a simple approximate spectral flux using the change in spectral
+  // centroid between consecutive frames. This is a pragmatic, robust fallback
+  // that avoids aborting the whole analysis when a single frame's extraction
+  // fails.
+  if (window.Meyda && (window.Meyda as any).extract) {
+    try {
+      console.log('Meyda global object:', window.Meyda); // Debug log
+      (window.Meyda as any).bufferSize = MeydaBufferSize;
+
+      let prevCentroid: number | null = null;
+
+      for (let i = 0; i < channelData.length; i += MeydaBufferSize) {
+        const frame = channelData.slice(i, i + MeydaBufferSize);
+        if (frame.length !== MeydaBufferSize) continue;
+
+        try {
+          // Ask Meyda only for safe extractors
+          const features = (window.Meyda as any).extract(['energy', 'spectralCentroid'], frame);
+
+          const fEnergy = typeof features?.energy === 'number' && isFinite(features.energy) ? features.energy : 0;
+          const fCentroid = typeof features?.spectralCentroid === 'number' && isFinite(features.spectralCentroid) ? features.spectralCentroid : 0;
+
+          energy += fEnergy;
+          spectralCentroid += fCentroid;
+
+          if (prevCentroid !== null) {
+            // Approximate spectral flux as absolute change in spectral centroid.
+            spectralFlux += Math.abs(fCentroid - prevCentroid);
+          }
+          prevCentroid = fCentroid;
+          frameCount++;
+        } catch (frameErr) {
+          // Log and skip this frame; do not abort entire analysis for a single bad frame.
+          console.warn('[audioProcessor] Meyda.extract failed for a frame, skipping frame:', frameErr);
+          continue;
+        }
       }
+    } catch (initErr) {
+      console.error('Error initializing Meyda analysis loop:', initErr);
+      // fall through to fallback values below
     }
-  } catch (error) {
-    console.error('Error initializing Meyda:', error);
-    // Use fallback values if Meyda fails to load
-    energy = FALLBACK_ENERGY;
-    spectralCentroid = FALLBACK_SPECTRAL_CENTROID;
-    spectralFlux = FALLBACK_SPECTRAL_FLUX;
-    frameCount = 1;
+  } else {
+    console.warn('[audioProcessor] Meyda not available; using fallback audio feature values.');
   }
 
   const avgEnergy = frameCount > 0 ? energy / frameCount : 0;

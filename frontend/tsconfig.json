@@ -16,13 +16,16 @@
     "jsx": "react-jsx",
     "paths": {
       "@/*": [
-        "./*"
+        "./src/*"
+      ],
+      "shared/*": [
+        "../shared/*"
       ]
     },
     // "allowImportingTsExtensions": true,
     "noEmit": false,
-    "types": ["vite/client", "node"],
+    "types": ["vite/client", "node", "jest"],
     "esModuleInterop": true
   },
-  "include": ["src"]
+  "include": ["src", "../shared"]
 }

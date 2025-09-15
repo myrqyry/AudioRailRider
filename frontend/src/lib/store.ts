@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { AppStatus, RideBlueprint, TrackData } from '../../types';
+import { AppStatus, RideBlueprint, TrackData } from 'shared/types';
 import { analyzeAudio } from './audioProcessor';
 import { generateRideBlueprint } from '../services/geminiService';
 import { buildTrackData } from './trackBuilder';

@@ -1,7 +1,7 @@
 import { jsx as _jsx } from "react/jsx-runtime";
 import { useRef, useEffect } from 'react';
 import * as THREE from 'three';
-import { AppStatus } from '../../types';
+import { AppStatus } from 'shared/types';
 import { useAudioAnalysis } from '../lib/useAudioAnalysis';
 import { useAppStore } from '../lib/store';
 import { SceneManager } from '../lib/SceneManager';
