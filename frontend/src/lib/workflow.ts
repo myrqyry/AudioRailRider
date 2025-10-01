@@ -19,8 +19,8 @@ export const runAudioProcessingWorkflow = async (
     checkAbort();
     setStatus(AppStatus.Analyzing, 'Reading audio essence...');
     checkAbort();
-    const { duration, bpm, energy, spectralCentroid, spectralFlux } =
-      await analyzeAudio(file);
+    const audioFeatures = await analyzeAudio(file);
+    const { duration, bpm, energy, spectralCentroid, spectralFlux } = audioFeatures;
 
     checkAbort();
     setStatus(AppStatus.Generating, 'Translating sound into structure...');
@@ -43,7 +43,7 @@ export const runAudioProcessingWorkflow = async (
     checkAbort();
     setStatus(AppStatus.Generating, 'Constructing ephemeral cathedral...');
     checkAbort();
-    const newTrackData = buildTrackData(refinedBlueprint);
+    const newTrackData = buildTrackData(refinedBlueprint, audioFeatures);
 
     checkAbort();
     setTrackData(newTrackData);

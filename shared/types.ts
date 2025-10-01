@@ -51,12 +51,24 @@ export interface TrackData {
     }[]; // Array to hold details for each track segment
     rideName: string;
     moodDescription: string;
+    frameAnalyses: FrameAnalysis[];
+}
+
+export interface FrameAnalysis {
+  timestamp: number;
+  energy: number;
+  spectralCentroid: number;
+  spectralFlux: number;
+  bass: number;
+  mid: number;
+  high: number;
 }
 
 export interface AudioFeatures {
- duration: number;
- bpm: number;
- energy: number;
- spectralCentroid: number;
- spectralFlux: number;
+  duration: number;
+  bpm: number;
+  energy: number; // Overall average energy
+  spectralCentroid: number; // Overall average spectral centroid
+  spectralFlux: number; // Overall average spectral flux
+  frameAnalyses: FrameAnalysis[]; // Per-frame analysis data
 }

@@ -1,15 +1,17 @@
 export default {
   preset: 'ts-jest',
   testEnvironment: 'jest-environment-jsdom',
-  setupFilesAfterEnv: ['@testing-library/jest-dom'],
   moduleNameMapper: {
     '^shared/(.*)$': '<rootDir>/../shared/$1',
-    '^@/(.*)$': '<rootDir>/src/$1',
+    '\\.(css|less|scss|sass)$': 'identity-obj-proxy',
   },
   transform: {
-    '^.+\\.tsx?$': 'ts-jest',
+    '^.+\\.tsx?$': ['ts-jest', { tsconfig: 'tsconfig.json' }],
   },
-  transformIgnorePatterns: [
-    'node_modules/(?!.pnpm|@google/generative-ai)',
-  ],
+  globals: {
+    'ts-jest': {
+      // Must be set to `true` when using ES Modules
+      useESM: true,
+    },
+  },
 };

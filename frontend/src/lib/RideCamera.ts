@@ -11,6 +11,10 @@ export class RideCamera {
     private readonly _lookAtPos = new THREE.Vector3();
     private readonly _upTmp = new THREE.Vector3();
 
+    public get lookAtPos(): THREE.Vector3 {
+        return this._lookAtPos;
+    }
+
     constructor(camera: THREE.PerspectiveCamera, trackData: TrackData) {
         this.camera = camera;
         this.trackData = trackData;
