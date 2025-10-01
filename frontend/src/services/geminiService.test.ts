@@ -1,6 +1,6 @@
-import { GoogleGenAI } from '@google/genai';
 import { generateRideBlueprint, prepareAudioPart } from './geminiService';
 import { analyzeAudio } from '../lib/audioProcessor';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 jest.mock('../config', () => ({
     config: {
@@ -9,33 +9,19 @@ jest.mock('../config', () => ({
 }));
 
 const mockGenerateContent = jest.fn();
-const mockUpload = jest.fn();
+const mockUploadFile = jest.fn();
+const mockCountTokens = jest.fn();
 
-jest.mock('@google/genai', () => ({
-    GoogleGenAI: jest.fn().mockImplementation(() => ({
-        files: {
-            upload: mockUpload,
-        },
-        models: {
+jest.mock('@google/generative-ai', () => ({
+    GoogleGenerativeAI: jest.fn().mockImplementation(() => ({
+        getGenerativeModel: jest.fn(() => ({
             generateContent: mockGenerateContent,
+            countTokens: mockCountTokens,
+        })),
+        files: {
+            uploadFile: mockUploadFile,
         },
     })),
-    HarmCategory: {
-        HARM_CATEGORY_HARASSMENT: 'HARM_CATEGORY_HARASSMENT',
-        HARM_CATEGORY_HATE_SPEECH: 'HARM_CATEGORY_HATE_SPEECH',
-        HARM_CATEGORY_SEXUALLY_EXPLICIT: 'HARM_CATEGORY_SEXUALLY_EXPLICIT',
-        HARM_CATEGORY_DANGEROUS_CONTENT: 'HARM_CATEGORY_DANGEROUS_CONTENT',
-    },
-    HarmBlockThreshold: {
-        BLOCK_MEDIUM_AND_ABOVE: 'BLOCK_MEDIUM_AND_ABOVE',
-    },
-    Type: {
-        OBJECT: 'OBJECT',
-        ARRAY: 'ARRAY',
-        STRING: 'STRING',
-        INTEGER: 'INTEGER',
-        NUMBER: 'NUMBER',
-    },
 }));
 
 jest.mock('../lib/audioProcessor');
@@ -57,31 +43,41 @@ describe('geminiService', () => {
             const smallFile = new File([''], 'small.mp3', { type: 'audio/mpeg' });
             Object.defineProperty(smallFile, 'size', { value: 1024 * 1024 }); // 1MB
 
-            const ai = new GoogleGenAI({ apiKey: 'test-key' });
-            const part = await prepareAudioPart(ai, smallFile);
+            const genAI = new GoogleGenerativeAI('test-key');
+            const part = await prepareAudioPart(genAI, smallFile);
 
             expect(part).toHaveProperty('inlineData');
-            expect(mockUpload).not.toHaveBeenCalled();
+            expect(mockUploadFile).not.toHaveBeenCalled();
         });
 
         it('should use file upload for large files', async () => {
             const largeFile = new File([''], 'large.mp3', { type: 'audio/mpeg' });
             Object.defineProperty(largeFile, 'size', { value: 30 * 1024 * 1024 }); // 30MB
 
-            mockUpload.mockResolvedValue({ uri: 'gs://file-uri', name: 'large.mp3', mimeType: 'audio/mpeg' });
+            mockUploadFile.mockResolvedValue({
+                file: {
+                    uri: 'gs://file-uri',
+                    name: 'large.mp3',
+                    mimeType: 'audio/mpeg'
+                }
+            });
 
-            const ai = new GoogleGenAI({ apiKey: 'test-key' });
-            const part = await prepareAudioPart(ai, largeFile);
+            const genAI = new GoogleGenerativeAI('test-key');
+            const part = await prepareAudioPart(genAI, largeFile);
 
             expect(part).toHaveProperty('fileData');
-            expect(mockUpload).toHaveBeenCalledTimes(1);
+            expect(mockUploadFile).toHaveBeenCalledTimes(1);
         });
     });
 
     describe('generateRideBlueprint', () => {
         it('should generate a ride blueprint successfully', async () => {
             const mockBlueprint = { rideName: 'Test Ride', track: [], palette: ['#ffffff', '#ffffff', '#ffffff'], moodDescription: 'A test ride' };
-            mockGenerateContent.mockResolvedValue({ text: JSON.stringify(mockBlueprint) });
+            mockGenerateContent.mockResolvedValue({
+                response: {
+                    text: () => JSON.stringify(mockBlueprint),
+                },
+            });
 
             const file = new File([''], 'test.mp3', { type: 'audio/mpeg' });
             const blueprint = await generateRideBlueprint(file, 120, 120, 0.5, 1500, 0.2);
@@ -91,7 +87,11 @@ describe('geminiService', () => {
         });
 
         it('should throw an error for invalid JSON response', async () => {
-            mockGenerateContent.mockResolvedValue({ text: 'invalid json' });
+            mockGenerateContent.mockResolvedValue({
+                response: {
+                    text: () => 'invalid json',
+                },
+            });
             const file = new File([''], 'test.mp3', { type: 'audio/mpeg' });
             await expect(generateRideBlueprint(file, 120, 120, 0.5, 1500, 0.2)).rejects.toThrow('The AI returned malformed data.');
         });
