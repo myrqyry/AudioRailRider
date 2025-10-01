@@ -6,7 +6,7 @@ export class SceneManager {
     readonly camera: THREE.PerspectiveCamera;
     readonly renderer: THREE.WebGLRenderer;
     private container: HTMLElement;
-    private stars?: THREE.Points;
+    private skyboxTexture?: THREE.Texture;
 
     constructor(container: HTMLElement) {
         this.container = container;
@@ -28,28 +28,34 @@ export class SceneManager {
         this.renderer.setSize(width, height);
         this.container.appendChild(this.renderer.domElement);
 
-        this.addStarryBackground();
+        // Set a default background color
+        this.scene.background = new THREE.Color(0x000000);
+
         if (typeof window !== 'undefined') {
             window.addEventListener('resize', this.handleResize);
         }
     }
 
-    private addStarryBackground() {
-        const positions = new Float32Array(RIDE_CONFIG.STARS_COUNT * 3);
-        for (let i = 0; i < positions.length; i++) {
-            positions[i] = THREE.MathUtils.randFloatSpread(2000);
+    public updateSkybox(imageUrl: string): void {
+        if (this.skyboxTexture) {
+            this.skyboxTexture.dispose();
         }
-        const starGeometry = new THREE.BufferGeometry();
-        starGeometry.setAttribute(
-            'position',
-            new THREE.Float32BufferAttribute(positions, 3)
+
+        const loader = new THREE.TextureLoader();
+        loader.load(
+            imageUrl,
+            (texture) => {
+                texture.mapping = THREE.EquirectangularReflectionMapping;
+                this.scene.background = texture;
+                this.scene.environment = texture;
+                this.skyboxTexture = texture;
+            },
+            undefined,
+            (error) => {
+                console.error('An error occurred while loading the skybox texture:', error);
+                this.scene.background = new THREE.Color(0x000000); // Fallback to black
+            }
         );
-        const starMaterial = new THREE.PointsMaterial({
-            color: 0x888888,
-            size: 0.7
-        });
-        this.stars = new THREE.Points(starGeometry, starMaterial);
-        this.scene.add(this.stars);
     }
 
     private handleResize = (): void => {

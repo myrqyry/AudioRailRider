@@ -118,54 +118,291 @@ const SUPPORTED_AUDIO_MIME_TYPES = new Set([
   'audio/x-flac'
 ]);
 
-import { GoogleGenerativeAI, Part } from "@google/generative-ai";
-
-async function fileToGenerativePart(file: File): Promise<Part> {
-    const base64EncodedData = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve((reader.result as string).split(',')[1]);
-        reader.onerror = (err) => {
-            console.error('[GeminiService] FileReader failed to read file:', err);
-            reject(new Error("Failed to read file: " + err));
-        };
-        reader.readAsDataURL(file);
-    });
-
-    return {
-        inlineData: {
-            data: base64EncodedData,
-            mimeType: file.type,
-        },
-    };
+/**
+ * Detect MIME type from filename extension as a fallback when file.type is empty.
+ */
+function detectMimeFromName(filename: string): string {
+  const ext = filename.split('.').pop()?.toLowerCase() || '';
+  switch (ext) {
+    case 'wav': return 'audio/wav';
+    case 'mp3':
+    case 'mpga': return 'audio/mpeg';
+    case 'm4a': return 'audio/m4a';
+    case 'aiff':
+    case 'aif': return 'audio/aiff';
+    case 'aac': return 'audio/aac';
+    case 'ogg': return 'audio/ogg';
+    case 'flac': return 'audio/flac';
+    default: return 'audio/wav'; // Use a supported fallback instead
+  }
 }
 
+/**
+ * Encode a small file as inline base64 part (keeps previous behavior).
+ * Kept private to preserve the inline workflow for small files.
+ */
+const inlineAudioPartFromFile = async (file: File): Promise<{ inlineData: { mimeType: string; data: string } }> => {
+  // Detect MIME using same fallback rules as prepareAudioPart
+  // Normalize MIME: if file.type is present, strip any parameters (e.g., "audio/mpeg; charset=binary").
+  // If file.type is empty, fall back to extension-based detection.
+  const rawType = file.type && file.type.trim() !== '' ? file.type : detectMimeFromName(file.name);
+  const detectedMime = typeof rawType === 'string' ? rawType.split(';')[0].trim() : rawType;
+
+  // Debug: capture detection results and size for runtime inspection
+  try {
+    console.debug(`[GeminiService] inlineAudioPartFromFile: fileName=${file.name}, rawType=${rawType}, detectedMime=${detectedMime}, fileSize=${file.size}`);
+  } catch (e) {
+    console.debug('[GeminiService] inlineAudioPartFromFile: debug log failed', e);
+  }
+
+  // Double-check supported formats (prepareAudioPart already checks, but keep parity here)
+  if (!SUPPORTED_AUDIO_MIME_TYPES.has(detectedMime)) {
+    throw new Error(`Unsupported audio MIME type: ${detectedMime}. Supported formats: ${Array.from(SUPPORTED_AUDIO_MIME_TYPES).join(', ')}`);
+  }
+
+  // Log size info and warn if close to inline limit
+  if (typeof file.size === 'number') {
+    const mb = (file.size / (1024 * 1024));
+    console.log(`[GeminiService] Inline audio selected: ${file.name} — ${file.size} bytes (${mb.toFixed(2)} MB)`);
+    const closeToLimitBytes = 18 * 1024 * 1024; // 18 MB warning threshold
+    if (file.size > closeToLimitBytes) {
+      console.warn(`[GeminiService] Warning: ${file.name} is close to the inline size limit (${mb.toFixed(2)} MB). Consider uploading or downsampling to reduce token cost.`);
+    }
+  }
+
+  // Read file as base64 (preserve backwards-compatible inline payload)
+  const base64EncodedData = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve((reader.result as string).split(',')[1]);
+    reader.onerror = (err) => {
+      console.error('[GeminiService] FileReader failed to read inline audio file:', err);
+      reject(new Error("Failed to read file: " + err));
+    };
+    reader.readAsDataURL(file);
+  });
+
+  // Best-effort: attempt to estimate duration and a rough token cost using audio processor.
+  // This is optional and non-fatal; failures only result in debug logs, not thrown errors.
+  try {
+    const features = await analyzeAudio(file);
+    const durationSeconds = typeof features.duration === 'number' && isFinite(features.duration) ? features.duration : NaN;
+
+    if (!isNaN(durationSeconds)) {
+      const TOKENS_PER_SECOND = 15;
+      const estimatedTokens = Math.ceil(durationSeconds * TOKENS_PER_SECOND);
+      console.log(`[GeminiService] Audio duration estimate for '${file.name}': ${durationSeconds.toFixed(2)}s. Estimated tokens: ${estimatedTokens}`);
+    } else {
+      console.warn(`[GeminiService] Could not determine duration for '${file.name}'.`);
+    }
+  } catch (err) {
+    console.error('[GeminiService] Audio analysis for token estimation failed:', err);
+    throw new Error('Failed to analyze audio for token estimation.');
+  }
+
+  // Return inline payload (keeps previous shape for compatibility)
+  return {
+    inlineData: {
+      mimeType: detectedMime,
+      data: base64EncodedData,
+    },
+  };
+};
+
+// Add centralized Files API helpers to normalize SDK behavior and provide list/get/delete/download utilities.
+// These helpers wrap (ai as any).files.* calls and normalize returned shapes for the rest of the service.
+// Note: We intentionally use loose typing (any) for SDK calls because runtime SDK shapes may vary across versions.
+/**
+ * Uploads a file to the Gemini API.
+ * @param ai The GoogleGenAI instance.
+ * @param file The file to upload.
+ * @param mimeType The MIME type of the file.
+ * @returns A promise that resolves to the file metadata.
+ */
+export const uploadFile = async (ai: GoogleGenAI, file: File, mimeType?: string): Promise<GeminiFileMetadata> => {
+  try {
+    const payload = { file, config: { mimeType } };
+    const raw: GeminiFileUploadResponse = await (ai as any).files.upload(payload);
+    const uri = raw?.uri || raw?.fileUri || raw?.id || (raw?.name && `file://${raw.name}`) || null;
+
+    if (!uri) {
+      console.error('[GeminiService] uploadFile: upload did not return a URI', raw);
+      throw new Error('Files API upload did not return a URI.');
+    }
+
+    const normalized: GeminiFileMetadata = {
+      uri,
+      mimeType: raw?.mimeType || raw?.contentType || mimeType || file.type || 'application/octet-stream',
+      name: raw?.name || file.name,
+      size: raw?.size || file.size || null,
+      raw,
+    };
+
+    return normalized;
+  } catch (err: any) {
+    console.error('[GeminiService] uploadFile failed:', err);
+    throw err;
+  }
+};
+
+/**
+ * Lists files in the Gemini API.
+ * @param ai The GoogleGenAI instance.
+ * @param opts Options for pagination.
+ * @returns A promise that resolves to a list of files.
+ */
+export const listFiles = async (ai: GoogleGenAI, opts?: { pageSize?: number; pageToken?: string }): Promise<GeminiListFilesResponse> => {
+  try {
+    const args: any = opts ? { ...opts } : {};
+    const res: GeminiListFilesApiResponse = await (ai as any).files.list(args);
+    const files: GeminiFileMetadata[] = res?.files || res?.items || res?.results || [];
+    const nextPageToken = res?.nextPageToken || res?.next_page_token || undefined;
+    return { files, nextPageToken, raw: res };
+  } catch (err: any) {
+    console.error('[GeminiService] listFiles failed:', err);
+    throw err;
+  }
+};
+
+/**
+ * Gets the metadata for a file from the Gemini API.
+ * @param ai The GoogleGenAI instance.
+ * @param fileUri The URI of the file.
+ * @returns A promise that resolves to the file metadata.
+ */
+export const getFileMetadata = async (ai: GoogleGenAI, fileUri: string): Promise<GeminiFileMetadata | null> => {
+  try {
+    const res: GeminiGetFileMetadataResponse = await (ai as any).files.get({ uri: fileUri });
+    return res?.file || (res as GeminiFileMetadata) || null;
+  } catch (err: any) {
+    console.error('[GeminiService] getFileMetadata failed:', err);
+    throw err;
+  }
+};
+
+/**
+ * Deletes a file from the Gemini API.
+ * @param ai The GoogleGenAI instance.
+ * @param fileUri The URI of the file to delete.
+ * @returns A promise that resolves to an object indicating success.
+ */
+export const deleteFile = async (ai: GoogleGenAI, fileUri: string): Promise<{ success: boolean }> => {
+  try {
+    // Some SDKs expect { uri } others { fileUri } - try both shapes
+    const res = await (ai as any).files.delete?.({ uri: fileUri }) ?? await (ai as any).files.delete?.({ fileUri }) ?? null;
+    return res ?? { success: true };
+  } catch (err: any) {
+    console.error('[GeminiService] deleteFile failed:', err);
+    throw err;
+  }
+};
+
+/**
+ * Downloads a file from the Gemini API.
+ * @param ai The GoogleGenAI instance.
+ * @param fileUri The URI of the file to download.
+ * @returns A promise that resolves to the downloaded file data.
+ */
+export const downloadFile = async (ai: GoogleGenAI, fileUri: string): Promise<GeminiDownloadFileResponse | null> => {
+  try {
+    const res: GeminiDownloadFileResponse = await (ai as any).files.download?.({ uri: fileUri }) ?? await (ai as any).files.download?.({ fileUri }) ?? null;
+    if (!res) {
+      if (typeof fileUri === 'string' && (fileUri.startsWith('http://') || fileUri.startsWith('https://'))) {
+        const fetchRes = await fetch(fileUri);
+        const arrayBuffer = await fetchRes.arrayBuffer();
+        return { arrayBuffer, size: arrayBuffer.byteLength, raw: fetchRes };
+      }
+      return res;
+    }
+    if (typeof res.data === 'string') {
+      try {
+        const b64 = res.data.replace(/^data:.*;base64,/, '');
+        const binary = (typeof Buffer !== 'undefined') ? Buffer.from(b64, 'base64') : Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+        return { buffer: binary, size: (binary as any).length ?? (binary as any).byteLength ?? null, raw: res };
+      } catch (e) {
+        return { raw: res };
+      }
+    }
+    return res;
+  } catch (err: any) {
+    console.error('[GeminiService] downloadFile failed:', err);
+    throw err;
+  }
+};
+
+/**
+ * Prepares an audio part for Gemini generateContent.
+ * - If file.size <= maxInlineBytes -> returns inlineData part (base64 inline).
+ * - If file.size > maxInlineBytes -> uploads via Files API and returns a file URI part.
+ *
+ * @param ai Instance of GoogleGenAI client (used for files.upload)
+ * @param file File/Blob to prepare
+ * @param maxInlineBytes Threshold for inline vs upload (default 20 MB)
+ */
 /**
  * Prepares an audio part for a Gemini API request.
  * It will upload the file if it's larger than the inline byte limit,
  * otherwise it will encode it as a base64 string.
- * @param genAI The GoogleGenerativeAI instance.
+ * @param ai The GoogleGenAI instance.
  * @param file The audio file to prepare.
+ * @param maxInlineBytes The maximum size in bytes for inline data.
  * @returns A promise that resolves to the prepared audio part.
  */
-export const prepareAudioPart = async (genAI: GoogleGenerativeAI, file: File): Promise<Part> => {
-    const maxInlineBytes = 20 * 1024 * 1024; // 20 MB
+export const prepareAudioPart = async (ai: GoogleGenAI, file: File, maxInlineBytes = MAX_INLINE_BYTES) => {
+  // Normalize MIME: if file.type is present, strip any parameters (e.g., "audio/mpeg; charset=binary").
+  // If file.type is empty, fall back to extension-based detection.
+  const rawType = file.type && file.type.trim() !== '' ? file.type : detectMimeFromName(file.name);
+  const detectedMime = typeof rawType === 'string' ? rawType.split(';')[0].trim() : rawType;
 
-    if (file.size > maxInlineBytes) {
-        console.log(`[GeminiService] Uploading large audio file ${file.name} (${file.size} bytes)...`);
-        const uploadResult = await genAI.files.uploadFile(file, {
-            mimeType: file.type,
-        });
-        console.log(`[GeminiService] Upload complete: `, uploadResult.file);
-        return {
-            fileData: {
-                mimeType: uploadResult.file.mimeType,
-                fileUri: uploadResult.file.uri,
-            },
-        };
-    } else {
-        console.log(`[GeminiService] Using inline audio part for ${file.name} (${file.size} bytes)`);
-        return fileToGenerativePart(file);
+  // Diagnostic: log prepared mime and path for targeted MP3 processing
+console.debug('[GeminiService] prepareAudioPart diagnostic: fileName=' + file.name + ', detectedMime=' + detectedMime + ', size=' + (typeof file.size === 'number' ? file.size : 'unknown'));
+  try {
+    console.debug(`[GeminiService] prepareAudioPart: fileName=${file.name}, rawType=${rawType}, detectedMime=${detectedMime}, fileSize=${file.size}`);
+  } catch (e) {
+    console.debug('[GeminiService] prepareAudioPart: debug log failed', e);
+  }
+
+  // Enforce supported formats
+  if (!SUPPORTED_AUDIO_MIME_TYPES.has(detectedMime)) {
+    throw new Error(`Unsupported audio MIME type: ${detectedMime}. Supported formats: ${Array.from(SUPPORTED_AUDIO_MIME_TYPES).join(', ')}`);
+  }
+
+  // If file is small enough, keep using inline base64 (backwards compatible)
+  if (typeof file.size === 'number' && file.size <= maxInlineBytes) {
+    console.log(`[GeminiService] Using inline audio part for ${file.name} (${file.size} bytes)`);
+    return await inlineAudioPartFromFile(file);
+  }
+
+  // Large file -> upload via Files API and return a URI part
+  try {
+    console.log(`[GeminiService] Uploading large audio file ${file.name} (${file.size} bytes) via Files API...`);
+    // Use centralized upload helper which normalizes SDK differences
+    const uploadResult = await uploadFile(ai, file, detectedMime);
+
+    // Instrumentation: log the full uploadResult to inspect shape returned by Gemini
+    try {
+      console.debug('[GeminiService] Files.upload returned (normalized):', uploadResult);
+    } catch (e) {
+      console.debug('[GeminiService] Failed to debug-log uploadResult', e);
     }
+
+    if (!uploadResult || !uploadResult.uri) {
+      console.error('[GeminiService] Files API upload missing uri (after normalization):', uploadResult);
+      throw new Error('Files API did not return a uri for the uploaded file.');
+    }
+
+    // Return a file-URI based part that Gemini can reference in generateContent.
+    // Shape chosen to be consistent with SDK/documentation guidance: { fileData: { mimeType, fileUri } }
+    return {
+      fileData: {
+        mimeType: uploadResult.mimeType || detectedMime,
+        fileUri: uploadResult.uri,
+      },
+    };
+  } catch (err: any) {
+    console.error('[GeminiService] Files upload failed:', err);
+    // Re-throw a user-friendly, classified error
+    throw new Error('Failed to upload audio file to the Gemini Files API. Please check your network connection and API key, and try again.');
+  }
 };
 
 /**
@@ -189,21 +426,24 @@ export const generateRideBlueprint = async (audioFile: File, duration: number, b
   // Call the validation function before making the API call
   validateApiKey();
 
-  const genAI = new GoogleGenerativeAI(config.apiKey);
-  const model = genAI.getGenerativeModel({
-      model: geminiConfig.modelName,
-      systemInstruction: SYSTEM_INSTRUCTION,
-  });
+  const ai = new GoogleGenAI({ apiKey: config.apiKey });
+  const model = geminiConfig.modelName; // Use modelName from gemini.config.ts
   
   try {
-    const audioPart = await prepareAudioPart(genAI, audioFile);
-    const textPart = PROMPT_TEXT(duration, bpm, energy, spectralCentroid, spectralFlux);
+    const audioPart = await prepareAudioPart(ai, audioFile);
+    const textPart = { text: PROMPT_TEXT(duration, bpm, energy, spectralCentroid, spectralFlux) };
 
-    const result = await model.generateContent([textPart, audioPart]);
+    const response = await ai.models.generateContent({
+        model: model,
+        contents: { parts: [textPart, audioPart] },
+        config: {
+            systemInstruction: SYSTEM_INSTRUCTION,
+            responseMimeType: "application/json",
+            responseSchema: responseSchema,
+        }
+    });
 
-    const response = result.response;
-    const jsonText = response.text();
-
+    const jsonText = response.text;
     if (!jsonText) {
         throw new Error("The AI returned an empty response. Please try a different song.");
     }
@@ -266,6 +506,7 @@ export const generateRideBlueprint = async (audioFile: File, duration: number, b
     }
     throw new Error(`The generative muse is unavailable: ${errorMessage}`);
   }
+
 };
 
 // Transcribe an audio file (optionally limited to a timestamp range).
@@ -289,11 +530,8 @@ export const transcribeAudioFile = async (
   };
   validateApiKey();
 
-  const genAI = new GoogleGenerativeAI(config.apiKey);
-  const model = genAI.getGenerativeModel({
-      model: geminiConfig.modelName,
-      systemInstruction: "You are a precise audio transcription assistant. Generate accurate transcripts of speech content.",
-  });
+  const ai = new GoogleGenAI({ apiKey: config.apiKey });
+  const model = geminiConfig.modelName;
 
   // Ensure we have a File instance (some callers may pass a Blob)
   // Assumption: If a Blob lacks a filename, default to audio.<ext> (ext derived from mimeType or 'wav').
@@ -331,12 +569,22 @@ export const transcribeAudioFile = async (
 
   try {
     // Reuse prepareAudioPart to handle inline vs upload logic and MIME validation.
-    const audioPart = await prepareAudioPart(genAI, audioFile);
+    const audioPart = await prepareAudioPart(ai, audioFile);
 
-    const result = await model.generateContent([promptText, audioPart]);
-    const response = result.response;
-    const transcript = response.text();
+    const textPart = { text: promptText };
 
+    // Call Gemini generateContent. Reuse the system instruction pattern where reasonable.
+    const response = await ai.models.generateContent({
+      model: model,
+      contents: { parts: [textPart, audioPart] },
+      config: {
+        systemInstruction: "You are a precise audio transcription assistant. Generate accurate transcripts of speech content.",
+        // Transcription expected as plain text
+        responseMimeType: "text/plain",
+      },
+    });
+
+    const transcript = response.text;
     if (!transcript || transcript.trim() === '') {
       throw new Error("The AI returned an empty transcript. Try again or provide a different audio file.");
     }
@@ -376,8 +624,8 @@ export const countAudioTokens = async (file: File | Blob): Promise<{ totalTokens
   };
   validateApiKey();
 
-  const genAI = new GoogleGenerativeAI(config.apiKey);
-  const model = genAI.getGenerativeModel({ model: geminiConfig.modelName });
+  const ai = new GoogleGenAI({ apiKey: config.apiKey });
+  const model = geminiConfig.modelName;
 
   // Ensure we have a File instance (some callers may pass a Blob)
   // Assuming default extension 'wav' if mime is absent.
@@ -392,22 +640,35 @@ export const countAudioTokens = async (file: File | Blob): Promise<{ totalTokens
 
   try {
     // Reuse prepareAudioPart to handle inline vs upload logic and MIME validation.
-    const audioPart = await prepareAudioPart(genAI, audioFile);
+    const audioPart = await prepareAudioPart(ai, audioFile);
 
     // Dev logging: file size + whether inline or upload mode was used
     try {
       const sizeInfo = typeof audioFile.size === 'number' ? `${audioFile.size} bytes` : 'unknown size';
-      const mode = (audioPart as any).inlineData ? 'inline' : 'unknown';
+      const mode = (audioPart as any).inlineData ? 'inline' : (audioPart as any).fileData ? 'upload' : 'unknown';
       console.log(`[GeminiService] countAudioTokens requested for '${audioFile.name}' (${sizeInfo}). Mode: ${mode}`);
     } catch (e) {
       console.debug('[GeminiService] Failed to log countAudioTokens request details:', e);
     }
 
     // Call the minimal token-counting API with only the audio part
-    const { totalTokens } = await model.countTokens([audioPart]);
+    const response = await ai.models.countTokens({
+      model: model,
+      contents: { parts: [audioPart] },
+    });
+
+    // Normalize response (common possible shapes)
+    let totalTokens: number | null = null;
+    if (response && typeof (response as any).totalTokens === 'number') {
+      totalTokens = (response as any).totalTokens;
+    } else if (response && typeof (response as any).total_tokens === 'number') {
+      totalTokens = (response as any).total_tokens;
+    } else if (response && typeof (response as any).tokens === 'number') {
+      totalTokens = (response as any).tokens;
+    }
 
     if (typeof totalTokens !== 'number' || isNaN(totalTokens)) {
-      console.debug('[GeminiService] countTokens returned unexpected shape:', { totalTokens });
+      console.debug('[GeminiService] countTokens returned unexpected shape:', response);
       throw new Error('Token counting returned an unexpected response from the Gemini API.');
     }
 
@@ -443,16 +704,23 @@ export const generateStructuredData = async (prompt: string): Promise<{ data: Ri
     throw new Error("Gemini API key is missing. Please set GEMINI_API_KEY in your environment (e.g., .env.local).");
   }
 
-  const genAI = new GoogleGenerativeAI(config.apiKey);
-  const model = genAI.getGenerativeModel({
-      model: geminiConfig.modelName,
-      systemInstruction: SYSTEM_INSTRUCTION,
-  });
+  const ai = new GoogleGenAI({ apiKey: config.apiKey });
+  const model = geminiConfig.modelName;
 
   try {
-    const result = await model.generateContent(prompt);
-    const response = result.response;
-    const raw = response.text();
+    const textPart = { text: prompt };
+
+    const response = await ai.models.generateContent({
+      model: model,
+      contents: { parts: [textPart] },
+      config: {
+        systemInstruction: SYSTEM_INSTRUCTION,
+        responseMimeType: "application/json",
+        responseSchema: responseSchema,
+      }
+    });
+
+    const raw = response && typeof response.text === 'string' ? response.text : '';
 
     console.log('[GeminiService] generateStructuredData raw response preview:', raw ? (raw.length > 200 ? raw.slice(0,200) + '...' : raw) : '<empty>');
 
@@ -506,3 +774,61 @@ export const generateStructuredData = async (prompt: string): Promise<{ data: Ri
     throw new Error(`Failed to generate structured data from Gemini: ${msg}`);
   }
 };
+
+/**
+ * Generates a skybox image from a text prompt using the Gemini API.
+ * @param prompt A descriptive prompt for the skybox image.
+ * @returns A promise that resolves to a base64-encoded data URL of the image.
+ */
+export const generateSkyboxImage = async (prompt: string): Promise<string> => {
+  // SECURITY WARNING: The API key is exposed on the client side.
+  // This is a known issue and should be addressed by moving this logic to a backend service.
+  if (!config.apiKey || config.apiKey.trim() === '') {
+    throw new Error("Gemini API key is missing. Please set it in your .env.local file.");
+  }
+
+  const ai = new GoogleGenAI({ apiKey: config.apiKey });
+  const model = "gemini-2.5-flash-image-preview"; // Correct model name from documentation
+
+  try {
+    const fullPrompt = `Generate a photorealistic, equirectangular 360-degree panorama of: ${prompt}`;
+
+    const response = await ai.models.generateContent({
+        model,
+        contents: fullPrompt, // The image generation model takes a simple string prompt
+    });
+
+    const candidate = response?.candidates?.[0];
+    const imagePart = candidate?.content?.parts?.find(part => part.inlineData);
+
+    if (!imagePart || !imagePart.inlineData) {
+      console.error("Invalid response structure from image generation API:", response);
+      throw new Error("The AI did not return a valid image. Please try a different prompt.");
+    }
+
+    return `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
+  } catch (error) {
+    console.error("Error generating skybox image:", error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    if (errorMessage.includes('API key not valid')) {
+        throw new Error("Your Gemini API key is not valid. Please ensure it is correctly set in your .env.local file.");
+    }
+    throw new Error(`The generative muse for images is unavailable: ${errorMessage}`);
+  }
+};
+
+// Quick manual test for node-based invocations (does not run during normal imports)
+if (typeof require !== 'undefined' && require.main === module) {
+  (async () => {
+    try {
+      // Small example prompt using the existing PROMPT_TEXT helper with dummy audio analysis values.
+      const samplePrompt = PROMPT_TEXT(120, 120, 0.75, 2500, 0.12);
+      const result = await generateStructuredData(samplePrompt);
+      console.log('[GeminiService] Manual test — parsed rideName:', result.data.rideName);
+      console.log('[GeminiService] Manual test — palette:', result.data.palette);
+      console.log('[GeminiService] Manual test — track segments count:', result.data.track.length);
+    } catch (err) {
+      console.error('[GeminiService] Manual test failed:', err);
+    }
+  })();
+}

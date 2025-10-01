@@ -14,6 +14,8 @@ export const RIDE_CONFIG = {
 
     // === Audio Analysis & Ride Logic ===
     BASS_KICK_THRESHOLD: 15,
+    MID_KICK_THRESHOLD: 10,
+    HIGH_KICK_THRESHOLD: 8,
 
     // === Track Building ===
     TRACK_SEGMENT_RESOLUTION: 100,
@@ -42,6 +44,8 @@ interface RideConfig {
 
     // === Audio Analysis & Ride Logic ===
     BASS_KICK_THRESHOLD: number;
+    MID_KICK_THRESHOLD: number;
+    HIGH_KICK_THRESHOLD: number;
 
     // === Track Building ===
     TRACK_SEGMENT_RESOLUTION: number;

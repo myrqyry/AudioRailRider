@@ -1,4 +1,4 @@
-import { AudioFeatures } from "shared/types";
+import { AudioFeatures, FrameAnalysis } from "shared/types";
 
 // Fallback values in case analysis fails
 const FALLBACK_ENERGY = 0.5;
@@ -98,6 +98,7 @@ export const analyzeAudio = async (audioFile: File): Promise<AudioFeatures> => {
         energy: 0,
         spectralCentroid: 0,
         spectralFlux: 0,
+        frameAnalyses: [],
       };
     } catch (fallbackError) {
       console.error("[audioProcessor] Fallback metadata extraction failed:", fallbackError);
@@ -135,27 +136,16 @@ export const analyzeAudio = async (audioFile: File): Promise<AudioFeatures> => {
 
   // Detailed audio analysis using Meyda
   const channelData = audioBuffer.getChannelData(0);
-  
-  const MeydaBufferSize = 1024; // Define buffer size for Meyda analysis
+  const MeydaBufferSize = 1024;
+  const frameAnalyses: FrameAnalysis[] = [];
+  let totalEnergy = 0;
+  let totalSpectralCentroid = 0;
+  let totalSpectralFlux = 0;
 
-  // Process the audio buffer in chunks
-  let energy = 0;
-  let spectralCentroid = 0;
-  let spectralFlux = 0;
-  let frameCount = 0;
-  
-  // Use Meyda for per-frame energy and spectral centroid when available, but
-  // avoid calling Meyda's built-in 'spectralFlux' extractor because in some
-  // runtime bundles it can throw due to internal state assumptions. Instead
-  // compute a simple approximate spectral flux using the change in spectral
-  // centroid between consecutive frames. This is a pragmatic, robust fallback
-  // that avoids aborting the whole analysis when a single frame's extraction
-  // fails.
   if (window.Meyda && (window.Meyda as any).extract) {
     try {
-      console.log('Meyda global object:', window.Meyda); // Debug log
+      console.log('Meyda global object:', window.Meyda);
       (window.Meyda as any).bufferSize = MeydaBufferSize;
-
       let prevCentroid: number | null = null;
 
       for (let i = 0; i < channelData.length; i += MeydaBufferSize) {
@@ -163,40 +153,44 @@ export const analyzeAudio = async (audioFile: File): Promise<AudioFeatures> => {
         if (frame.length !== MeydaBufferSize) continue;
 
         try {
-          // Ask Meyda only for safe extractors
-          const features = (window.Meyda as any).extract(['energy', 'spectralCentroid'], frame);
+          const features = (window.Meyda as any).extract(['energy', 'spectralCentroid', 'loudness'], frame);
 
-          const fEnergy = typeof features?.energy === 'number' && isFinite(features.energy) ? features.energy : 0;
-          const fCentroid = typeof features?.spectralCentroid === 'number' && isFinite(features.spectralCentroid) ? features.spectralCentroid : 0;
+          const fEnergy = features.energy ?? 0;
+          const fCentroid = features.spectralCentroid ?? 0;
+          const fLoudness = features.loudness?.specific ?? new Float32Array(24).fill(0);
 
-          energy += fEnergy;
-          spectralCentroid += fCentroid;
+          const flux = prevCentroid !== null ? Math.abs(fCentroid - prevCentroid) : 0;
 
-          if (prevCentroid !== null) {
-            // Approximate spectral flux as absolute change in spectral centroid.
-            spectralFlux += Math.abs(fCentroid - prevCentroid);
-          }
+          totalEnergy += fEnergy;
+          totalSpectralCentroid += fCentroid;
+          totalSpectralFlux += flux;
+
+          frameAnalyses.push({
+            timestamp: (i / audioBuffer.sampleRate),
+            energy: fEnergy,
+            spectralCentroid: fCentroid,
+            spectralFlux: flux,
+            bass: fLoudness.slice(0, 8).reduce((s, v) => s + v, 0) / 8,
+            mid: fLoudness.slice(8, 16).reduce((s, v) => s + v, 0) / 8,
+            high: fLoudness.slice(16, 24).reduce((s, v) => s + v, 0) / 8,
+          });
+
           prevCentroid = fCentroid;
-          frameCount++;
         } catch (frameErr) {
-          // Log and skip this frame; do not abort entire analysis for a single bad frame.
           console.warn('[audioProcessor] Meyda.extract failed for a frame, skipping frame:', frameErr);
-          continue;
         }
       }
     } catch (initErr) {
       console.error('Error initializing Meyda analysis loop:', initErr);
-      // fall through to fallback values below
     }
   } else {
     console.warn('[audioProcessor] Meyda not available; using fallback audio feature values.');
   }
 
-  const avgEnergy = frameCount > 0 ? energy / frameCount : 0;
-  const avgSpectralCentroid = frameCount > 0 ? spectralCentroid / frameCount : 0;
-  const avgSpectralFlux = frameCount > 0 ? spectralFlux / frameCount : 0;
-
-  // Normalize energy to a 0-1 scale (this is a rough approximation)
+  const frameCount = frameAnalyses.length;
+  const avgEnergy = frameCount > 0 ? totalEnergy / frameCount : 0;
+  const avgSpectralCentroid = frameCount > 0 ? totalSpectralCentroid / frameCount : 0;
+  const avgSpectralFlux = frameCount > 0 ? totalSpectralFlux / frameCount : 0;
   const normalizedEnergy = Math.min(avgEnergy / 10, 1);
 
   await audioContext.close();
@@ -207,5 +201,6 @@ export const analyzeAudio = async (audioFile: File): Promise<AudioFeatures> => {
     energy: normalizedEnergy,
     spectralCentroid: avgSpectralCentroid,
     spectralFlux: avgSpectralFlux,
+    frameAnalyses: frameAnalyses,
   };
 };

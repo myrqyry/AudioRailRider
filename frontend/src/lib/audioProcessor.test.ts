@@ -34,16 +34,16 @@ describe('analyzeAudio', () => {
 
   it('should analyze audio successfully', async () => {
     const mockAudioBuffer = {
-      getChannelData: () => new Float32Array(2048), // Large enough for 2 frames
+      getChannelData: () => new Float32Array(1024),
       sampleRate: 44100,
       duration: 1.0,
     };
     mockDecodeAudioData.mockResolvedValue(mockAudioBuffer);
-
-    // Simulate two frames of analysis with different spectral centroids
-    (global.window.Meyda.extract as jest.Mock)
-      .mockReturnValueOnce({ energy: 1, spectralCentroid: 1000 })
-      .mockReturnValueOnce({ energy: 1, spectralCentroid: 1200 });
+    (global.window.Meyda.extract as jest.Mock).mockReturnValue({
+      energy: 1,
+      spectralCentroid: 1000,
+      spectralFlux: 0.1,
+    });
 
     const file = new File([''], 'test.mp3', { type: 'audio/mpeg' });
     const features = await analyzeAudio(file);
@@ -51,9 +51,9 @@ describe('analyzeAudio', () => {
     expect(features).toBeDefined();
     expect(features.duration).toBe(1.0);
     expect(features.bpm).toBe(120); // The mock BPM is 120
-    expect(features.energy).toBeCloseTo(0.1); // (1 + 1) / 2 / 10
-    expect(features.spectralCentroid).toBe(1100); // (1000 + 1200) / 2
-    expect(features.spectralFlux).toBe(100); // abs(1200 - 1000) / 2 frames with flux data
+    expect(features.energy).toBeCloseTo(0.1); // 1 / 10
+    expect(features.spectralCentroid).toBe(1000);
+    expect(features.spectralFlux).toBe(0.1);
 
     expect(mockDecodeAudioData).toHaveBeenCalledTimes(1);
     expect(mockClose).toHaveBeenCalledTimes(1);
