@@ -1,0 +1,2 @@
+/* Re-export the project's Tailwind entry so the HTML link to /index.css works */
+@import './src/index.css';

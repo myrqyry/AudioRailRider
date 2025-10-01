@@ -1,0 +1,508 @@
+import { GoogleGenAI, Type } from "@google/genai";
+import { RideBlueprint } from 'shared/types';
+import { GeminiFileUploadResponse, GeminiListFilesResponse, GeminiFileMetadata, GeminiListFilesApiResponse, GeminiGetFileMetadataResponse, GeminiDownloadFileResponse } from 'shared/types/gemini';
+import { config } from '../config';
+import geminiConfig from '../gemini.config';
+import { analyzeAudio } from "../lib/audioProcessor";
+
+const SYSTEM_INSTRUCTION = `
+You are a synesthetic architect, a digital-alchemist. Your purpose is to translate a song's audio data directly into a rollercoaster blueprint.
+
+Here are the available track components:
+- 'climb': A steady upward ramp. Use for intros, builds, or quiet sections.
+  - 'angle': Gentle incline in degrees (e.g., 10 to 30).
+  - 'length': The length of the climb (e.g., 100 to 300).
+- 'drop': A thrilling downward plunge. Use for song peaks, chorus drops, or intense moments.
+  - 'angle': Steep decline in degrees (e.g., -35 to -70).
+  - 'length': The length of the drop (e.g., 100 to 300).
+- 'turn': A horizontal curve. Use to create sweeping, flowing motions.
+  - 'direction': 'left' or 'right'.
+  - 'radius': How tight the turn is (e.g., 150 for wide, 80 for sharp).
+  - 'angle': The total angle of the turn in degrees (e.g., 90, 180).
+- 'loop': A full vertical loop. The ultimate thrill for the most powerful moments.
+  - 'radius': The size of the loop (e.g., 40 to 80).
+- 'barrelRoll': A corkscrew motion. Perfect for synth solos, complex rhythms, or disorienting moments.
+  - 'rotations': How many full 360-degree rolls (e.g., 1, 2). This must be an integer.
+  - 'length': The forward distance covered during the roll (e.g., 100 to 200).
+`;
+
+const PROMPT_TEXT = (duration: number, bpm: number, energy: number, spectralCentroid: number, spectralFlux: number) => `
+You have been given an audio file that is ${duration.toFixed(0)} seconds long.
+
+Audio analysis summary:
+- BPM: ${Math.round(bpm)} BPM
+- Energy (0-1): ${energy.toFixed(2)}
+- Spectral Centroid (Hz): ${Math.round(spectralCentroid)}
+- Spectral Flux: ${spectralFlux.toFixed(3)}
+
+Listen to the entire track and analyze its emotional arc, dynamics, and rhythm. Your task is to translate this audio experience into a thrilling rollercoaster ride blueprint.
+
+- **Ride Name**: Create a creative and evocative name for the rollercoaster that reflects the music.
+- **Mood Description**: Describe the overall mood and theme of the ride in a short, evocative sentence.
+- **Palette**: First, determine the overall mood. Is it energetic, melancholic, epic, ambient? Based on this, define a 3-color hex code palette: [rail color, glow color, sky color]. Vibrant songs get bright colors (e.g., cyan, magenta), while somber songs get darker tones (e.g., deep blue, purple).
+- **Track Design**:
+  - Generate a track with 12 to 20 segments.
+  - The ride's intensity must mirror the music's dynamics. Use gentle 'climb' segments for quiet intros, builds, and verses.
+  - When the music swells or the beat drops (the chorus or other high-energy moments), you MUST use high-excitement components: 'drop', 'loop', or 'barrelRoll'.
+  - For each segment, also provide:
+    - \`intensity\`: Set 0-100 based on local musical energy, volume, or excitement (0 = intro/break, 100 = drop/peak).
+    - \`lightingEffect\`: Sync to musical features—use "strobe" for heavy beats/high BPM, "fade" for sustained notes or dreamy parts, "pulse" for vocals/builds, "none" if nothing stands out.
+    - \`environmentChange\`: For major mood, section, or instrumental shifts, set ("tunnel", "space", etc.); otherwise "none".
+    - \`audioSyncPoint\`: Timestamp (seconds, relative to this segment) for key event: beat drop, vocal entrance, or effect; use 0 if not applicable.
+  - Use 'turn' segments to handle transitions and create a sense of flow, especially during instrumental sections.
+  - For complex, textured, or fast-paced sections like solos or breakdowns, a 'barrelRoll' is highly appropriate.
+  - To prevent the ride from feeling cramped, use wide, sweeping 'turn' segments (radius > 100) to change the overall direction of the ride between intense sections.
+- Create a cohesive and thrilling ride that feels born from the music.
+`;
+
+const responseSchema = {
+    type: Type.OBJECT,
+    properties: {
+        palette: {
+            type: Type.ARRAY,
+            description: "Array of 3 hex color codes: [rail color, glow color, sky color].",
+            items: { type: Type.STRING }
+        },
+        track: {
+            type: Type.ARRAY,
+            description: "Array of track segment objects.",
+            items: {
+                type: Type.OBJECT,
+                properties: {
+                    component: { type: Type.STRING, enum: ['climb', 'drop', 'turn', 'loop', 'barrelRoll'] },
+                    angle: { type: Type.NUMBER },
+                    length: { type: Type.NUMBER },
+                    direction: { type: Type.STRING, enum: ['left', 'right'] },
+                    radius: { type: Type.NUMBER },
+                    rotations: { type: Type.INTEGER },
+                    intensity: { type: Type.NUMBER, description: "0-100, influences visual effects" },
+                    lightingEffect: { type: Type.STRING, description: "e.g., 'strobe', 'fade', 'pulse', 'none'" },
+                    environmentChange: { type: Type.STRING, description: "e.g., 'tunnel', 'space', 'underwater', 'none'" },
+                    audioSyncPoint: { type: Type.NUMBER, description: "timestamp within the segment for key audio event" },
+                },
+                required: ['component']
+            }
+        },
+        rideName: {
+            type: Type.STRING,
+            description: "A creative name for the rollercoaster."
+        },
+        moodDescription: {
+            type: Type.STRING,
+            description: "A text description of the overall mood/theme."
+        }
+    },
+    required: ['palette', 'track', 'rideName', 'moodDescription'],
+    // Ensure the model returns fields in this human-friendly ordering when possible
+    propertyOrdering: ['rideName', 'moodDescription', 'palette', 'track'],
+};
+
+/**
+ * Converts a File object to a GoogleGenAI.Part object for multimodal prompting.
+ * @param file The file to convert.
+ * @returns A promise that resolves to a generative part object.
+ */
+const MAX_INLINE_BYTES = 20 * 1024 * 1024; // 20 MB
+
+const SUPPORTED_AUDIO_MIME_TYPES = new Set([
+  'audio/wav',
+  'audio/x-wav',
+  'audio/mpeg', // canonical MIME for MP3
+  'audio/mp3',  // some browsers/clients report this
+  'audio/aiff',
+  'audio/x-aiff',
+  'audio/aac',
+  'audio/m4a',
+  'audio/ogg',
+  'audio/flac',
+  'audio/x-flac'
+]);
+
+import { GoogleGenerativeAI, Part } from "@google/generative-ai";
+
+async function fileToGenerativePart(file: File): Promise<Part> {
+    const base64EncodedData = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve((reader.result as string).split(',')[1]);
+        reader.onerror = (err) => {
+            console.error('[GeminiService] FileReader failed to read file:', err);
+            reject(new Error("Failed to read file: " + err));
+        };
+        reader.readAsDataURL(file);
+    });
+
+    return {
+        inlineData: {
+            data: base64EncodedData,
+            mimeType: file.type,
+        },
+    };
+}
+
+/**
+ * Prepares an audio part for a Gemini API request.
+ * It will upload the file if it's larger than the inline byte limit,
+ * otherwise it will encode it as a base64 string.
+ * @param genAI The GoogleGenerativeAI instance.
+ * @param file The audio file to prepare.
+ * @returns A promise that resolves to the prepared audio part.
+ */
+export const prepareAudioPart = async (genAI: GoogleGenerativeAI, file: File): Promise<Part> => {
+    const maxInlineBytes = 20 * 1024 * 1024; // 20 MB
+
+    if (file.size > maxInlineBytes) {
+        console.log(`[GeminiService] Uploading large audio file ${file.name} (${file.size} bytes)...`);
+        const uploadResult = await genAI.files.uploadFile(file, {
+            mimeType: file.type,
+        });
+        console.log(`[GeminiService] Upload complete: `, uploadResult.file);
+        return {
+            fileData: {
+                mimeType: uploadResult.file.mimeType,
+                fileUri: uploadResult.file.uri,
+            },
+        };
+    } else {
+        console.log(`[GeminiService] Using inline audio part for ${file.name} (${file.size} bytes)`);
+        return fileToGenerativePart(file);
+    }
+};
+
+/**
+ * Generates a ride blueprint from an audio file and its features.
+ * @param audioFile The audio file.
+ * @param duration The duration of the audio in seconds.
+ * @param bpm The beats per minute of the audio.
+ * @param energy The energy of the audio.
+ * @param spectralCentroid The spectral centroid of the audio.
+ * @param spectralFlux The spectral flux of the audio.
+ * @returns A promise that resolves to the generated ride blueprint.
+ */
+export const generateRideBlueprint = async (audioFile: File, duration: number, bpm: number, energy: number, spectralCentroid: number, spectralFlux: number): Promise<RideBlueprint> => {
+  // Add a new function to validate the API key before making the API call
+  const validateApiKey = () => {
+    if (!config.apiKey || config.apiKey.trim() === '') {
+      throw new Error("Gemini API key is missing. Please set it in your .env.local file.");
+    }
+  };
+
+  // Call the validation function before making the API call
+  validateApiKey();
+
+  const genAI = new GoogleGenerativeAI(config.apiKey);
+  const model = genAI.getGenerativeModel({
+      model: geminiConfig.modelName,
+      systemInstruction: SYSTEM_INSTRUCTION,
+  });
+  
+  try {
+    const audioPart = await prepareAudioPart(genAI, audioFile);
+    const textPart = PROMPT_TEXT(duration, bpm, energy, spectralCentroid, spectralFlux);
+
+    const result = await model.generateContent([textPart, audioPart]);
+
+    const response = result.response;
+    const jsonText = response.text();
+
+    if (!jsonText) {
+        throw new Error("The AI returned an empty response. Please try a different song.");
+    }
+
+    try {
+      const blueprint = JSON.parse(jsonText);
+      
+      if (!blueprint.palette || !Array.isArray(blueprint.palette) || blueprint.palette.length < 3 || !blueprint.track || !Array.isArray(blueprint.track)) {
+          throw new Error("The AI returned an invalid blueprint structure. This can happen with very unusual songs. Please try another one.");
+      }
+
+      blueprint.track.forEach((segment: any) => {
+        // Apply specific sanitization rules
+        if (segment.component === 'barrelRoll') {
+          let rawRotations = segment.rotations;
+          let sanitized = Number(rawRotations);
+          if (isNaN(sanitized)) sanitized = 1; // fallback default
+          sanitized = Math.max(1, Math.round(sanitized)); // barrelRoll should be 1 or greater, integer
+          segment.rotations = sanitized;
+        }
+        // Ensure intensity is a number between 0 and 100
+        if (typeof segment.intensity !== 'number' || isNaN(segment.intensity)) {
+          segment.intensity = 50; // Default to 50 if not provided or invalid
+        }
+        segment.intensity = Math.max(0, Math.min(100, Math.round(segment.intensity)));
+
+        // Ensure lightingEffect is a string, default to "none"
+        if (typeof segment.lightingEffect !== 'string') {
+          segment.lightingEffect = "none";
+        }
+
+        // Ensure environmentChange is a string, default to "none"
+        if (typeof segment.environmentChange !== 'string') {
+          segment.environmentChange = "none";
+        }
+
+        // Ensure audioSyncPoint is a number, default to 0
+        if (typeof segment.audioSyncPoint !== 'number' || isNaN(segment.audioSyncPoint)) {
+          segment.audioSyncPoint = 0;
+        }
+      });
+      
+      return blueprint as RideBlueprint;
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        console.error("Syntax error in JSON response:", jsonText);
+        throw new Error("The AI returned malformed data. This is a rare issue, please try again. The raw response from the AI was: " + jsonText);
+      } else {
+        throw error;
+      }
+    }
+  } catch (error) {
+    console.error("Error generating ride blueprint:", error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    if (errorMessage.includes('API key not valid')) {
+        throw new Error("Your Gemini API key is not valid. Please ensure it is correctly set in your .env.local file.");
+    }
+    if (errorMessage.includes('500') || errorMessage.includes('Internal error') || errorMessage.includes('request failed')) {
+        throw new Error("The AI had a temporary issue, possibly due to the song's complexity. Please try again in a moment or with a different track.");
+    }
+    throw new Error(`The generative muse is unavailable: ${errorMessage}`);
+  }
+};
+
+// Transcribe an audio file (optionally limited to a timestamp range).
+// Accepts File | Blob for convenience; if a Blob is provided we create a File wrapper.
+// timestamps: optional object with start/end in "MM:SS" format.
+/**
+ * Transcribes an audio file using the Gemini API.
+ * @param file The audio file to transcribe.
+ * @param timestamps Optional start and end timestamps for transcription.
+ * @returns A promise that resolves to the transcript.
+ */
+export const transcribeAudioFile = async (
+  file: File | Blob,
+  timestamps?: { start?: string; end?: string }
+): Promise<string> => {
+  // Validate API key (same policy as generateRideBlueprint)
+  const validateApiKey = () => {
+    if (!config.apiKey || config.apiKey.trim() === '') {
+      throw new Error("Gemini API key is missing. Please set it in your .env.local file.");
+    }
+  };
+  validateApiKey();
+
+  const genAI = new GoogleGenerativeAI(config.apiKey);
+  const model = genAI.getGenerativeModel({
+      model: geminiConfig.modelName,
+      systemInstruction: "You are a precise audio transcription assistant. Generate accurate transcripts of speech content.",
+  });
+
+  // Ensure we have a File instance (some callers may pass a Blob)
+  // Assumption: If a Blob lacks a filename, default to audio.<ext> (ext derived from mimeType or 'wav').
+  let audioFile: File;
+  if (file instanceof File) {
+    audioFile = file;
+  } else {
+    const mime = (file as Blob).type || 'audio/wav';
+    const ext = mime.split('/').pop() || 'wav';
+    audioFile = new File([file as Blob], `audio.${ext}`, { type: mime });
+  }
+
+  // Dev logging: requested transcription + file size + whether timestamps are applied
+  try {
+    const sizeInfo = typeof audioFile.size === 'number' ? `${audioFile.size} bytes` : 'unknown size';
+    const rangeInfo = timestamps && (timestamps.start || timestamps.end)
+      ? `${timestamps.start ?? 'start'} -> ${timestamps.end ?? 'end'}`
+      : 'none';
+    console.log(`[GeminiService] Transcription requested for '${audioFile.name}' (${sizeInfo}). Timestamp range: ${rangeInfo}`);
+  } catch (e) {
+    console.debug('[GeminiService] Failed to log transcription request details:', e);
+  }
+
+  // Build prompt text based on provided timestamps (handle start-only / end-only / both)
+  let promptText = 'Generate a transcript of the speech.';
+  if (timestamps && (timestamps.start || timestamps.end)) {
+    if (timestamps.start && timestamps.end) {
+      promptText = `Provide a transcript of the speech from ${timestamps.start} to ${timestamps.end}.`;
+    } else if (timestamps.start && !timestamps.end) {
+      promptText = `Provide a transcript of the speech from ${timestamps.start} to the end.`;
+    } else if (!timestamps.start && timestamps.end) {
+      promptText = `Provide a transcript of the speech from the start to ${timestamps.end}.`;
+    }
+  }
+
+  try {
+    // Reuse prepareAudioPart to handle inline vs upload logic and MIME validation.
+    const audioPart = await prepareAudioPart(genAI, audioFile);
+
+    const result = await model.generateContent([promptText, audioPart]);
+    const response = result.response;
+    const transcript = response.text();
+
+    if (!transcript || transcript.trim() === '') {
+      throw new Error("The AI returned an empty transcript. Try again or provide a different audio file.");
+    }
+
+    // Optionally log short preview in dev
+    if (transcript.length > 0) {
+      const preview = transcript.length > 200 ? transcript.slice(0, 200) + '...' : transcript;
+      console.log(`[GeminiService] Transcript preview: ${preview}`);
+    }
+
+    return transcript;
+  } catch (err: any) {
+    console.error('[GeminiService] Transcription failed:', err);
+    const raw = err instanceof Error ? err.message : String(err);
+    // Provide a friendly, actionable message while preserving original detail.
+    if (raw.includes('Files API') || raw.includes('upload')) {
+      throw new Error('Failed to upload or reference the audio file for transcription. Check your network and API credentials, then try again.');
+    }
+    if (raw.includes('API key not valid')) {
+      throw new Error('Your Gemini API key is not valid. Please ensure it is correctly set in your .env.local file.');
+    }
+    throw new Error(`Failed to transcribe audio: ${raw}`);
+  }
+};
+
+/**
+ * Counts the number of tokens in an audio file using the Gemini API.
+ * @param file The audio file to count tokens for.
+ * @returns A promise that resolves to the total number of tokens.
+ */
+export const countAudioTokens = async (file: File | Blob): Promise<{ totalTokens: number }> => {
+  // Validate API key (same policy as other Gemini helpers)
+  const validateApiKey = () => {
+    if (!config.apiKey || config.apiKey.trim() === '') {
+      throw new Error("Gemini API key is missing. Please set it in your .env.local file.");
+    }
+  };
+  validateApiKey();
+
+  const genAI = new GoogleGenerativeAI(config.apiKey);
+  const model = genAI.getGenerativeModel({ model: geminiConfig.modelName });
+
+  // Ensure we have a File instance (some callers may pass a Blob)
+  // Assuming default extension 'wav' if mime is absent.
+  let audioFile: File;
+  if (file instanceof File) {
+    audioFile = file;
+  } else {
+    const mime = (file as Blob).type || 'audio/wav';
+    const ext = mime.split('/').pop() || 'wav';
+    audioFile = new File([file as Blob], `audio.${ext}`, { type: mime });
+  }
+
+  try {
+    // Reuse prepareAudioPart to handle inline vs upload logic and MIME validation.
+    const audioPart = await prepareAudioPart(genAI, audioFile);
+
+    // Dev logging: file size + whether inline or upload mode was used
+    try {
+      const sizeInfo = typeof audioFile.size === 'number' ? `${audioFile.size} bytes` : 'unknown size';
+      const mode = (audioPart as any).inlineData ? 'inline' : 'unknown';
+      console.log(`[GeminiService] countAudioTokens requested for '${audioFile.name}' (${sizeInfo}). Mode: ${mode}`);
+    } catch (e) {
+      console.debug('[GeminiService] Failed to log countAudioTokens request details:', e);
+    }
+
+    // Call the minimal token-counting API with only the audio part
+    const { totalTokens } = await model.countTokens([audioPart]);
+
+    if (typeof totalTokens !== 'number' || isNaN(totalTokens)) {
+      console.debug('[GeminiService] countTokens returned unexpected shape:', { totalTokens });
+      throw new Error('Token counting returned an unexpected response from the Gemini API.');
+    }
+
+    // Dev logging: token result
+    console.log(`[GeminiService] countAudioTokens result for '${audioFile.name}': totalTokens=${totalTokens}`);
+
+    return { totalTokens };
+  } catch (err: any) {
+    console.error('[GeminiService] countAudioTokens failed:', err);
+    const raw = err instanceof Error ? err.message : String(err);
+    if (raw.includes('API key not valid') || raw.toLowerCase().includes('missing')) {
+      throw new Error('Your Gemini API key is not valid or missing. Please ensure it is set in your .env.local file.');
+    }
+    // Friendly wrapper preserving debug logs
+    throw new Error(`Failed to count audio tokens: ${raw}`);
+  }
+};
+
+/**
+ * Generate structured JSON data from Gemini using the provided prompt.
+ * Returns both the parsed RideBlueprint (typed) and the raw text returned by the model.
+ *
+ * Note: Reuses the project's RideBlueprint Type declared in ../types.
+ */
+/**
+ * Generates structured data from a prompt using the Gemini API.
+ * @param prompt The prompt to generate data from.
+ * @returns A promise that resolves to the generated data and the raw response.
+ */
+export const generateStructuredData = async (prompt: string): Promise<{ data: RideBlueprint; raw: string }> => {
+  // Validate API key is present and avoid hardcoding secrets
+  if (!config.apiKey || config.apiKey.trim() === '') {
+    throw new Error("Gemini API key is missing. Please set GEMINI_API_KEY in your environment (e.g., .env.local).");
+  }
+
+  const genAI = new GoogleGenerativeAI(config.apiKey);
+  const model = genAI.getGenerativeModel({
+      model: geminiConfig.modelName,
+      systemInstruction: SYSTEM_INSTRUCTION,
+  });
+
+  try {
+    const result = await model.generateContent(prompt);
+    const response = result.response;
+    const raw = response.text();
+
+    console.log('[GeminiService] generateStructuredData raw response preview:', raw ? (raw.length > 200 ? raw.slice(0,200) + '...' : raw) : '<empty>');
+
+    if (!raw || raw.trim() === '') {
+      throw new Error('Gemini returned an empty response for structured JSON output.');
+    }
+
+    // Parse JSON and validate minimal shape
+    let parsed: any;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      console.error('[GeminiService] Failed to parse JSON from Gemini response:', raw);
+      throw new Error('Failed to parse JSON from Gemini response. Raw response: ' + raw);
+    }
+
+    // Basic runtime validation to give helpful errors to integrators
+    if (!parsed || typeof parsed !== 'object') {
+      throw new Error('Parsed Gemini response is not an object. Raw response: ' + raw);
+    }
+    if (!Array.isArray(parsed.palette) || parsed.palette.length < 3) {
+      throw new Error('Parsed Gemini response has an invalid or missing "palette". Raw response: ' + raw);
+    }
+    if (!Array.isArray(parsed.track)) {
+      throw new Error('Parsed Gemini response has an invalid or missing "track". Raw response: ' + raw);
+    }
+    if (typeof parsed.rideName !== 'string' || parsed.rideName.trim() === '') {
+      throw new Error('Parsed Gemini response has an invalid or missing "rideName". Raw response: ' + raw);
+    }
+    if (typeof parsed.moodDescription !== 'string') {
+      parsed.moodDescription = ''; // degrade gracefully if absent
+    }
+
+    // Cast is safe after runtime checks above
+    const data = parsed as RideBlueprint;
+
+    return { data, raw };
+  } catch (err: any) {
+    console.error('[GeminiService] generateStructuredData error:', err);
+    const msg = err instanceof Error ? err.message : String(err);
+
+    if (msg.includes('API key not valid') || msg.toLowerCase().includes('unauthorized')) {
+      throw new Error('Gemini API key invalid or unauthorized. Ensure GEMINI_API_KEY is correct and has access to the chosen model.');
+    }
+
+    // Bubble up schema/validation related messages verbatim to aid debugging
+    if (msg.includes('missing') || msg.includes('invalid') || msg.includes('parse')) {
+      throw new Error(`Structured output validation error: ${msg}`);
+    }
+
+    throw new Error(`Failed to generate structured data from Gemini: ${msg}`);
+  }
+};
