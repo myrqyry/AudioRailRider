@@ -9,7 +9,7 @@ export const runAudioProcessingWorkflow = async (
   file: File,
   options?: { signal?: AbortSignal }
 ): Promise<void> => {
-  const { setStatus, setTrackData, setErrorMessage } = useAppStore.getState().actions;
+  const { setStatus, setTrackData, setError } = useAppStore.getState().actions;
   const signal = options?.signal;
   const checkAbort = () => {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -24,7 +24,6 @@ export const runAudioProcessingWorkflow = async (
 
     checkAbort();
     setStatus(AppStatus.Generating, 'Translating sound into structure...');
-    // Pass only the essential data to Gemini service.
     checkAbort();
     const rawBlueprint = await generateRideBlueprint(
       file,
@@ -49,17 +48,23 @@ export const runAudioProcessingWorkflow = async (
     setTrackData(newTrackData);
     setStatus(AppStatus.Ready);
   } catch (error: unknown) {
-    // If adding cancellation (see related comment), don't surface user-initiated aborts
     if (error instanceof DOMException && error.name === 'AbortError') {
+      console.log('Audio processing was aborted.');
       return;
     }
+
     const message =
       error instanceof Error
         ? error.message
         : typeof error === 'string'
         ? error
-        : 'Unknown error';
-    setStatus(AppStatus.Error, 'Processing failed');
-    setErrorMessage(`Failed to process '${file.name}': ${message}`);
+        : 'An unknown error occurred during processing.';
+
+    console.error("Error in audio processing workflow:", message);
+
+    setError({
+        title: "Could Not Process Audio",
+        message: `An error occurred while processing '${file.name}'. ${message}`
+    });
   }
 };
