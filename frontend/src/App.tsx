@@ -3,16 +3,16 @@ import { AppStatus } from 'shared/types';
 import { useAppStore } from './lib/store';
 import { runAudioProcessingWorkflow } from './lib/workflow';
 import { Loader } from './components/Loader';
-import { UploadIcon, PlayIcon, SparkleIcon } from './components/Icon';
+import { UploadIcon, PlayIcon, SparkleIcon, AlertTriangleIcon } from './components/Icon';
 import ThreeCanvas from './components/ThreeCanvas';
 
 const App: React.FC = () => {
     const status = useAppStore((state) => state.status);
-    const errorMessage = useAppStore((state) => state.errorMessage);
+    const error = useAppStore((state) => state.error);
     const statusMessage = useAppStore((state) => state.statusMessage);
     const audioFile = useAppStore((state) => state.audioFile);
     const trackData = useAppStore((state) => state.trackData);
-    const { setAudioFile, startRide, resetApp, startRideAgain } = useAppStore((state) => state.actions);
+    const { setAudioFile, startRide, resetApp, startRideAgain, setError } = useAppStore((state) => state.actions);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
@@ -20,21 +20,19 @@ const App: React.FC = () => {
         if (!file) return;
 
         const allowedTypes = new Set(['audio/mpeg', 'audio/wav', 'audio/x-wav']);
-        const maxBytes = 20 * 1024 * 1024; // 20 MB (tune as needed)
+        const maxBytes = 20 * 1024 * 1024; // 20 MB
 
         if (!allowedTypes.has(file.type)) {
-            console.warn(`Unsupported file type: ${file.type}`);
-            // TODO: surface this to the user via store if desired
+            setError({ title: "Unsupported File Type", message: `Please select a valid audio file (MP3, WAV). You selected a file of type: ${file.type}` });
             return;
         }
         if (file.size > maxBytes) {
-            console.warn(`File too large: ${(file.size / (1024 * 1024)).toFixed(1)}MB`);
-            // TODO: surface this to the user via store if desired
+            setError({ title: "File Too Large", message: `The selected file is too large (${(file.size / (1024 * 1024)).toFixed(1)}MB). Please select a file smaller than 20MB.` });
             return;
         }
 
         setAudioFile(file);
-    }, [setAudioFile]);
+    }, [setAudioFile, setError]);
     
     useEffect(() => {
         if (status === AppStatus.Idle && fileInputRef.current) {
@@ -44,7 +42,6 @@ const App: React.FC = () => {
 
     useEffect(() => {
         if (audioFile) {
-            // Trigger the workflow when the audio file is set
             runAudioProcessingWorkflow(audioFile);
         }
     }, [audioFile]);
@@ -52,11 +49,13 @@ const App: React.FC = () => {
     const renderContent = () => {
         switch (status) {
             case AppStatus.Error:
+                if (!error) return null;
                 return (
-                    <div className="text-center animate-fade-in">
-                        <h2 className="text-2xl font-bold text-red-400">An Error Occurred</h2>
-                        <p className="mt-2 text-red-200 max-w-lg">{errorMessage}</p>
-                        <button onClick={resetApp} className="mt-6 px-6 py-2 bg-red-500 hover:bg-red-600 rounded-md transition-colors">Try Again</button>
+                    <div className="text-center animate-fade-in bg-red-900/20 border border-red-500/50 rounded-lg p-8 max-w-lg shadow-xl">
+                        <AlertTriangleIcon className="w-16 h-16 text-red-400 mx-auto" />
+                        <h2 className="mt-4 text-3xl font-bold text-red-300">{error.title}</h2>
+                        <p className="mt-2 text-red-200">{error.message}</p>
+                        <button onClick={resetApp} className="mt-6 px-8 py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-md transition-colors transform hover:scale-105">Try Again</button>
                     </div>
                 );
             case AppStatus.Idle:

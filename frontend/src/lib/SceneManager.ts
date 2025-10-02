@@ -78,16 +78,8 @@ export class SceneManager {
         if (typeof window !== 'undefined') {
             window.removeEventListener('resize', this.handleResize);
         }
-        if (this.stars) {
-            this.scene.remove(this.stars);
-            this.stars.geometry.dispose();
-            const mat = this.stars.material;
-            if (Array.isArray(mat)) {
-                mat.forEach(m => m.dispose());
-            } else {
-                mat.dispose();
-            }
-            this.stars = undefined;
+        if (this.skyboxTexture) {
+            this.skyboxTexture.dispose();
         }
         if (this.renderer.domElement.parentElement === this.container) {
             this.container.removeChild(this.renderer.domElement);
