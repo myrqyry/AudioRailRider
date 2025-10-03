@@ -1,5 +1,5 @@
 import { useAppStore } from './store';
-import { analyzeAudio } from './audioProcessor';
+// analyzeAudio is no longer needed here
 import { generateRideBlueprint } from '../services/geminiService';
 import { validateAndRefineBlueprint } from './trackValidator';
 import { buildTrackData } from './trackBuilder';
@@ -17,22 +17,12 @@ export const runAudioProcessingWorkflow = async (
 
   try {
     checkAbort();
-    setStatus(AppStatus.Analyzing, 'Reading audio essence...');
-    checkAbort();
-    const audioFeatures = await analyzeAudio(file);
-    const { duration, bpm, energy, spectralCentroid, spectralFlux } = audioFeatures;
-
-    checkAbort();
+    // Go straight to generating, as analysis is now a backend process.
     setStatus(AppStatus.Generating, 'Translating sound into structure...');
     checkAbort();
-    const rawBlueprint = await generateRideBlueprint(
-      file,
-      duration,
-      bpm,
-      energy,
-      spectralCentroid,
-      spectralFlux
-    );
+
+    // The backend now returns both the blueprint and the audio features needed for rendering.
+    const { blueprint: rawBlueprint, features: audioFeatures } = await generateRideBlueprint(file);
 
     checkAbort();
     setStatus(AppStatus.Generating, 'Refining for physical plausibility...');
@@ -42,6 +32,7 @@ export const runAudioProcessingWorkflow = async (
     checkAbort();
     setStatus(AppStatus.Generating, 'Constructing ephemeral cathedral...');
     checkAbort();
+    // Use the audioFeatures returned from the backend.
     const newTrackData = buildTrackData(refinedBlueprint, audioFeatures);
 
     checkAbort();

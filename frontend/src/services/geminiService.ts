@@ -1,4 +1,4 @@
-import { RideBlueprint } from 'shared/types';
+import { RideBlueprint, AudioFeatures } from 'shared/types';
 
 const BACKEND_URL = 'http://localhost:8000'; // Should be in a config file
 
@@ -15,19 +15,9 @@ const BACKEND_URL = 'http://localhost:8000'; // Should be in a config file
  */
 export const generateRideBlueprint = async (
   audioFile: File,
-  duration: number,
-  bpm: number,
-  energy: number,
-  spectralCentroid: number,
-  spectralFlux: number
-): Promise<RideBlueprint> => {
+): Promise<{ blueprint: RideBlueprint; features: AudioFeatures }> => {
   const formData = new FormData();
   formData.append('audio_file', audioFile);
-  formData.append('duration', String(duration));
-  formData.append('bpm', String(bpm));
-  formData.append('energy', String(energy));
-  formData.append('spectralCentroid', String(spectralCentroid));
-  formData.append('spectralFlux', String(spectralFlux));
 
   try {
     const response = await fetch(`${BACKEND_URL}/api/generate-blueprint`, {

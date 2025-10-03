@@ -5,6 +5,7 @@ from google import genai
 from google.genai import types
 from google.genai.errors import APIError, PermissionDenied, InvalidArgument
 from ..config.settings import settings
+from .audio_analysis_service import analyze_audio
 
 class GeminiService:
     def __init__(self):
@@ -35,11 +36,18 @@ Track components: 'climb', 'drop', 'turn', 'loop', 'barrelRoll'.
 - 'barrelRoll': rotations (1-2), length (100-200).
 """
 
-    async def generate_blueprint(self, duration: float, bpm: float, energy: float,
-                                 spectral_centroid: float, spectral_flux: float,
-                                 audio_bytes: bytes, content_type: str):
+    async def generate_blueprint(self, audio_bytes: bytes, content_type: str):
         try:
-            prompt = self.generate_prompt_text(duration, bpm, energy, spectral_centroid, spectral_flux)
+            # Server-side audio analysis
+            audio_features = analyze_audio(audio_bytes)
+
+            prompt = self.generate_prompt_text(
+                audio_features["duration"],
+                audio_features["bpm"],
+                audio_features["energy"],
+                audio_features["spectralCentroid"],
+                audio_features["spectralFlux"]
+            )
 
             uploaded_file = await self.client.aio.files.upload(
                 file=audio_bytes,
@@ -56,7 +64,11 @@ Track components: 'climb', 'drop', 'turn', 'loop', 'barrelRoll'.
                 system_instruction=self.SYSTEM_INSTRUCTION,
             )
 
-            return json.loads(response.text)
+            blueprint = json.loads(response.text)
+
+            # Return both the blueprint and the audio features
+            return {"blueprint": blueprint, "features": audio_features}
+
         except PermissionDenied:
             raise HTTPException(status_code=401, detail="Authentication failed. Please check the API key.")
         except InvalidArgument as e:
