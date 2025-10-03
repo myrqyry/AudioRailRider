@@ -5,6 +5,7 @@ import { runAudioProcessingWorkflow } from './lib/workflow';
 import { Loader } from './components/Loader';
 import { UploadIcon, PlayIcon, SparkleIcon, AlertTriangleIcon } from './components/Icon';
 import ThreeCanvas from './components/ThreeCanvas';
+import ReglOverlay from './components/ReglOverlay';
 
 const App: React.FC = () => {
     const status = useAppStore((state) => state.status);
@@ -12,6 +13,7 @@ const App: React.FC = () => {
     const statusMessage = useAppStore((state) => state.statusMessage);
     const audioFile = useAppStore((state) => state.audioFile);
     const trackData = useAppStore((state) => state.trackData);
+    const audioFeatures = useAppStore((state) => state.trackData?.audioFeatures); // Get audioFeatures for the overlay
     const { setAudioFile, startRide, resetApp, startRideAgain, setError } = useAppStore((state) => state.actions);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -124,7 +126,10 @@ const App: React.FC = () => {
             </div>
             
             {(status === AppStatus.Riding || status === AppStatus.Ready) && trackData && (
-                <ThreeCanvas />
+                <>
+                    <ThreeCanvas />
+                    <ReglOverlay audioFeatures={audioFeatures || null} />
+                </>
             )}
         </main>
     );
