@@ -1,6 +1,5 @@
 import { RideBlueprint, AudioFeatures } from 'shared/types';
-
-const BACKEND_URL = 'http://localhost:8000'; // Should be in a config file
+import { getEndpointUrl, API_ENDPOINTS, buildApiUrl, withRetry, validateApiResponse, getErrorMessage } from '../config/api';
 
 /**
  * Generates a ride blueprint by sending the audio file and its features
@@ -20,6 +19,14 @@ export const generateRideBlueprint = async (
   const formData = new FormData();
   formData.append('audio_file', audioFile);
 
+  console.log('[GeminiService] Starting blueprint generation request', {
+    url: `${BACKEND_URL}/api/generate-blueprint`,
+    fileName: audioFile.name,
+    fileSize: audioFile.size,
+    fileType: audioFile.type,
+    signalAborted: signal.aborted
+  });
+
   try {
     const response = await fetch(`${BACKEND_URL}/api/generate-blueprint`, {
       method: 'POST',
@@ -27,14 +34,37 @@ export const generateRideBlueprint = async (
       signal, // Pass the abort signal to the fetch request
     });
 
+    console.log('[GeminiService] Received response', {
+      status: response.status,
+      statusText: response.statusText,
+      headers: Object.fromEntries(response.headers.entries())
+    });
+
     if (!response.ok) {
-      const errorData = await response.json();
+      const errorText = await response.text();
+      console.error('[GeminiService] Response not ok', {
+        status: response.status,
+        statusText: response.statusText,
+        errorText
+      });
+      const errorData = await response.json().catch(() => ({ detail: errorText }));
       throw new Error(errorData.detail || 'Failed to generate ride blueprint');
     }
 
-    return await response.json();
+    const result = await response.json();
+    console.log('[GeminiService] Successfully parsed response JSON');
+    return result;
   } catch (error) {
-    console.error("Error generating ride blueprint:", error);
+    console.error("[GeminiService] Error generating ride blueprint:", error);
+
+    if (error instanceof Error) {
+      if (error.name === 'AbortError') {
+        console.log('[GeminiService] Request was aborted');
+      } else if (error.message.includes('fetch')) {
+        console.error('[GeminiService] Network error - backend may not be running');
+      }
+    }
+
     const errorMessage = error instanceof Error ? error.message : String(error);
     throw new Error(`The generative muse is unavailable: ${errorMessage}`);
   }

@@ -12,11 +12,13 @@ interface AppState {
     statusMessage: string;
     audioFile: File | null;
     trackData: TrackData | null;
+    workflowProgress: number;
     actions: {
         setStatus: (status: AppStatus, message?: string) => void;
         setTrackData: (data: TrackData | null) => void;
         setError: (error: ErrorState | null) => void;
         setAudioFile: (file: File) => void;
+        setWorkflowProgress: (progress: number) => void;
         resetApp: () => void;
         startRide: () => void;
         handleRideFinish: () => void;
@@ -30,13 +32,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     statusMessage: '',
     audioFile: null,
     trackData: null,
+    workflowProgress: 0,
     actions: {
         setStatus: (status: AppStatus, message?: string) => set({ status, statusMessage: message || '', error: null }),
         setTrackData: (data: TrackData | null) => set({ trackData: data }),
         setError: (error: ErrorState | null) => set({ error, status: error ? AppStatus.Error : get().status }),
         setAudioFile: (file: File) => {
-            set({ audioFile: file, status: AppStatus.Idle, error: null });
+            set({ audioFile: file, status: AppStatus.Idle, error: null, workflowProgress: 0 });
         },
+        setWorkflowProgress: (progress: number) => set({ workflowProgress: progress }),
         startRide: () => {
             if (get().status === AppStatus.Ready && get().trackData && get().audioFile) {
                 set({ status: AppStatus.Riding });
@@ -49,6 +53,7 @@ export const useAppStore = create<AppState>((set, get) => ({
                 statusMessage: '',
                 audioFile: null,
                 trackData: null,
+                workflowProgress: 0,
             });
         },
         handleRideFinish: () => {
