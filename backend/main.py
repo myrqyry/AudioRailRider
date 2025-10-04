@@ -1,9 +1,9 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from .app.api.endpoints import router
-from .app.config.settings import settings
-from .app.limiter import limiter
-from .app.exceptions import http_exception_handler, generic_exception_handler
+from app.api.endpoints import router
+from app.config.settings import settings
+from app.limiter import limiter
+from app.exceptions import http_exception_handler, generic_exception_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
 import uvicorn
