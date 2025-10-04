@@ -15,6 +15,7 @@ const BACKEND_URL = 'http://localhost:8000'; // Should be in a config file
  */
 export const generateRideBlueprint = async (
   audioFile: File,
+  signal: AbortSignal
 ): Promise<{ blueprint: RideBlueprint; features: AudioFeatures }> => {
   const formData = new FormData();
   formData.append('audio_file', audioFile);
@@ -23,6 +24,7 @@ export const generateRideBlueprint = async (
     const response = await fetch(`${BACKEND_URL}/api/generate-blueprint`, {
       method: 'POST',
       body: formData,
+      signal, // Pass the abort signal to the fetch request
     });
 
     if (!response.ok) {

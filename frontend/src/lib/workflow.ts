@@ -15,14 +15,25 @@ export const runAudioProcessingWorkflow = async (
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
   };
 
+  // --- Timeout Controller ---
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+    setError({
+      title: "Processing Timeout",
+      message: "The audio analysis is taking longer than expected. Please try a different file or check the server status."
+    });
+  }, 60000); // 60-second timeout
+
   try {
     checkAbort();
-    // Go straight to generating, as analysis is now a backend process.
     setStatus(AppStatus.Generating, 'Translating sound into structure...');
     checkAbort();
 
-    // The backend now returns both the blueprint and the audio features needed for rendering.
-    const { blueprint: rawBlueprint, features: audioFeatures } = await generateRideBlueprint(file);
+    // Pass the abort signal to the fetch call
+    const { blueprint: rawBlueprint, features: audioFeatures } = await generateRideBlueprint(file, controller.signal);
+
+    clearTimeout(timeoutId); // Clear the timeout if the request succeeds
 
     checkAbort();
     setStatus(AppStatus.Generating, 'Refining for physical plausibility...');
