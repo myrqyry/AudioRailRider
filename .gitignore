@@ -31,3 +31,4 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 frontend/node_modules/*
+backend/__pycache__/main.cpython-312.pyc
