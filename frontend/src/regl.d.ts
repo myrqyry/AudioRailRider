@@ -1,6 +1,4 @@
 declare module 'regl' {
-  import { GL } from 'gl-react';
-
   type ReglContext = any; // A basic type for the Regl context
   type DrawCommand = (props?: any) => void;
   type ReglRenderLoop = {
