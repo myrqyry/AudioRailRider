@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      all:
+        specifier: ^0.0.0
+        version: 0.0.0
     devDependencies:
       concurrently:
         specifier: ^8.2.2
@@ -955,6 +959,9 @@ packages:
   agent-base@7.1.4:
     resolution: {integrity: sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==}
     engines: {node: '>= 14'}
+
+  all@0.0.0:
+    resolution: {integrity: sha512-0oKlfNVv2d+d7c1gwjGspzgbwot47PGQ4b3v1ccx4mR8l9P/Y6E6Dr/yE8lNT63EcAKEbHo6UG3odDpC/NQcKw==}
 
   ansi-escapes@4.3.2:
     resolution: {integrity: sha512-gKXj5ALrKWQLsYG9jlTRmR/xKluxHV+Z9QEwNIgCfM1/uwPMCuzVVnh5mwTd+OuBZcwSIMbqssNWRm1lE51QaQ==}
@@ -3360,6 +3367,8 @@ snapshots:
       - supports-color
 
   agent-base@7.1.4: {}
+
+  all@0.0.0: {}
 
   ansi-escapes@4.3.2:
     dependencies:

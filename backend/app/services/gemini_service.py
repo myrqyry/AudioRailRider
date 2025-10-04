@@ -3,7 +3,7 @@ import json
 from fastapi import HTTPException
 from google import genai
 from google.genai import types
-from google.genai.errors import APIError, PermissionDenied, InvalidArgument
+from google.genai.errors import APIError
 from ..config.settings import settings
 from .audio_analysis_service import analyze_audio
 
@@ -55,9 +55,9 @@ Track components: 'climb', 'drop', 'turn', 'loop', 'barrelRoll'.
             )
 
             response = await self.client.aio.models.generate_content(
-                model='gemini-1.5-flash',
+                model='gemini-2.5-flash',
                 contents=[prompt, uploaded_file],
-                generation_config=types.GenerationConfig(
+                config=types.GenerateContentConfig(
                     response_mime_type='application/json',
                     temperature=0.8
                 ),
@@ -69,12 +69,13 @@ Track components: 'climb', 'drop', 'turn', 'loop', 'barrelRoll'.
             # Return both the blueprint and the audio features
             return {"blueprint": blueprint, "features": audio_features}
 
-        except PermissionDenied:
-            raise HTTPException(status_code=401, detail="Authentication failed. Please check the API key.")
-        except InvalidArgument as e:
-            raise HTTPException(status_code=400, detail=f"Invalid request: {str(e)}")
         except APIError as e:
-            raise HTTPException(status_code=500, detail=f"API error: {str(e)}")
+            if e.status == 401:
+                raise HTTPException(status_code=401, detail="Authentication failed. Please check the API key.")
+            elif e.status == 400:
+                raise HTTPException(status_code=400, detail=f"Invalid request: {str(e)}")
+            else:
+                raise HTTPException(status_code=500, detail=f"API error: {str(e)}")
         except json.JSONDecodeError:
             raise HTTPException(status_code=500, detail="The AI returned a response that was not valid JSON.")
         except Exception as e:
@@ -85,9 +86,9 @@ Track components: 'climb', 'drop', 'turn', 'loop', 'barrelRoll'.
             full_prompt = f"Generate a photorealistic, equirectangular 360-degree panorama of: {prompt}"
 
             response = await self.client.aio.models.generate_content(
-                model='gemini-1.5-flash-preview-0514',
+                model='gemini-2.5-flash',
                 contents=full_prompt,
-                generation_config=types.GenerationConfig(
+                config=types.GenerateContentConfig(
                     response_mime_type="image/jpeg"
                 )
             )
@@ -99,12 +100,13 @@ Track components: 'climb', 'drop', 'turn', 'loop', 'barrelRoll'.
             base64_image = base64.b64encode(image_bytes).decode('utf-8')
 
             return {"imageUrl": f"data:image/jpeg;base64,{base64_image}"}
-        except PermissionDenied:
-            raise HTTPException(status_code=401, detail="Authentication failed. Please check the API key.")
-        except InvalidArgument as e:
-            raise HTTPException(status_code=400, detail=f"Invalid request for skybox generation: {str(e)}")
         except APIError as e:
-            raise HTTPException(status_code=500, detail=f"API error during skybox generation: {str(e)}")
+            if e.status == 401:
+                raise HTTPException(status_code=401, detail="Authentication failed. Please check the API key.")
+            elif e.status == 400:
+                raise HTTPException(status_code=400, detail=f"Invalid request for skybox generation: {str(e)}")
+            else:
+                raise HTTPException(status_code=500, detail=f"API error during skybox generation: {str(e)}")
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"An unexpected error occurred during image generation: {e}")
 

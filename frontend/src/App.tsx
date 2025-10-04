@@ -1,8 +1,10 @@
 import React, { useRef, useEffect, useCallback } from 'react';
-import { AppStatus } from '../shared/types';
+import { AppStatus } from '../../shared/types';
 import { useAppStore } from './lib/store';
 import { runAudioProcessingWorkflow } from './lib/workflow';
 import { Loader } from './components/Loader';
+import { LoadingProgress } from './components/LoadingProgress';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { UploadIcon, PlayIcon, SparkleIcon, AlertTriangleIcon } from './components/Icon';
 import ThreeCanvas from './components/ThreeCanvas';
 import ReglOverlay from './components/ReglOverlay';
@@ -119,17 +121,23 @@ const App: React.FC = () => {
     return (
         <main className="relative w-full h-screen bg-black overflow-hidden flex items-center justify-center">
             <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-20"></div>
-            {(status === AppStatus.Analyzing || status === AppStatus.Generating) && <Loader message={statusMessage} />}
+            
+            {status === AppStatus.Analyzing && <LoadingProgress stage="analyzing" />}
+            {status === AppStatus.Generating && (
+                statusMessage.includes('Translating') ? <LoadingProgress stage="generating" /> :
+                statusMessage.includes('Refining') ? <LoadingProgress stage="generating" progress={50} /> :
+                <LoadingProgress stage="building" progress={75} />
+            )}
             
             <div className="relative z-10 p-4">
                 {renderContent()}
             </div>
             
             {(status === AppStatus.Riding || status === AppStatus.Ready) && trackData && (
-                <>
+                <ErrorBoundary>
                     <ThreeCanvas />
                     <ReglOverlay audioFeatures={audioFeatures || null} />
-                </>
+                </ErrorBoundary>
             )}
         </main>
     );
