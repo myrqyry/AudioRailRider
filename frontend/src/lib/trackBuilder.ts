@@ -33,6 +33,7 @@ const normalizeSegmentComponent = (
 };
 
 export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFeatures): TrackData => {
+    const SPEED_MULTIPLIER = 1.25;
     const points: THREE.Vector3[] = [];
     const upVectors: THREE.Vector3[] = [];
     const segmentDetails: TrackData['segmentDetails'] = [];
@@ -61,7 +62,7 @@ export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFe
 
     // Sanitize and clamp values
     const length = Math.max(1, Math.floor(Number(RIDE_CONFIG.INITIAL_TRACK_SEGMENT_LENGTH) || 0));
-    let spacing = Number(RIDE_CONFIG.INITIAL_TRACK_SEGMENT_SPACING);
+    let spacing = Number(RIDE_CONFIG.INITIAL_TRACK_SEGMENT_SPACING) * SPEED_MULTIPLIER;
     if (!isFinite(spacing) || spacing < 0) spacing = DEFAULT_SPACING;
 
     for(let i=0; i<length; i++){
@@ -93,7 +94,7 @@ export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFe
                 const angle = THREE.MathUtils.degToRad(THREE.MathUtils.clamp(angleValue, -90, 90));
 
                 const lengthValue = typed.length ?? 150;
-                const length = Math.max(10, lengthValue);
+                const length = Math.max(10, lengthValue) * SPEED_MULTIPLIER;
 
                 const dir_horizontal = currentDir.clone();
                 dir_horizontal.y = 0;
@@ -113,7 +114,7 @@ export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFe
             case 'turn': {
                 const typed = segment as Extract<TrackSegment, { component: 'turn' }>;
                 const radiusValue = typed.radius ?? 80;
-                const radius = Math.max(10, radiusValue);
+                const radius = Math.max(10, radiusValue) * SPEED_MULTIPLIER;
 
                 const angleValue = typed.angle ?? 90;
                 const angle = THREE.MathUtils.degToRad(THREE.MathUtils.clamp(angleValue, -360, 360));
@@ -136,30 +137,19 @@ export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFe
             case 'loop': {
                 const typed = segment as Extract<TrackSegment, { component: 'loop' }>;
                 const radiusValue = typed.radius ?? 50;
-                const radius = Math.max(10, radiusValue);
-                const loopCenter = currentPos.clone().add(currentDir.clone().multiplyScalar(radius));
-                
+                const radius = Math.max(10, radiusValue) * SPEED_MULTIPLIER;
+                const forwardStretch = Math.max(radius * 1.5, (typed as any).length ? Math.max(20, Number((typed as any).length)) * SPEED_MULTIPLIER : radius * Math.PI * 0.75);
+
+                const center = currentPos.clone().add(currentDir.clone().multiplyScalar(radius));
+
                 for (let i = 1; i <= resolution; i++) {
                     const alpha = i / resolution;
                     const loopAngle = alpha * Math.PI * 2;
-                    const point = new THREE.Vector3(
-                        0,
-                        Math.sin(loopAngle) * radius,
-                        (Math.cos(loopAngle) - 1) * -radius
-                    );
-                    const up = new THREE.Vector3(0, Math.cos(loopAngle), -Math.sin(loopAngle));
-                    
-                    const matrix = new THREE.Matrix4().makeBasis(
-                        currentDir.clone().cross(currentUp).normalize(), // right
-                        currentUp,                                        // up  
-                        currentDir                                        // forward
-                    );
-                    matrix.setPosition(currentPos);
-                    point.applyMatrix4(matrix);
-                    up.transformDirection(matrix);
-
+                    const upOffset = currentUp.clone().multiplyScalar(Math.sin(loopAngle) * radius);
+                    const forwardBase = currentDir.clone().multiplyScalar(-Math.cos(loopAngle) * radius + alpha * forwardStretch);
+                    const point = center.clone().add(upOffset).add(forwardBase);
                     segmentPoints.push(point);
-                    segmentUps.push(up);
+                    segmentUps.push(currentUp.clone());
                 }
                 break;
             }
@@ -169,7 +159,7 @@ export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFe
                 const rotations = Math.max(1, Math.round(rotationsValue));
 
                 const lengthValue = typed.length ?? 150;
-                const length = Math.max(10, lengthValue);
+                const length = Math.max(10, lengthValue) * SPEED_MULTIPLIER;
                 const endPos = currentPos.clone().add(currentDir.clone().multiplyScalar(length));
 
                 for (let i = 1; i <= resolution; i++) {
@@ -185,7 +175,7 @@ export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFe
                     index,
                     component: rawComponent
                 });
-                const fallbackLength = Math.max(10, (segment as { length?: number }).length ?? 80);
+                const fallbackLength = Math.max(10, (segment as { length?: number }).length ?? 80) * SPEED_MULTIPLIER;
                 for (let i = 1; i <= resolution; i++) {
                     const alpha = i / resolution;
                     segmentPoints.push(currentPos.clone().add(currentDir.clone().multiplyScalar(alpha * fallbackLength)));
@@ -209,6 +199,10 @@ export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFe
             audioSyncPoint: segment.audioSyncPoint
         });
     });
+
+    if (points.length > 2) {
+        applyAudioWarp(points, upVectors, audioFeatures);
+    }
 
     const totalSpanDenominator = Math.max(points.length - 1, 1);
     const segmentProgress = segmentSpans.map((span) => {
@@ -243,4 +237,120 @@ export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFe
             frameAnalyses: []
         },
     };
+};
+
+const applyAudioWarp = (points: THREE.Vector3[], upVectors: THREE.Vector3[], audioFeatures?: AudioFeatures) => {
+    if (!audioFeatures) {
+        applyDefaultWave(points, upVectors);
+        return;
+    }
+
+    const frames = audioFeatures.frameAnalyses || [];
+    if (!frames.length) {
+        applyDefaultWave(points, upVectors);
+        return;
+    }
+
+    const worldUp = new THREE.Vector3(0, 1, 0);
+    const prev = new THREE.Vector3();
+    const next = new THREE.Vector3();
+    const tangent = new THREE.Vector3();
+    const lateral = new THREE.Vector3();
+    const rollUp = new THREE.Vector3();
+    let smoothedLateral = 0;
+    let smoothedVertical = 0;
+    let smoothedRoll = 0;
+
+    const frameCount = frames.length;
+    const maxEnergy = frames.reduce((acc, f) => Math.max(acc, f.energy), 0) || 1;
+    const maxFlux = frames.reduce((acc, f) => Math.max(acc, f.spectralFlux), 0) || 1;
+    const maxCentroid = frames.reduce((acc, f) => Math.max(acc, f.spectralCentroid), 0) || 1;
+
+    const sample = (progress: number, key: 'energy' | 'spectralFlux' | 'spectralCentroid') => {
+        if (frameCount === 1) return frames[0][key];
+        const scaled = THREE.MathUtils.clamp(progress, 0, 1) * (frameCount - 1);
+        const idx = Math.floor(scaled);
+        const nextIdx = Math.min(frameCount - 1, idx + 1);
+        const t = scaled - idx;
+        const a = frames[idx][key];
+        const b = frames[nextIdx][key];
+        return THREE.MathUtils.lerp(a, b, t);
+    };
+
+    for (let i = 1; i < points.length - 1; i++) {
+        const progress = i / (points.length - 1);
+        const fade = THREE.MathUtils.smoothstep(progress, 0.05, 0.95);
+        const energyNorm = (sample(progress, 'energy') / maxEnergy) * fade;
+        const fluxNorm = (sample(progress, 'spectralFlux') / maxFlux) * fade;
+        const centroidNorm = (sample(progress, 'spectralCentroid') / maxCentroid) * fade;
+
+        prev.copy(points[i - 1]);
+        next.copy(points[i + 1]);
+        tangent.copy(next).sub(prev);
+        if (tangent.lengthSq() < 1e-6) continue;
+        tangent.normalize();
+
+        lateral.crossVectors(tangent, worldUp);
+        if (lateral.lengthSq() < 1e-6) {
+            lateral.set(1, 0, 0);
+        } else {
+            lateral.normalize();
+        }
+
+        const swirl = Math.sin(progress * Math.PI * 4 + fluxNorm * 6.0);
+        const lift = Math.cos(progress * Math.PI * 3.2 + centroidNorm * 4.0);
+
+        const targetLat = swirl * fluxNorm * 8.0;
+        const targetVert = lift * energyNorm * 11.0;
+        const targetRoll = swirl * 0.3 * fluxNorm + centroidNorm * 0.18;
+
+        smoothedLateral = THREE.MathUtils.lerp(smoothedLateral, targetLat, 0.2);
+        smoothedVertical = THREE.MathUtils.lerp(smoothedVertical, targetVert, 0.2);
+        smoothedRoll = THREE.MathUtils.lerp(smoothedRoll, targetRoll, 0.18);
+
+        points[i].addScaledVector(lateral, smoothedLateral);
+        points[i].y += smoothedVertical;
+
+        rollUp.copy(worldUp).applyAxisAngle(tangent, smoothedRoll).normalize();
+        upVectors[i].lerp(rollUp, 0.45).normalize();
+    }
+};
+
+const applyDefaultWave = (points: THREE.Vector3[], upVectors: THREE.Vector3[]) => {
+    if (points.length < 3) return;
+    const worldUp = new THREE.Vector3(0, 1, 0);
+    const prev = new THREE.Vector3();
+    const next = new THREE.Vector3();
+    const tangent = new THREE.Vector3();
+    const lateral = new THREE.Vector3();
+    let smoothedLateral = 0;
+    let smoothedVertical = 0;
+
+    for (let i = 1; i < points.length - 1; i++) {
+        const progress = i / (points.length - 1);
+        const fade = THREE.MathUtils.smoothstep(progress, 0.05, 0.95);
+        const wave = Math.sin(progress * Math.PI * 3.0) * fade;
+
+        prev.copy(points[i - 1]);
+        next.copy(points[i + 1]);
+        tangent.copy(next).sub(prev);
+        if (tangent.lengthSq() < 1e-6) continue;
+        tangent.normalize();
+
+        lateral.crossVectors(tangent, worldUp);
+        if (lateral.lengthSq() < 1e-6) {
+            lateral.set(1, 0, 0);
+        } else {
+            lateral.normalize();
+        }
+
+        const targetLat = wave * 6.5;
+        const targetVert = wave * 8.0;
+        smoothedLateral = THREE.MathUtils.lerp(smoothedLateral, targetLat, 0.22);
+        smoothedVertical = THREE.MathUtils.lerp(smoothedVertical, targetVert, 0.22);
+
+        points[i].addScaledVector(lateral, smoothedLateral);
+        points[i].y += smoothedVertical;
+        upVectors[i].lerp(worldUp, 0.6).normalize();
+    }
 };

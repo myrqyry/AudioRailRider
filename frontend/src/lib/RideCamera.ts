@@ -3,6 +3,7 @@ import { TrackData } from 'shared/types';
 import { RIDE_CONFIG } from 'shared/constants';
 
 export class RideCamera {
+    private static readonly WORLD_UP = new THREE.Vector3(0, 1, 0);
     readonly camera: THREE.PerspectiveCamera;
     private curve: THREE.CatmullRomCurve3;
     private trackData: TrackData;
@@ -16,6 +17,8 @@ export class RideCamera {
     private readonly _cameraPosTmp = new THREE.Vector3();
     private readonly _lookTargetTmp = new THREE.Vector3();
     private readonly _lastSide = new THREE.Vector3(1, 0, 0);
+    private readonly _blendedUp = new THREE.Vector3(0, 1, 0);
+    private readonly _smoothedUp = new THREE.Vector3(0, 1, 0);
 
     public get lookAtPos(): THREE.Vector3 {
         return this._lookAtPos;
@@ -51,29 +54,37 @@ export class RideCamera {
             const i = Math.floor(scaled);
             const j = Math.min(i + 1, ups.length - 1);
             const tt = scaled - i;
-            this._upTmp.copy(ups[i]).lerp(ups[j], tt).normalize();
+            this._upTmp.copy(ups[i]).lerp(ups[j], tt);
         } else if (ups.length === 1) {
-            this._upTmp.copy(ups[0]).normalize();
+            this._upTmp.copy(ups[0]);
         } else {
-            this._upTmp.set(0, 1, 0);
+            this._upTmp.copy(RideCamera.WORLD_UP);
         }
-        this.camera.up.copy(this._upTmp);
+        this._upTmp.normalize();
+        this._blendedUp.copy(this._upTmp).lerp(RideCamera.WORLD_UP, 0.6).normalize();
+        this._smoothedUp.lerp(this._blendedUp, 0.2).normalize();
+        this.camera.up.copy(this._smoothedUp);
 
-        // Compute an approximate "right" vector using Frenet frame, falling back to previous frame when tangent ≈ up
-        this._sideTmp.crossVectors(tangent, this.camera.up);
+        // Compute a world-stable right vector with smoothing to avoid sudden flips on rolls
+        this._sideTmp.crossVectors(tangent, RideCamera.WORLD_UP);
+        if (this._sideTmp.lengthSq() < 1e-6) {
+            this._sideTmp.crossVectors(tangent, this._smoothedUp);
+        }
         if (this._sideTmp.lengthSq() < 1e-6) {
             this._sideTmp.copy(this._lastSide);
         } else {
             this._sideTmp.normalize();
-            this._lastSide.copy(this._sideTmp);
+            this._lastSide.lerp(this._sideTmp, 0.3).normalize();
+            this._sideTmp.copy(this._lastSide);
         }
 
-        const seatHeight = 3.0; // lift camera above tube
-        const lateralOffset = 5.0; // shift camera outside the tube radius (~2)
-        const backwardOffset = 4.0; // trail slightly behind for better view
+        const rollFactor = THREE.MathUtils.clamp(1 - Math.abs(this._smoothedUp.dot(RideCamera.WORLD_UP)), 0, 1);
+        const seatHeight = THREE.MathUtils.lerp(3.0, 3.6, rollFactor);
+        const lateralOffset = THREE.MathUtils.lerp(5.0, 3.2, rollFactor);
+        const backwardOffset = THREE.MathUtils.lerp(4.0, 4.8, rollFactor * 0.6);
 
         this._offsetTmp.set(0, 0, 0)
-            .addScaledVector(this.camera.up, seatHeight)
+            .addScaledVector(RideCamera.WORLD_UP, seatHeight)
             .addScaledVector(this._sideTmp, lateralOffset)
             .addScaledVector(tangent, -backwardOffset);
 
@@ -81,8 +92,8 @@ export class RideCamera {
     this.camera.position.copy(this._cameraPosTmp);
 
         this._lookAtOffsetTmp.set(0, 0, 0)
-            .addScaledVector(this.camera.up, seatHeight * 0.6)
-            .addScaledVector(this._sideTmp, lateralOffset * 0.3);
+            .addScaledVector(RideCamera.WORLD_UP, seatHeight * 0.55)
+            .addScaledVector(this._sideTmp, lateralOffset * 0.28);
 
     this._lookTargetTmp.copy(this._lookAtPos).add(this._lookAtOffsetTmp);
     this.camera.lookAt(this._lookTargetTmp);

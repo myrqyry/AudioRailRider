@@ -15,6 +15,9 @@ const PERFORMANCE_CHECK_INTERVAL = 2000; // Check FPS every 2 seconds
 const TARGET_FPS = 50; // Target FPS for quality adjustment
 const LOW_QUALITY_DEBOUNCE_MS = 3000; // Wait this long before switching quality
 
+const TRACK_RADIUS = 0.9;
+const GHOST_RIBBON_RADIUS = 1.6;
+
 /**
  * Manages the visual representation of the rollercoaster track and its
  * audio-reactive effects.
@@ -24,6 +27,8 @@ export class VisualEffects {
   private trackData: TrackData;
   private trackMesh: THREE.Mesh;
   private trackMaterial: THREE.MeshStandardMaterial;
+  private ghostRibbonMesh: THREE.Mesh | null = null;
+  private ghostRibbonMaterial: THREE.ShaderMaterial | null = null;
   // Minimal particle system used by tests
   private particleSystem: THREE.Points | null = null;
   // Use InstancedMesh for higher particle counts when available
@@ -60,10 +65,17 @@ export class VisualEffects {
   private segmentProgress: number[] = [];
   private baseRailColor: THREE.Color;
   private baseEmissiveColor: THREE.Color;
+  private baseGhostTintA: THREE.Color;
+  private baseGhostTintB: THREE.Color;
+  private trackTintA: THREE.Color;
+  private trackTintB: THREE.Color;
+  private trackShaderUniforms: Record<string, THREE.IUniform> | null = null;
   private segmentColorTarget: THREE.Color;
   private segmentIntensityBoost: number = 1;
   private currentSegmentIndex: number = 0;
   private readonly _colorTmp = new THREE.Color();
+  private readonly _colorTmp2 = new THREE.Color();
+  private readonly _colorTmp3 = new THREE.Color();
   // Per-feature visual configuration (color, sensitivity) used when spawning particles
   private featureConfigs: Record<string, { color?: [number, number, number]; sensitivity?: number }> = {
     subBass: { color: [1.0, 0.45, 0.25], sensitivity: 1.1 },
@@ -87,6 +99,7 @@ export class VisualEffects {
   private featureCooldowns: Record<string, number> = {};
   private ambientAccumulator: number = 0;
   private lastUpdateSeconds: number = 0;
+  private trackPulse: number = 0;
   private readonly _spawnOrigin = new THREE.Vector3();
   private readonly _spawnForward = new THREE.Vector3();
   private readonly _spawnRight = new THREE.Vector3();
@@ -103,9 +116,17 @@ export class VisualEffects {
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     this.highQualityMode = !isMobile;
 
-    this.baseRailColor = new THREE.Color(trackData.railColor || '#ffffff');
-    this.baseEmissiveColor = new THREE.Color(trackData.glowColor || '#00ffff');
-    this.segmentColorTarget = this.baseEmissiveColor.clone();
+  this.baseRailColor = new THREE.Color(trackData.railColor || '#ffffff');
+  this.baseEmissiveColor = new THREE.Color(trackData.glowColor || '#00ffff');
+  const pastelBase = new THREE.Color('#e6f3ff');
+  const pastelGlow = new THREE.Color('#ffe5ff');
+  this.baseRailColor.lerp(pastelBase, 0.35);
+  this.baseEmissiveColor.lerp(pastelGlow, 0.4);
+  this.segmentColorTarget = this.baseEmissiveColor.clone();
+  this.baseGhostTintA = new THREE.Color('#cfe9ff');
+  this.baseGhostTintB = new THREE.Color('#ffdff9');
+  this.trackTintA = this.baseRailColor.clone().lerp(this.baseGhostTintA, 0.5);
+  this.trackTintB = this.baseEmissiveColor.clone().lerp(this.baseGhostTintB, 0.6);
 
     let derivedProgress = Array.isArray(trackData.segmentProgress) ? [...trackData.segmentProgress] : [];
     if (!derivedProgress.length && trackData.segmentDetails.length > 0) {
@@ -139,10 +160,63 @@ export class VisualEffects {
       color: this.baseRailColor.clone(),
       emissive: this.baseEmissiveColor.clone(),
       emissiveIntensity: BASS_GLOW_MIN,
-      metalness: 0.8,
-      roughness: 0.4,
+      metalness: 0.15,
+      roughness: 0.65,
+      transparent: true,
+      opacity: 0.92,
       side: THREE.DoubleSide,
     });
+
+    this.trackMaterial.onBeforeCompile = (shader) => {
+      shader.uniforms.trackTime = { value: 0 };
+      shader.uniforms.pulseIntensity = { value: 0 };
+      shader.uniforms.segmentBoost = { value: 1 };
+      shader.uniforms.audioFlow = { value: 0 };
+      shader.uniforms.ghostTintA = { value: this.trackTintA };
+      shader.uniforms.ghostTintB = { value: this.trackTintB };
+      shader.uniforms.distortionStrength = { value: 0 };
+
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          '#include <common>',
+          `#include <common>
+uniform float trackTime;
+uniform float pulseIntensity;
+uniform float segmentBoost;
+uniform float audioFlow;
+uniform vec3 ghostTintA;
+uniform vec3 ghostTintB;
+`
+        )
+        .replace(
+          'vec3 totalEmissiveRadiance = emissive;',
+          `float pathV = clamp(vUv.y, 0.0, 1.0);
+float loopWave = sin(pathV * 24.0 - trackTime * 5.5);
+float traveler = smoothstep(0.05, 0.95, fract(pathV - trackTime * 0.35));
+float spirit = pulseIntensity + audioFlow * 0.35 + segmentBoost * 0.2;
+vec3 dreamTint = mix(ghostTintA, ghostTintB, pathV) * (0.35 + 0.25 * traveler + 0.2 * max(loopWave, 0.0));
+vec3 totalEmissiveRadiance = emissive + dreamTint * spirit;`
+        );
+
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          '#include <common>',
+          `#include <common>
+uniform float trackTime;
+uniform float distortionStrength;
+`
+        )
+        .replace(
+          '#include <begin_vertex>',
+          `#include <begin_vertex>
+float vPath = clamp(uv.y, 0.0, 1.0);
+float ribbon = sin(vPath * 18.0 + trackTime * 2.0);
+transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
+`
+        );
+
+      this.trackShaderUniforms = shader.uniforms as Record<string, THREE.IUniform>;
+    };
 
     // 2. Create the track geometry with adaptive quality
     const segments = this.highQualityMode ? 
@@ -150,12 +224,15 @@ export class VisualEffects {
       this.trackData.path.length * LOW_QUALITY_SEGMENTS;
     
     const curve = new THREE.CatmullRomCurve3(this.trackData.path.map(p => new THREE.Vector3(p.x, p.y, p.z)));
-    const geometry = new THREE.TubeGeometry(curve, segments, 2, 8, false);
+  const geometry = new THREE.TubeGeometry(curve, segments, TRACK_RADIUS, 8, false);
 
     // 3. Create the track mesh and add to the scene
     this.trackMesh = new THREE.Mesh(geometry, this.trackMaterial);
     this.trackMesh.frustumCulled = true; // Enable frustum culling for performance
     this.scene.add(this.trackMesh);
+
+  this.ghostRibbonMaterial = this.createGhostRibbonMaterial();
+  this.rebuildGhostRibbon(curve, segments);
 
     // Create a minimal particle system with attribute arrays similar to runtime implementation
     const particleCount = RIDE_CONFIG.PARTICLE_COUNT;
@@ -188,29 +265,41 @@ export class VisualEffects {
         // position texture when GPU path is enabled. It falls back to the
         // basic instanceMatrix when no texture is provided.
         const vert = `
+          attribute mat4 instanceMatrix;
           attribute vec3 instanceColor;
           attribute float instanceSpeed;
           attribute float instanceFeature;
           uniform sampler2D posTex;
           uniform float texSize;
           varying vec3 vColor;
+
+          vec3 sampleTexturePosition(float id, float dimension) {
+            float row = floor(id / dimension);
+            float col = mod(id, dimension);
+            vec2 uv = (vec2(col, row) + 0.5) / dimension;
+            return texture2D(posTex, uv).rgb;
+          }
+
+          vec3 transformVertex(vec3 local, mat4 inst) {
+            vec3 basisX = vec3(inst[0][0], inst[0][1], inst[0][2]);
+            vec3 basisY = vec3(inst[1][0], inst[1][1], inst[1][2]);
+            vec3 basisZ = vec3(inst[2][0], inst[2][1], inst[2][2]);
+            return basisX * local.x + basisY * local.y + basisZ * local.z;
+          }
+
           void main() {
-            // Modulate color slightly based on feature index so different bands look distinct
             float fi = instanceFeature;
-            float tint = 0.15 * (fi - 3.0); // center around mid
+            float tint = 0.15 * (fi - 3.0);
             vColor = instanceColor + vec3(tint, -tint * 0.2, tint * 0.1);
-            vec3 pos = vec3(0.0);
+
+            vec3 center = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+            float id = float(gl_InstanceID);
             if (texSize > 0.5) {
-              float id = float(gl_InstanceID);
-              float u = (id + 0.5) / texSize;
-              float v = floor(id / texSize + 0.5) / texSize;
-              pos = texture2D(posTex, vec2(u, v)).rgb;
-            } else {
-              // fallback: use instance matrix translation
-              pos = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+              center = sampleTexturePosition(id, texSize);
             }
-            vec4 worldPos = vec4(position + pos, 1.0);
-            vec4 mvPosition = viewMatrix * worldPos;
+
+            vec3 displaced = transformVertex(position, instanceMatrix) + center;
+            vec4 mvPosition = modelViewMatrix * vec4(displaced, 1.0);
             gl_Position = projectionMatrix * mvPosition;
           }
         `;
@@ -222,10 +311,11 @@ export class VisualEffects {
         `;
         const shaderMat = new THREE.ShaderMaterial({
           uniforms: { posTex: { value: null }, texSize: { value: 0 } },
-          vertexShader: vert.replace('attribute float instanceSpeed;', 'attribute float instanceSpeed; attribute float instanceFeature;'),
+          vertexShader: vert,
           fragmentShader: frag,
           transparent: true,
           depthWrite: false,
+          depthTest: false,
           blending: THREE.AdditiveBlending,
         });
         this.particleInstancedMesh.material = shaderMat as any;
@@ -270,6 +360,7 @@ export class VisualEffects {
         color: 0xffffff,
         transparent: true,
         depthWrite: false,
+        depthTest: false,
         blending: THREE.AdditiveBlending,
         sizeAttenuation: true,
       })
@@ -763,10 +854,10 @@ export class VisualEffects {
 
     type FeatureName = Extract<keyof typeof this.audioFeatures, string>;
     const triggers: Array<{ feature: FeatureName; threshold: number; cooldown: number; lateral: number; forward: number }> = [
-      { feature: 'bass' as FeatureName, threshold: 0.55, cooldown: 0.22, lateral: -2.5, forward: 0 },
-      { feature: 'mid' as FeatureName, threshold: 0.45, cooldown: 0.28, lateral: 2.5, forward: 1.5 },
-      { feature: 'treble' as FeatureName, threshold: 0.4, cooldown: 0.35, lateral: 0, forward: 3.5 },
-      { feature: 'sparkle' as FeatureName, threshold: 0.5, cooldown: 0.2, lateral: 0, forward: 0 },
+      { feature: 'bass' as FeatureName, threshold: 0.35, cooldown: 0.16, lateral: -2.8, forward: 0.5 },
+      { feature: 'mid' as FeatureName, threshold: 0.32, cooldown: 0.22, lateral: 2.8, forward: 1.8 },
+      { feature: 'treble' as FeatureName, threshold: 0.28, cooldown: 0.28, lateral: 0.4, forward: 3.8 },
+      { feature: 'sparkle' as FeatureName, threshold: 0.3, cooldown: 0.18, lateral: 0, forward: 0 },
     ];
 
     for (const trigger of triggers) {
@@ -783,17 +874,23 @@ export class VisualEffects {
         .addScaledVector(this._spawnForward, trigger.forward + (Math.random() - 0.5) * 1.0);
       this.spawnFeatureBurst(trigger.feature, scaled, this._spawnWork);
       this.featureCooldowns[trigger.feature] = nowSeconds;
+      if (trigger.feature === 'bass' || trigger.feature === 'subBass') {
+        this.trackPulse = Math.min(1.5, this.trackPulse + scaled * 0.9);
+      } else {
+        this.trackPulse = Math.min(1.5, this.trackPulse + scaled * 0.45);
+      }
     }
 
-    this.ambientAccumulator += deltaSeconds * (0.5 + this.gpuAudioForce * 0.6);
-    if (this.ambientAccumulator > 0.9) {
-      const cycles = Math.max(1, Math.floor(this.ambientAccumulator / 0.9));
-      this.ambientAccumulator -= cycles * 0.9;
-      this._spawnWork.copy(this._spawnOrigin)
-        .addScaledVector(this._spawnForward, 1.5 + (Math.random() - 0.5) * 1.0)
-        .addScaledVector(this._spawnRight, (Math.random() - 0.5) * 2.0);
+    this.ambientAccumulator += deltaSeconds * (1.1 + this.gpuAudioForce * 0.8);
+    if (this.ambientAccumulator >= 0.45) {
+      const cycles = Math.max(1, Math.floor(this.ambientAccumulator / 0.45));
+      this.ambientAccumulator -= cycles * 0.45;
       for (let i = 0; i < cycles; i++) {
-        this.spawnFeatureBurst('sparkle', 0.35 + Math.random() * 0.35, this._spawnWork);
+        this._spawnWork.copy(this._spawnOrigin)
+          .addScaledVector(this._spawnForward, 1.2 + (Math.random() - 0.5) * 1.5)
+          .addScaledVector(this._spawnRight, (Math.random() - 0.5) * 3.5);
+        this.spawnFeatureBurst('sparkle', 0.45 + Math.random() * 0.4, this._spawnWork);
+        this.trackPulse = Math.min(1.5, this.trackPulse + 0.25);
       }
     }
   }
@@ -835,14 +932,6 @@ export class VisualEffects {
     lookAtPosition: THREE.Vector3,
     rideProgress: number
   ) {
-    const clampedProgress = THREE.MathUtils.clamp(rideProgress ?? 0, 0, 1);
-    this.applySegmentMood(clampedProgress);
-    // Blend towards the segment-driven color mood while keeping some of the base rail hue.
-    this.trackMaterial.emissive.lerp(this.segmentColorTarget, 0.05);
-    this._colorTmp.copy(this.segmentColorTarget).lerp(this.baseRailColor, 0.4);
-    this.trackMaterial.color.lerp(this._colorTmp, 0.05);
-
-    // Performance monitoring
     const now = performance.now();
     const nowSeconds = now / 1000;
     const deltaSeconds = this.lastUpdateSeconds === 0
@@ -850,6 +939,19 @@ export class VisualEffects {
       : Math.min(0.25, Math.max(0, nowSeconds - this.lastUpdateSeconds));
     this.lastUpdateSeconds = nowSeconds;
 
+    const clampedProgress = THREE.MathUtils.clamp(rideProgress ?? 0, 0, 1);
+    this.applySegmentMood(clampedProgress);
+    // Blend towards the segment-driven color mood while keeping some of the base rail hue.
+    this.trackMaterial.emissive.lerp(this.segmentColorTarget, 0.05);
+    this._colorTmp.copy(this.segmentColorTarget).lerp(this.baseRailColor, 0.4);
+    this.trackMaterial.color.lerp(this._colorTmp, 0.05);
+
+    const tintA = this._colorTmp2.copy(this.baseGhostTintA).lerp(this.segmentColorTarget, 0.3);
+    const tintB = this._colorTmp3.copy(this.baseGhostTintB).lerp(this.segmentColorTarget, 0.6);
+    this.trackTintA.copy(tintA);
+    this.trackTintB.copy(tintB);
+
+    // Performance monitoring
     this.frameCount++;
     
     // Initialize performance tracking on first update
@@ -933,7 +1035,26 @@ export class VisualEffects {
       // ignore
     }
 
+    this.trackPulse = Math.max(0, this.trackPulse - deltaSeconds * 1.4);
+
     this.driveAudioReactiveParticles(nowSeconds, deltaSeconds, cameraPosition, lookAtPosition);
+
+    if (this.trackShaderUniforms) {
+      const uniforms = this.trackShaderUniforms;
+      uniforms.trackTime.value = elapsedTime;
+      uniforms.pulseIntensity.value = this.trackPulse;
+      uniforms.segmentBoost.value = this.segmentIntensityBoost;
+      uniforms.audioFlow.value = Math.min(1.2, this.gpuAudioForce * 0.25);
+      uniforms.distortionStrength.value = Math.min(0.6, 0.2 + this.trackPulse * 0.5 + this.segmentIntensityBoost * 0.1);
+    }
+
+    if (this.ghostRibbonMaterial) {
+      const uniforms = this.ghostRibbonMaterial.uniforms;
+      uniforms.time.value = elapsedTime;
+      uniforms.audioPulse.value = Math.min(1.8, this.trackPulse * 1.1 + this.gpuAudioForce * 0.1);
+      uniforms.colorInner.value.copy(this.trackTintA);
+      uniforms.colorOuter.value.copy(this.trackTintB);
+    }
 
     // Reclaim expired instances (simple lifetime model)
     if (this.particleInstancedMesh && this.instanceStartTimes && this.instanceLifetimes) {
@@ -1032,8 +1153,16 @@ export class VisualEffects {
     this.currentLOD = mode;
     if (mode === 'low') {
       if (this.particleInstancedMesh) this.particleInstancedMesh.visible = false;
+      if (this.particleSystem && (this.particleSystem as any).parent !== this.scene) {
+        this.scene.add(this.particleSystem);
+      }
+      if (this.particleSystem) this.particleSystem.visible = true;
     } else {
       if (this.particleInstancedMesh) this.particleInstancedMesh.visible = true;
+      if (this.particleSystem && (this.particleSystem as any).parent === this.scene) {
+        this.scene.remove(this.particleSystem);
+      }
+      if (this.particleSystem) this.particleSystem.visible = false;
     }
   }
 
@@ -1198,6 +1327,63 @@ export class VisualEffects {
     this.spawnParticles(count, origin, featureName);
   }
 
+  private createGhostRibbonMaterial(): THREE.ShaderMaterial {
+    return new THREE.ShaderMaterial({
+      uniforms: {
+        time: { value: 0 },
+        audioPulse: { value: 0 },
+        colorInner: { value: this.trackTintA },
+        colorOuter: { value: this.trackTintB },
+      },
+      vertexShader: `varying float vPath;
+varying float vRadial;
+uniform float time;
+uniform float audioPulse;
+void main() {
+  vPath = clamp(uv.y, 0.0, 1.0);
+  vRadial = uv.x;
+  float shimmer = sin(vPath * 20.0 + time * 2.4) * 0.35;
+  float lift = 0.6 + audioPulse * 1.2 + shimmer;
+  vec3 displaced = position + normal * lift;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
+}`,
+      fragmentShader: `varying float vPath;
+varying float vRadial;
+uniform vec3 colorInner;
+uniform vec3 colorOuter;
+uniform float audioPulse;
+void main() {
+  float fade = smoothstep(0.0, 1.0, vPath);
+  vec3 tint = mix(colorInner, colorOuter, fade);
+  float radial = 1.0 - abs(vRadial * 2.0 - 1.0);
+  float softness = pow(radial, 1.6);
+  float alpha = clamp((0.35 + audioPulse * 0.65) * softness, 0.0, 1.0);
+  if (alpha < 0.01) discard;
+  gl_FragColor = vec4(tint, alpha);
+}`,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+    });
+  }
+
+  private rebuildGhostRibbon(curve: THREE.CatmullRomCurve3, segments: number) {
+    if (!this.ghostRibbonMaterial) return;
+    const tubularSegments = Math.max(6, Math.floor(segments));
+    const newGeometry = new THREE.TubeGeometry(curve, tubularSegments, GHOST_RIBBON_RADIUS, 6, false);
+    if (!this.ghostRibbonMesh) {
+      this.ghostRibbonMesh = new THREE.Mesh(newGeometry, this.ghostRibbonMaterial);
+      this.ghostRibbonMesh.frustumCulled = true;
+      this.ghostRibbonMesh.renderOrder = 9;
+      this.scene.add(this.ghostRibbonMesh);
+    } else {
+      const old = this.ghostRibbonMesh.geometry;
+      this.ghostRibbonMesh.geometry = newGeometry;
+      old.dispose();
+    }
+  }
+
   private switchToLowQuality() {
     if (!this.highQualityMode) return;
     this.highQualityMode = false;
@@ -1208,13 +1394,14 @@ export class VisualEffects {
     const newGeometry = new THREE.TubeGeometry(
       curve, 
       this.trackData.path.length * LOW_QUALITY_SEGMENTS, 
-      2, 
+      TRACK_RADIUS, 
       6, // Reduced radial segments
       false
     );
     
     this.trackMesh.geometry = newGeometry;
     oldGeometry.dispose();
+    this.rebuildGhostRibbon(curve, this.trackData.path.length * LOW_QUALITY_SEGMENTS);
   }
 
   /**
@@ -1227,6 +1414,18 @@ export class VisualEffects {
     }
     if (this.trackMaterial) {
       try { this.trackMaterial.dispose(); } catch (e) {}
+    }
+
+    if (this.ghostRibbonMesh) {
+      try {
+        this.scene.remove(this.ghostRibbonMesh);
+        this.ghostRibbonMesh.geometry.dispose();
+      } catch (e) {}
+      this.ghostRibbonMesh = null;
+    }
+    if (this.ghostRibbonMaterial) {
+      try { this.ghostRibbonMaterial.dispose(); } catch (e) {}
+      this.ghostRibbonMaterial = null;
     }
 
     if (this.particleInstancedMesh) {
