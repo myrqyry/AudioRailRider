@@ -36,4 +36,4 @@ async def generate_skybox(
     req_body: SkyboxRequest,
     service: GeminiService = Depends(lambda: gemini_service)
 ):
-    return await service.generate_skybox(req_body.prompt)
+    return await service.generate_skybox(req_body.prompt, req_body.blueprint)

@@ -5,6 +5,18 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AudioRail Rider</title>
+    
+    <!-- DNS prefetch and preconnect for external resources -->
+    <link rel="dns-prefetch" href="https://cdn.jsdelivr.net" />
+    <link rel="dns-prefetch" href="https://lygia.xyz" />
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+    <link rel="preconnect" href="https://lygia.xyz" crossorigin />
+    
+    <!-- Preload critical shader resources -->
+    <link rel="preload" href="/shaders/velFrag.resolved.glsl" as="fetch" crossorigin="anonymous" />
+    <link rel="preload" href="/shaders/posFrag.resolved.glsl" as="fetch" crossorigin="anonymous" />
+    <link rel="preload" href="/lygia/resolve.esm.js" as="script" crossorigin="anonymous" />
+    
     <style>
       @keyframes fade-in {
         from { opacity: 0; transform: translateY(10px); }

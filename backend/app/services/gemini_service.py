@@ -213,33 +213,75 @@ Track components: 'climb', 'drop', 'turn', 'loop', 'barrelRoll'.
         except Exception:
             return blueprint_dict
 
-    async def generate_skybox(self, prompt: str):
+    async def generate_skybox(self, prompt: str, blueprint_data: dict | None = None):
+        """
+        Generate a skybox image using Gemini 2.5 Flash Image Preview model.
+        This model excels at creative image generation with rich context understanding.
+        
+        Args:
+            prompt: The mood/theme description from the blueprint
+            blueprint_data: Optional full blueprint for additional context
+        """
         try:
-            full_prompt = f"Generate a photorealistic, equirectangular 360-degree panorama of: {prompt}"
+            # Build a rich, contextual prompt using blueprint data if available
+            if blueprint_data:
+                ride_name = blueprint_data.get('rideName', 'Unknown Ride')
+                mood = blueprint_data.get('moodDescription', prompt)
+                palette = blueprint_data.get('palette', [])
+                
+                # Extract palette description
+                palette_desc = ""
+                if palette and len(palette) >= 3:
+                    palette_desc = f" with colors {palette[0]} (rail), {palette[1]} (glow), and {palette[2]} (sky)"
+                
+                full_prompt = f"""Create a breathtaking, cinematic wide-angle sky scene for a rollercoaster experience called "{ride_name}".
 
-            response = await self.client.aio.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=full_prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="image/jpeg"
-                )
-            )
+Mood: {mood}
+Visual Style: Photorealistic, epic, atmospheric, with dynamic lighting and volumetric effects{palette_desc}.
 
-            image_part = response.candidates[0].content.parts[0]
-            image_bytes = image_part.blob.data
+Requirements:
+- Seamless, tileable 360° equirectangular image suitable for a skybox
+- No people, characters, silhouettes, signage, or text overlays
+- Focus entirely on sky, clouds, light, and atmospheric elements
+
+The sky should evoke the emotional journey of the ride - make it vast, immersive, and visually stunning. Think of this as the backdrop for an unforgettable thrill ride experience. Include dramatic clouds, atmospheric perspective, and a sense of infinite space."""
+            else:
+                full_prompt = f"""Create a breathtaking, cinematic wide-angle sky scene with the following mood: {prompt}
+
+Make it photorealistic, epic, and atmospheric with dramatic lighting, volumetric clouds, and a sense of vast infinite space. The output must be a seamless, tileable 360° equirectangular skybox image with no people, characters, silhouettes, signage, or text. Focus purely on sky and atmospheric detail for use as an immersive rollercoaster backdrop."""
+
+            # Use Gemini 2.5 Flash Image Preview with chat mode for best results
+            # This model supports direct image generation without needing a base image
+            chat = self.client.aio.chats.create(model='gemini-2.5-flash-image-preview')
+            
+            response = await chat.send_message(full_prompt)
+
+            # Extract the generated image from response parts
+            image_bytes = None
+            for part in response.candidates[0].content.parts:
+                if part.inline_data is not None:
+                    image_bytes = part.inline_data.data
+                    break
+            
+            if not image_bytes:
+                raise Exception("No image generated in response")
 
             import base64
             base64_image = base64.b64encode(image_bytes).decode('utf-8')
 
             return {"imageUrl": f"data:image/jpeg;base64,{base64_image}"}
+            
         except APIError as e:
-            if e.status == 401:
-                raise HTTPException(status_code=401, detail="Authentication failed. Please check the API key.")
-            elif e.status == 400:
-                raise HTTPException(status_code=400, detail=f"Invalid request for skybox generation: {str(e)}")
-            else:
-                raise HTTPException(status_code=500, detail=f"API error during skybox generation: {str(e)}")
+            if hasattr(e, 'status'):
+                if e.status == 401:
+                    raise HTTPException(status_code=401, detail="Authentication failed. Please check the API key.")
+                elif e.status == 400:
+                    raise HTTPException(status_code=400, detail=f"Invalid request for skybox generation: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"API error during skybox generation: {str(e)}")
         except Exception as e:
+            import traceback
+            print(f"[GeminiService] Skybox generation error: {e}")
+            print(traceback.format_exc())
             raise HTTPException(status_code=500, detail=f"An unexpected error occurred during image generation: {e}")
 
 gemini_service = GeminiService()

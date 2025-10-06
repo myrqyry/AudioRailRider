@@ -101,7 +101,7 @@ const ReglOverlay: React.FC<ReglOverlayProps> = ({ audioFeatures }) => {
     width: '100%',
     height: '100%',
     pointerEvents: 'none',
-    zIndex: 10,
+  zIndex: 30, // Render above Three.js canvas but below modals
   };
 
   // It's important to set the canvas dimensions directly to match the style

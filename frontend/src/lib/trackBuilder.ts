@@ -11,26 +11,48 @@ import { RIDE_CONFIG, DEFAULT_SPACING } from 'shared/constants';
  */
 import { AudioFeatures } from 'shared/types';
 
+const normalizeSegmentComponent = (
+    component: TrackSegment['component'] | string | undefined
+): 'climb' | 'drop' | 'turn' | 'loop' | 'barrelRoll' | 'unknown' => {
+    if (typeof component !== 'string') return 'unknown';
+    const normalized = component.trim().toLowerCase();
+    if (normalized === 'climb' || normalized.startsWith('climb')) return 'climb';
+    if (normalized === 'drop' || normalized.startsWith('drop')) return 'drop';
+    if (normalized === 'turn' || normalized.startsWith('turn')) return 'turn';
+    if (normalized === 'loop' || normalized.includes('loop')) return 'loop';
+    if (
+        normalized === 'barrelroll' ||
+        normalized === 'barrel_roll' ||
+        normalized === 'barrel roll' ||
+        normalized === 'roll' ||
+        normalized.includes('roll')
+    ) {
+        return 'barrelRoll';
+    }
+    return 'unknown';
+};
+
 export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFeatures): TrackData => {
     const points: THREE.Vector3[] = [];
     const upVectors: THREE.Vector3[] = [];
     const segmentDetails: TrackData['segmentDetails'] = [];
+    const segmentSpans: Array<{ start: number; end: number }> = [];
 
     let currentPos = new THREE.Vector3(0, 5, 0);
     let currentDir = new THREE.Vector3(0, 0, -1);
     let currentUp = new THREE.Vector3(0, 1, 0);
 
-    const addSegment = (newPoints: THREE.Vector3[], newUps: THREE.Vector3[]) => {
+    const addSegment = (newPoints: THREE.Vector3[], newUps: THREE.Vector3[]): { start: number; end: number } | null => {
+        if (!newPoints || newPoints.length === 0) return null;
+        const startIndex = points.length;
         points.push(...newPoints);
         upVectors.push(...newUps);
-        if (newPoints.length > 0) {
-            currentPos = newPoints[newPoints.length - 1];
-            // Update direction based on the last two points
-            if (newPoints.length > 1) {
-              currentDir.subVectors(newPoints[newPoints.length-1], newPoints[newPoints.length-2]).normalize();
-            }
-            currentUp = newUps[newUps.length - 1];
+        currentPos = newPoints[newPoints.length - 1];
+        if (newPoints.length > 1) {
+            currentDir.subVectors(newPoints[newPoints.length - 1], newPoints[newPoints.length - 2]).normalize();
         }
+        currentUp = newUps[newUps.length - 1];
+        return { start: startIndex, end: points.length - 1 };
     };
     
     // Add an initial flat segment
@@ -46,33 +68,31 @@ export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFe
         initialSegmentPoints.push(currentPos.clone().add(currentDir.clone().multiplyScalar(i * spacing)));
         initialSegmentUps.push(currentUp.clone());
     }
-    addSegment(initialSegmentPoints, initialSegmentUps);
-        segmentDetails.push({
-            intensity: 0,
-            lightingEffect: "none",
-            environmentChange: "none",
-            audioSyncPoint: seconds(0)
-        });
+    const initialSpan = addSegment(initialSegmentPoints, initialSegmentUps);
+    if (initialSpan) segmentSpans.push(initialSpan);
+    segmentDetails.push({
+        intensity: 0,
+        lightingEffect: 'none',
+        environmentChange: 'none',
+        audioSyncPoint: seconds(0)
+    });
 
-    blueprint.track.forEach((segment: TrackSegment) => {
+    blueprint.track.forEach((segment: TrackSegment, index: number) => {
         const segmentPoints: THREE.Vector3[] = [];
         const segmentUps: THREE.Vector3[] = [];
         const resolution = Math.max(1, Math.floor(RIDE_CONFIG.TRACK_SEGMENT_RESOLUTION ?? 100));
 
-                segmentDetails.push({
-                    intensity: segment.intensity,
-                    lightingEffect: segment.lightingEffect,
-                    environmentChange: segment.environmentChange,
-                    audioSyncPoint: segment.audioSyncPoint
-                });
+        const rawComponent = (segment as any).component ?? (segment as any).type;
+        const normalizedComponent = normalizeSegmentComponent(rawComponent as TrackSegment['component']);
 
-        switch (segment.component) {
+        switch (normalizedComponent) {
             case 'climb':
             case 'drop': {
-                const angleValue = segment.angle ?? (segment.component === 'climb' ? 15 : -40);
+                const typed = segment as Extract<TrackSegment, { component: 'climb' }> | Extract<TrackSegment, { component: 'drop' }>;
+                const angleValue = typed.angle ?? (normalizedComponent === 'climb' ? 15 : -40);
                 const angle = THREE.MathUtils.degToRad(THREE.MathUtils.clamp(angleValue, -90, 90));
 
-                const lengthValue = segment.length ?? 150;
+                const lengthValue = typed.length ?? 150;
                 const length = Math.max(10, lengthValue);
 
                 const dir_horizontal = currentDir.clone();
@@ -91,13 +111,14 @@ export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFe
                 break;
             }
             case 'turn': {
-                const radiusValue = segment.radius ?? 80;
+                const typed = segment as Extract<TrackSegment, { component: 'turn' }>;
+                const radiusValue = typed.radius ?? 80;
                 const radius = Math.max(10, radiusValue);
 
-                const angleValue = segment.angle ?? 90;
+                const angleValue = typed.angle ?? 90;
                 const angle = THREE.MathUtils.degToRad(THREE.MathUtils.clamp(angleValue, -360, 360));
 
-                const direction = segment.direction === 'left' ? 1 : -1;
+                const direction = typed.direction === 'left' ? 1 : -1;
 
                 const turnAxis = new THREE.Vector3(0, 1, 0);
                 const centerOffset = currentDir.clone().cross(turnAxis).multiplyScalar(radius * direction);
@@ -113,7 +134,8 @@ export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFe
                 break;
             }
             case 'loop': {
-                const radiusValue = segment.radius ?? 50;
+                const typed = segment as Extract<TrackSegment, { component: 'loop' }>;
+                const radiusValue = typed.radius ?? 50;
                 const radius = Math.max(10, radiusValue);
                 const loopCenter = currentPos.clone().add(currentDir.clone().multiplyScalar(radius));
                 
@@ -142,10 +164,11 @@ export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFe
                 break;
             }
             case 'barrelRoll': {
-                const rotationsValue = segment.rotations ?? 1;
+                const typed = segment as Extract<TrackSegment, { component: 'barrelRoll' }>;
+                const rotationsValue = typed.rotations ?? 1;
                 const rotations = Math.max(1, Math.round(rotationsValue));
 
-                const lengthValue = segment.length ?? 150;
+                const lengthValue = typed.length ?? 150;
                 const length = Math.max(10, lengthValue);
                 const endPos = currentPos.clone().add(currentDir.clone().multiplyScalar(length));
 
@@ -157,14 +180,46 @@ export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFe
                 }
                 break;
             }
+            case 'unknown': {
+                console.warn('[TrackBuilder] Unsupported segment component, using straight fallback', {
+                    index,
+                    component: rawComponent
+                });
+                const fallbackLength = Math.max(10, (segment as { length?: number }).length ?? 80);
+                for (let i = 1; i <= resolution; i++) {
+                    const alpha = i / resolution;
+                    segmentPoints.push(currentPos.clone().add(currentDir.clone().multiplyScalar(alpha * fallbackLength)));
+                    segmentUps.push(currentUp.clone());
+                }
+                break;
+            }
         }
-        addSegment(segmentPoints, segmentUps);
+        const span = addSegment(segmentPoints, segmentUps);
+        if (span) {
+            segmentSpans.push(span);
+        } else if (segmentSpans.length > 0) {
+            segmentSpans.push(segmentSpans[segmentSpans.length - 1]);
+        } else {
+            segmentSpans.push({ start: 0, end: points.length > 0 ? points.length - 1 : 0 });
+        }
         segmentDetails.push({
-          intensity: segment.intensity,
-          lightingEffect: segment.lightingEffect,
-          environmentChange: segment.environmentChange,
-          audioSyncPoint: segment.audioSyncPoint
+            intensity: segment.intensity ?? 0,
+            lightingEffect: segment.lightingEffect,
+            environmentChange: segment.environmentChange,
+            audioSyncPoint: segment.audioSyncPoint
         });
+    });
+
+    const totalSpanDenominator = Math.max(points.length - 1, 1);
+    const segmentProgress = segmentSpans.map((span) => {
+        const progress = span.end / totalSpanDenominator;
+        return Number.isFinite(progress) ? THREE.MathUtils.clamp(progress, 0, 1) : 0;
+    });
+
+    console.log('[TrackBuilder] Generated track geometry', {
+        pointCount: points.length,
+        segmentCount: blueprint.track.length,
+        segmentProgress,
     });
 
     return {
@@ -175,6 +230,7 @@ export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFe
         skyColor1: blueprint.palette[2] || '#0d0a1f',
         skyColor2: RIDE_CONFIG.DEFAULT_SKY_COLOR_2,
         segmentDetails: segmentDetails,
+        segmentProgress,
         rideName: blueprint.rideName,
         moodDescription: blueprint.moodDescription,
         frameAnalyses: (audioFeatures && audioFeatures.frameAnalyses) || [],

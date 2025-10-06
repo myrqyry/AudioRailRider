@@ -30,6 +30,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # --- CORS Configuration ---
 origins = [
     "http://localhost:5173",
+    "http://127.0.0.1:5173",
     # "https://your-frontend-domain.com", # Placeholder for production frontend
 ]
 

@@ -19,16 +19,23 @@ const ThreeCanvas: React.FC = () => {
   const rideCameraRef = useRef<RideCamera | null>(null);
   const visualEffectsRef = useRef<VisualEffects | null>(null);
   const animationFrameId = useRef<number | null>(null);
+  const gpuInitRequestedRef = useRef(false);
 
   const { audioRef } = useAudioAnalysis({ audioFile, status });
 
   // Effect for scene initialization and disposal
   useEffect(() => {
-    if (!mountRef.current) return;
+    if (!mountRef.current) {
+      console.error('[ThreeCanvas] mountRef.current is null!');
+      return;
+    }
     const container = mountRef.current;
+    console.log('[ThreeCanvas] Initializing SceneManager', { width: container.clientWidth, height: container.clientHeight });
     sceneManagerRef.current = new SceneManager(container);
+    console.log('[ThreeCanvas] SceneManager initialized', { hasScene: !!sceneManagerRef.current.scene, hasCamera: !!sceneManagerRef.current.camera });
 
     return () => {
+      console.log('[ThreeCanvas] Cleaning up scene');
       if (animationFrameId.current) {
         cancelAnimationFrame(animationFrameId.current);
       }
@@ -42,23 +49,44 @@ const ThreeCanvas: React.FC = () => {
   // Effect for building the ride when trackData is ready
   useEffect(() => {
     const sceneManager = sceneManagerRef.current;
-    if (!sceneManager || !trackData) return;
+    if (!sceneManager || !trackData) {
+      console.log('[ThreeCanvas] Cannot build ride - missing requirements', { hasSceneManager: !!sceneManager, hasTrackData: !!trackData });
+      return;
+    }
+
+    console.log('[ThreeCanvas] Building ride from trackData', { pathLength: trackData.path.length, rideName: trackData.rideName });
 
     // Clean up previous ride visuals
     visualEffectsRef.current?.dispose();
 
     rideCameraRef.current = new RideCamera(sceneManager.camera, trackData);
+    console.log('[ThreeCanvas] RideCamera created');
     visualEffectsRef.current = new VisualEffects(sceneManager.scene, trackData);
+    console.log('[ThreeCanvas] VisualEffects created');
+    gpuInitRequestedRef.current = false;
+    const renderer = sceneManager.renderer;
+    if (visualEffectsRef.current && renderer && !gpuInitRequestedRef.current) {
+      gpuInitRequestedRef.current = true;
+      visualEffectsRef.current.initGPU(renderer)
+        .then(() => console.log('[ThreeCanvas] GPU particle system ready'))
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          console.info('[ThreeCanvas] GPU particle init skipped', message);
+        });
+    }
 
-    // Generate and apply the skybox
+    // Generate and apply the skybox with full blueprint context
     if (trackData.moodDescription) {
-      const prompt = `A vast, epic sky that captures the feeling of: "${trackData.moodDescription}". Style: photorealistic, 8k, cinematic lighting.`;
-      generateSkyboxImage(prompt)
+      const prompt = trackData.moodDescription;
+      // Pass the full trackData (blueprint) for richer contextual generation
+      generateSkyboxImage(prompt, trackData)
         .then(imageUrl => {
+          console.log('[ThreeCanvas] Skybox generated successfully with Gemini 2.5 Flash Image');
           sceneManager.updateSkybox(imageUrl);
         })
         .catch(error => {
-          console.error("Failed to generate or apply skybox:", error);
+          // Skybox generation not critical - log and continue with default skybox
+          console.info('[ThreeCanvas] Continuing without custom skybox:', error.message);
         });
     }
   }, [trackData]);
@@ -74,9 +102,23 @@ const ThreeCanvas: React.FC = () => {
         if (!ve) return;
         const detail = (ev as CustomEvent).detail as FrameAnalysis;
         if (!detail) return;
-        // Map frame bands to visual features and push audioForce
-        ve.setAudioFeatures({ bass: detail.bass, mid: detail.mid, treble: detail.high });
-        ve.setAudioForce(detail.energy * 2.0 + detail.spectralFlux * 1.5);
+        const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+        const spectralFlux = detail.spectralFlux ?? 0;
+        const spectralCentroid = detail.spectralCentroid ?? 0;
+        const energy = detail.energy ?? 0;
+        const bass = detail.bass ?? 0;
+        const mid = detail.mid ?? 0;
+        const high = detail.high ?? 0;
+        ve.setAudioFeatures({
+          subBass: clamp01(bass * 0.75),
+          bass: clamp01(bass),
+          lowMid: clamp01(mid * 0.85),
+          mid: clamp01(mid),
+          highMid: clamp01((mid * 0.4) + (high * 0.6)),
+          treble: clamp01(high),
+          sparkle: clamp01((spectralFlux * 0.6) + (spectralCentroid / 6000) + (energy * 0.1)),
+        });
+        ve.setAudioForce((energy * 2.0) + (spectralFlux * 1.5));
       } catch (e) {
         // ignore malformed events
       }
@@ -127,16 +169,23 @@ const ThreeCanvas: React.FC = () => {
 
   // Effect for managing the animation loop
   useEffect(() => {
+    console.log('[ThreeCanvas] Animation effect triggered', { status, hasTrackData: !!trackData, hasAudioFile: !!audioFile });
+    
     if (status === AppStatus.Idle || !trackData || !audioFile) {
-      if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
+      if (animationFrameId.current) {
+        console.log('[ThreeCanvas] Stopping animation loop');
+        cancelAnimationFrame(animationFrameId.current);
+      }
       return;
     }
 
+    console.log('[ThreeCanvas] Starting animation loop');
+
   // Don't capture .current at effect start — read them each frame to handle
   // hot-reloads or late initialization without throwing on `.current` reads.
-
-    const clock = new THREE.Clock();
-    let currentFrameIndex = 0;
+  const clock = new THREE.Clock();
+  let currentFrameIndex = 0;
+  let lastLoggedProgress = -1;
 
     const DEFAULT_PATH_SPEED = 50;
 
@@ -171,6 +220,18 @@ const ThreeCanvas: React.FC = () => {
           ? audioTime / duration
           : (elapsedTime * 0.05) % 1;
 
+      if (status === AppStatus.Riding) {
+        const rounded = Math.floor(progress * 20) / 20; // log at ~5% intervals
+        if (rounded !== lastLoggedProgress) {
+          lastLoggedProgress = rounded;
+          console.log('[ThreeCanvas] Ride progress', {
+            progress: Number(progress.toFixed(3)),
+            audioTime: Number(audioTime.toFixed(2)),
+            duration: Number(duration.toFixed(2))
+          });
+        }
+      }
+
       try {
         rideCamera.update(progress);
 
@@ -190,6 +251,7 @@ const ThreeCanvas: React.FC = () => {
           currentFrame,
           sceneManager.camera.position,
           rideCamera.lookAtPos,
+          Math.max(0, Math.min(1, progress)),
         );
         sceneManager.render();
       } catch (error) {
@@ -207,7 +269,7 @@ const ThreeCanvas: React.FC = () => {
     };
   }, [status, trackData, audioFile, onRideFinish, audioRef]);
 
-  return <div ref={mountRef} className={`fixed inset-0 z-0 transition-opacity duration-1000 ${status === AppStatus.Riding ? 'opacity-100' : 'opacity-50'}`} />;
+  return <div ref={mountRef} className="fixed inset-0 z-10 w-full h-full" style={{ opacity: status === AppStatus.Riding ? 1 : 0.5 }} />;
 };
 
 export default memo(ThreeCanvas);

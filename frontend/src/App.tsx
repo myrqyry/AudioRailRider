@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useCallback } from 'react';
 import { AppStatus } from '../../shared/types';
 import { useAppStore } from './lib/store';
 import { runAudioProcessingWorkflow } from './lib/workflow';
+import { startPreload } from './lib/preloader';
 import { Loader } from './components/Loader';
 import { LoadingProgress } from './components/LoadingProgress';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -20,6 +21,11 @@ const App: React.FC = () => {
     const audioFeatures = useAppStore((state) => state.trackData?.audioFeatures); // Get audioFeatures for the overlay
     const { setAudioFile, startRide, resetApp, startRideAgain, setError } = useAppStore((state) => state.actions);
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // Start preloading resources as soon as the app mounts
+    useEffect(() => {
+        startPreload();
+    }, []);
 
     const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
@@ -86,7 +92,13 @@ const App: React.FC = () => {
                         <SparkleIcon className="w-16 h-16 text-cyan-300" />
                         <h2 className="text-4xl font-bold mt-4 bg-clip-text text-transparent bg-gradient-to-r from-fuchsia-400 to-cyan-400">The Dreamscape is Ready</h2>
                         <p className="mt-2 text-gray-300">Your ride through "{audioFile?.name}" has been constructed.</p>
-                        <button onClick={startRide} className="mt-8 inline-flex items-center gap-3 px-12 py-5 bg-cyan-500/80 text-white font-bold rounded-full shadow-lg shadow-cyan-500/20 hover:bg-cyan-400 transition-all duration-300 transform hover:scale-110">
+                        <button 
+                            onClick={() => {
+                                console.log('[App] Begin the Ride button clicked');
+                                startRide();
+                            }} 
+                            className="mt-8 inline-flex items-center gap-3 px-12 py-5 bg-cyan-500/80 text-white font-bold rounded-full shadow-lg shadow-cyan-500/20 hover:bg-cyan-400 transition-all duration-300 transform hover:scale-110"
+                        >
                             <PlayIcon className="w-8 h-8" />
                             <span>Begin the Ride</span>
                         </button>
@@ -122,7 +134,7 @@ const App: React.FC = () => {
 
     return (
         <main className="relative w-full h-screen bg-black overflow-hidden flex items-center justify-center">
-            <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-20"></div>
+            <div className="absolute inset-0 z-0 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-20"></div>
             
             {status === AppStatus.Analyzing && <LoadingProgress stage="analyzing" />}
             {status === AppStatus.Generating && (
@@ -131,15 +143,19 @@ const App: React.FC = () => {
                 <LoadingProgress stage="building" progress={75} />
             )}
             
-            <div className="relative z-10 p-4">
-                <RendererWarning />
-                {renderContent()}
-            </div>
+            {/* Only show UI overlay when not riding */}
+            {status !== AppStatus.Riding && (
+                <div className="relative z-20 p-4">
+                    <RendererWarning />
+                    {renderContent()}
+                </div>
+            )}
             
             {(status === AppStatus.Riding || status === AppStatus.Ready) && trackData && (
                 <ErrorBoundary>
                     <ThreeCanvas />
-                    <ReglOverlay audioFeatures={audioFeatures || null} />
+                    {/* Only show waveform overlay when Ready, hide during Riding */}
+                    {status === AppStatus.Ready && <ReglOverlay audioFeatures={audioFeatures || null} />}
                 </ErrorBoundary>
             )}
             <DevPanel />

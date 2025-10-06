@@ -1,14 +1,22 @@
 import { RideBlueprint, TrackSegmentWithMeta as TrackSegment, seconds } from 'shared/types';
 
+const getComponent = (segment: TrackSegment): string | undefined => {
+    const comp = (segment as any).component ?? (segment as any).type;
+    return typeof comp === 'string' ? comp : undefined;
+};
+
 const isIntense = (segment: TrackSegment): boolean => {
-    switch (segment.component) {
+    const component = (getComponent(segment) || '').toLowerCase();
+    switch (component) {
         case 'drop':
         case 'loop':
         case 'barrelRoll':
             return true;
-        case 'turn':
+        case 'turn': {
+            const turnSegment = segment as Extract<TrackSegment, { component: 'turn' }>;
             // A turn is intense if it's sharp (small radius)
-            return segment.radius !== undefined && segment.radius < 100;
+            return turnSegment.radius !== undefined && turnSegment.radius < 100;
+        }
         default:
             return false;
     }
@@ -46,7 +54,7 @@ export const validateAndRefineBlueprint = (blueprint: RideBlueprint): RideBluepr
 
         // Rule: Don't place two intense segments back-to-back without a breather.
         if (isIntense(prevSegment) && isIntense(currentSegment)) {
-            console.log(`[Validator] Intense transition found between segment ${i-1} (${prevSegment.component}) and ${i} (${currentSegment.component}). Inserting easing segment.`);
+            console.log(`[Validator] Intense transition found between segment ${i-1} (${getComponent(prevSegment)}) and ${i} (${getComponent(currentSegment)}). Inserting easing segment.`);
             refinedTrack.push(createEasingSegment());
         }
 

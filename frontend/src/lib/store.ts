@@ -42,8 +42,17 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
         setWorkflowProgress: (progress: number) => set({ workflowProgress: progress }),
         startRide: () => {
-            if (get().status === AppStatus.Ready && get().trackData && get().audioFile) {
+            const currentState = get();
+            console.log('[Store] startRide called', { 
+                status: currentState.status, 
+                hasTrackData: !!currentState.trackData, 
+                hasAudioFile: !!currentState.audioFile 
+            });
+            if (currentState.status === AppStatus.Ready && currentState.trackData && currentState.audioFile) {
+                console.log('[Store] Transitioning to Riding state');
                 set({ status: AppStatus.Riding });
+            } else {
+                console.warn('[Store] Cannot start ride - conditions not met');
             }
         },
         resetApp: () => {

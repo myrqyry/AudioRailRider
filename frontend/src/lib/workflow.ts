@@ -85,6 +85,9 @@ export const runAudioProcessingWorkflow = async (
     checkAbort();
     console.log('[Workflow] Refining blueprint...');
     const refinedBlueprint = validateAndRefineBlueprint(rawBlueprint);
+    try {
+      console.log('[Workflow] Refined segment components', refinedBlueprint.track.map((segment, index) => ({ index, component: segment.component })));
+    } catch (e) {}
 
     checkAbort();
     setWorkflowProgress(85);

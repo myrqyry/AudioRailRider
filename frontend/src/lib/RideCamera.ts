@@ -10,6 +10,12 @@ export class RideCamera {
     private readonly _pos = new THREE.Vector3();
     private readonly _lookAtPos = new THREE.Vector3();
     private readonly _upTmp = new THREE.Vector3();
+    private readonly _sideTmp = new THREE.Vector3();
+    private readonly _offsetTmp = new THREE.Vector3();
+    private readonly _lookAtOffsetTmp = new THREE.Vector3();
+    private readonly _cameraPosTmp = new THREE.Vector3();
+    private readonly _lookTargetTmp = new THREE.Vector3();
+    private readonly _lastSide = new THREE.Vector3(1, 0, 0);
 
     public get lookAtPos(): THREE.Vector3 {
         return this._lookAtPos;
@@ -23,8 +29,7 @@ export class RideCamera {
 
     update(progress: number) {
         const u = THREE.MathUtils.clamp(progress, 0, 1);
-        this.curve.getPointAt(u, this._pos);
-        this.camera.position.copy(this._pos);
+    this.curve.getPointAt(u, this._pos);
 
         // Adaptive look-ahead; avoid zero-length look vector at u === 1
         const LOOKAHEAD_U = 0.01;
@@ -35,6 +40,9 @@ export class RideCamera {
             const dir = this.curve.getTangentAt(u);
             this._lookAtPos.copy(this._pos).addScaledVector(dir, 1);
         }
+
+        // Compute a comfortable rider offset so the camera sits above the track
+        const tangent = this.curve.getTangentAt(u).normalize();
 
         // Safe up-vector interpolation
         const ups = this.trackData.upVectors;
@@ -51,7 +59,33 @@ export class RideCamera {
         }
         this.camera.up.copy(this._upTmp);
 
-        this.camera.lookAt(this._lookAtPos);
+        // Compute an approximate "right" vector using Frenet frame, falling back to previous frame when tangent ≈ up
+        this._sideTmp.crossVectors(tangent, this.camera.up);
+        if (this._sideTmp.lengthSq() < 1e-6) {
+            this._sideTmp.copy(this._lastSide);
+        } else {
+            this._sideTmp.normalize();
+            this._lastSide.copy(this._sideTmp);
+        }
+
+        const seatHeight = 3.0; // lift camera above tube
+        const lateralOffset = 5.0; // shift camera outside the tube radius (~2)
+        const backwardOffset = 4.0; // trail slightly behind for better view
+
+        this._offsetTmp.set(0, 0, 0)
+            .addScaledVector(this.camera.up, seatHeight)
+            .addScaledVector(this._sideTmp, lateralOffset)
+            .addScaledVector(tangent, -backwardOffset);
+
+    this._cameraPosTmp.copy(this._pos).add(this._offsetTmp);
+    this.camera.position.copy(this._cameraPosTmp);
+
+        this._lookAtOffsetTmp.set(0, 0, 0)
+            .addScaledVector(this.camera.up, seatHeight * 0.6)
+            .addScaledVector(this._sideTmp, lateralOffset * 0.3);
+
+    this._lookTargetTmp.copy(this._lookAtPos).add(this._lookAtOffsetTmp);
+    this.camera.lookAt(this._lookTargetTmp);
 
         // Geometric step magnitude over du (proxy for motion; replace with time-based speed if needed)
         const speed = du > 0 ? this._lookAtPos.distanceTo(this._pos) / du : 0;

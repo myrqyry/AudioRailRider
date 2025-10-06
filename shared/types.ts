@@ -85,6 +85,11 @@ export interface TrackData {
   skyColor1: string;
   skyColor2: string;
   segmentDetails: SegmentDetail[];
+  /**
+   * Cumulative progress markers (0-1, monotonic) aligned with segmentDetails.
+   * Each value represents the normalized completion ratio when that segment ends.
+   */
+  segmentProgress?: number[];
   rideName: string;
   moodDescription: string;
   frameAnalyses: FrameAnalysis[];

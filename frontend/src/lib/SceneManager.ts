@@ -25,15 +25,47 @@ export class SceneManager {
     private init() {
         const width = this.container.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 1);
         const height = this.container.clientHeight || (typeof window !== 'undefined' ? window.innerHeight : 1);
-                // Cap DPR to avoid excessive GPU work; we adaptively lower it if FPS drops.
-                const rawDpr = (typeof window !== 'undefined' && window.devicePixelRatio) ? window.devicePixelRatio : 1;
-                const capped = Math.min(rawDpr, 2);
-                this.renderer.setPixelRatio(capped);
+        console.log('[SceneManager] Initializing renderer', { width, height, containerSize: { w: this.container.clientWidth, h: this.container.clientHeight } });
+        
+        // Cap DPR to avoid excessive GPU work; we adaptively lower it if FPS drops.
+        const rawDpr = (typeof window !== 'undefined' && window.devicePixelRatio) ? window.devicePixelRatio : 1;
+        const capped = Math.min(rawDpr, 2);
+        this.renderer.setPixelRatio(capped);
         this.renderer.setSize(width, height);
+        
+        console.log('[SceneManager] Appending canvas to container', { 
+            hasContainer: !!this.container, 
+            containerTagName: this.container.tagName,
+            canvasSize: { w: this.renderer.domElement.width, h: this.renderer.domElement.height }
+        });
+        
+        // Ensure canvas has proper styling
+        this.renderer.domElement.style.display = 'block';
+        this.renderer.domElement.style.width = '100%';
+        this.renderer.domElement.style.height = '100%';
+        
         this.container.appendChild(this.renderer.domElement);
+        console.log('[SceneManager] Canvas appended', { childCount: this.container.children.length });
 
-        // Set a default background color
-        this.scene.background = new THREE.Color(0x000000);
+        // Set a default dark gradient background
+        const topColor = new THREE.Color(0x0a0a1a); // Very dark blue
+        const bottomColor = new THREE.Color(0x000000); // Black
+        this.scene.background = topColor;
+        this.scene.fog = new THREE.Fog(bottomColor, 100, 1000);
+
+        // Add essential lighting to the scene
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+        this.scene.add(ambientLight);
+        
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(10, 50, 10);
+        this.scene.add(directionalLight);
+        
+        const backLight = new THREE.DirectionalLight(0x6666ff, 0.3);
+        backLight.position.set(-10, 20, -10);
+        this.scene.add(backLight);
+        
+        console.log('[SceneManager] Lighting added to scene');
 
         if (typeof window !== 'undefined') {
             window.addEventListener('resize', this.handleResize);

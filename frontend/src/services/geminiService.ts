@@ -178,32 +178,39 @@ export const generateRideBlueprint = async (...args: any[]): Promise<any> => {
 };
 
 /**
- * Generates a skybox image by sending a prompt to the backend service.
+ * Generates a skybox image using Gemini 2.5 Flash Image Preview model.
+ * This model excels at creative, contextual image generation.
  * @param prompt A descriptive prompt for the skybox image.
+ * @param blueprint Optional blueprint data for richer context.
  * @returns A promise that resolves to a base64-encoded data URL of the image.
  */
-export const generateSkyboxImage = async (prompt: string): Promise<string> => {
+export const generateSkyboxImage = async (prompt: string, blueprint?: any): Promise<string> => {
   try {
-  const backendUrl = (globalThis as any)?.BACKEND_URL || env.VITE_BACKEND_URL;
+    const backendUrl = (globalThis as any)?.BACKEND_URL || env.VITE_BACKEND_URL;
     if (!backendUrl) throw new Error('BACKEND_URL is not defined');
     const response = await fetch(`${backendUrl}/api/generate-skybox`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify({ prompt, blueprint }),
     });
 
     if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Failed to generate skybox image');
+      const errorData = await response.json();
+      // If it's 501 (Not Implemented), log info and throw
+      if (response.status === 501) {
+        console.info('[GeminiService] Skybox generation not supported:', errorData.detail);
+        throw new Error('Skybox generation not supported by Gemini API');
+      }
+      throw new Error(errorData.detail || 'Failed to generate skybox image');
     }
 
     const data = await response.json();
     return data.imageUrl;
   } catch (error) {
-    console.error("Error generating skybox image:", error);
+    console.warn('[GeminiService] Skybox generation failed, continuing without custom skybox:', error);
     const errorMessage = error instanceof Error ? error.message : String(error);
-    throw new Error(`The generative muse for images is unavailable: ${errorMessage}`);
+    throw new Error(`Skybox generation unavailable: ${errorMessage}`);
   }
 };
