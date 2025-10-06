@@ -53,7 +53,8 @@ Follow these steps to get AudioRail Rider up and running on your local machine.
 **Prerequisites:**
 
 *   [Node.js](https://nodejs.org/en/download/) (LTS version recommended)
-*   [npm](https://www.npmjs.com/get-npm) (comes bundled with Node.js)
+*   [npm](https://www.npmjs.com/get-npm) or [pnpm](https://pnpm.io/) (comes bundled with Node.js)
+*   **For optimal 3D performance**: Hardware-accelerated GPU with up-to-date drivers (see [GPU Setup Guide](../docs/GPU_SETUP.md))
 
 **Setup Instructions:**
 
@@ -64,7 +65,7 @@ Follow these steps to get AudioRail Rider up and running on your local machine.
     ```
 2.  **Install dependencies:**
     ```bash
-    npm install
+    pnpm install  # or npm install
     ```
 3.  **Configure your Gemini API Key:**
     *   You will need an API key for the Google Gemini API. You can obtain one from the [Google AI Studio](https://aistudio.google.com/app/apikey).
@@ -74,9 +75,17 @@ Follow these steps to get AudioRail Rider up and running on your local machine.
         GEMINI_API_KEY=YOUR_GEMINI_API_KEY_HERE
         ```
         *Self-note: Ensure you do not commit your API key to public version control.*
-4.  **Run the application:**
+4.  **Enable Hardware Acceleration (Important for Performance):**
+    *   Open Chrome/Chromium and navigate to `chrome://settings`
+    *   Search for "hardware" and enable:
+        - **"Use hardware acceleration when available"**
+        - **"Use hardware video decode"** (if available)
+    *   Restart your browser
+    *   Verify at `chrome://gpu` that hardware acceleration is active
+    *   For detailed troubleshooting, see the [GPU Setup Guide](../docs/GPU_SETUP.md)
+5.  **Run the application:**
     ```bash
-    npm run dev
+    pnpm run dev  # or npm run dev
     ```
     This command will start the development server. Open your web browser and navigate to the address displayed in your terminal (e.g., `http://localhost:5173`).
 
@@ -96,4 +105,16 @@ This project offers a robust foundation for a captivating synesthetic experience
     *   For very long audio files or complex tracks, consider optimizing the `trackBuilder.ts` to reduce the number of Three.js points or using a simpler geometry approach for distant track sections.
     *   Implement level-of-detail (LOD) for the track or environmental elements to maintain smooth frame rates on less powerful hardware.
     *   Explore Web Workers for offloading heavy audio analysis or track generation computations to prevent blocking the main thread.
+    *   **Ensure hardware acceleration is enabled** - See the [GPU Setup Guide](../docs/GPU_SETUP.md) if experiencing low FPS or software rendering warnings.
+
+## 🧪 Testing
+
+Run the test suite:
+
+```bash
+pnpm test          # Unit tests with Jest
+pnpm test:e2e      # End-to-end tests with Playwright
+```
+
+For GPU-sensitive E2E tests on systems with hybrid graphics or packaged Chromium, see the [GPU Setup Guide](../docs/GPU_SETUP.md) for environment variables and browser configuration options.
 ```

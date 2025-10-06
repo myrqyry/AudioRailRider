@@ -8,6 +8,8 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { UploadIcon, PlayIcon, SparkleIcon, AlertTriangleIcon } from './components/Icon';
 import ThreeCanvas from './components/ThreeCanvas';
 import ReglOverlay from './components/ReglOverlay';
+import DevPanel from './components/DevPanel';
+import RendererWarning from './components/RendererWarning';
 
 const App: React.FC = () => {
     const status = useAppStore((state) => state.status);
@@ -130,6 +132,7 @@ const App: React.FC = () => {
             )}
             
             <div className="relative z-10 p-4">
+                <RendererWarning />
                 {renderContent()}
             </div>
             
@@ -139,6 +142,7 @@ const App: React.FC = () => {
                     <ReglOverlay audioFeatures={audioFeatures || null} />
                 </ErrorBoundary>
             )}
+            <DevPanel />
         </main>
     );
 };

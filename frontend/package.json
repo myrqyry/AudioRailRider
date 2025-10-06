@@ -6,9 +6,18 @@
   "scripts": {
     "start": "vite",
     "dev": "vite",
+    "prebuild": "node ../scripts/resolve-shaders.js",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "jest"
+    "test": "jest",
+    "pw:test": "npx playwright test --project=chromium",
+    "pw:headed": "npx playwright test --project=chromium --headed",
+    "chrome:gpu": "./scripts/chrome-gpu-launch.sh"
+  },
+  "jest": {
+    "testPathIgnorePatterns": [
+      "<rootDir>/tests/playwright/"
+    ]
   },
   "dependencies": {
     "@google/genai": "^1.10.0",
@@ -21,6 +30,7 @@
     "zustand": "^5.0.7"
   },
   "devDependencies": {
+    "@playwright/test": "^1.55.1",
     "@testing-library/jest-dom": "^6.7.0",
     "@testing-library/react": "^16.3.0",
     "@types/jest": "^30.0.0",

@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18.x]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'pnpm'
+
+      - name: Install pnpm
+        run: corepack enable && corepack prepare pnpm@latest --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Restore cached LYGIA
+        uses: actions/cache@v4
+        with:
+          path: frontend/public/lygia
+          key: lygia-${{ runner.os }}-${{ hashFiles('scripts/fetch-lygia.sh') }}
+          restore-keys: |
+            lygia-${{ runner.os }}-
+
+      - name: Fetch LYGIA (pruned copy)
+        run: |
+          chmod +x ./scripts/fetch-lygia.sh
+          ./scripts/fetch-lygia.sh
+
+      - name: Save LYGIA to cache
+        if: always()
+        uses: actions/cache@v4
+        with:
+          path: frontend/public/lygia
+          key: lygia-${{ runner.os }}-${{ hashFiles('scripts/fetch-lygia.sh') }}
+
+      - name: Pre-resolve shaders
+        working-directory: .
+        run: pnpm --filter ./frontend run prebuild
+
+      - name: Build frontend
+        working-directory: ./frontend
+        run: pnpm build
+
+      - name: Run frontend tests
+        working-directory: ./frontend
+        run: pnpm test
+
+      - name: Shader compile smoke test (portable)
+        run: |
+          echo "Running portable shader checks"
+          node ../scripts/check-shaders.js

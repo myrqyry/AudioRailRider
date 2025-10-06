@@ -1,4 +1,4 @@
-import { RideBlueprint, TrackSegment } from 'shared/types';
+import { RideBlueprint, TrackSegmentWithMeta as TrackSegment, seconds } from 'shared/types';
 
 const isIntense = (segment: TrackSegment): boolean => {
     switch (segment.component) {
@@ -21,7 +21,7 @@ const createEasingSegment = (): TrackSegment => ({
     intensity: 10, // Low intensity
     lightingEffect: 'none',
     environmentChange: 'none',
-    audioSyncPoint: 0,
+    audioSyncPoint: seconds(0),
 });
 
 /**

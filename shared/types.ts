@@ -8,8 +8,24 @@ export enum AppStatus {
   Error = 'error'
 }
 
+// Small branded type helper for nominal typing where useful
+export type Brand<K, T> = K & { readonly __brand: T };
+
+// Use a simple Vector3 shape in shared types to avoid pulling Three.js into the
+// shared package, while remaining structurally compatible with THREE.Vector3
+// instances (they have x/y/z number fields).
+export interface Vector3 {
+  x: number;
+  y: number;
+  z: number;
+}
+
+// Seconds as a branded number to reduce unit-mixups (still compatible with number at runtime)
+export type Seconds = Brand<number, 'seconds'>;
+
 export interface FrameAnalysis {
-  timestamp: number;
+  // timestamp in seconds from start of track
+  timestamp: Seconds;
   energy: number;
   spectralCentroid: number;
   spectralFlux: number;
@@ -19,7 +35,7 @@ export interface FrameAnalysis {
 }
 
 export interface AudioFeatures {
-  duration: number;
+  duration: Seconds;
   bpm: number;
   energy: number;
   spectralCentroid: number;
@@ -27,14 +43,25 @@ export interface AudioFeatures {
   frameAnalyses: FrameAnalysis[];
 }
 
-export interface TrackSegment {
-  component: 'climb' | 'drop' | 'turn' | 'loop' | 'barrelRoll';
-  angle?: number;
-  length?: number;
-  direction?: 'left' | 'right';
-  radius?: number;
-  rotations?: number;
+// Discriminated union for track segments so each variant has its own required params
+export type TrackSegment =
+  | { component: 'climb'; length: number; angle?: number }
+  | { component: 'drop'; length: number; angle?: number }
+  | { component: 'turn'; length: number; direction: 'left' | 'right'; angle: number; radius?: number }
+  | { component: 'loop'; radius: number; rotations?: number }
+  | { component: 'barrelRoll'; rotations: number; length?: number };
+
+// Optional metadata that may be attached to segments by AI or processing steps.
+export interface SegmentMeta {
+  intensity?: number;
+  lightingEffect?: string;
+  environmentChange?: string;
+  audioSyncPoint?: Seconds;
 }
+
+// Allow TrackSegment variants to optionally include SegmentMeta fields without
+// losing discriminated union behavior.
+export type TrackSegmentWithMeta = TrackSegment & Partial<SegmentMeta>;
 
 export interface RideBlueprint {
   palette: string[];
@@ -43,21 +70,30 @@ export interface RideBlueprint {
   moodDescription: string;
 }
 
+export interface SegmentDetail {
+  intensity?: number;
+  lightingEffect?: string;
+  environmentChange?: string;
+  audioSyncPoint?: Seconds;
+}
+
 export interface TrackData {
-  path: any[]; // Using any for THREE.Vector3 to avoid Three.js dependency in shared types
-  upVectors: any[];
+  path: Vector3[]; // serialized positions (structurally compatible with THREE.Vector3)
+  upVectors: Vector3[];
   railColor: string;
   glowColor: string;
   skyColor1: string;
   skyColor2: string;
-  segmentDetails: {
-    intensity?: number;
-    lightingEffect?: string;
-    environmentChange?: string;
-    audioSyncPoint?: number;
-  }[];
+  segmentDetails: SegmentDetail[];
   rideName: string;
   moodDescription: string;
   frameAnalyses: FrameAnalysis[];
   audioFeatures: AudioFeatures;
 }
+
+// Helper to create a Seconds branded value from a plain number. This is a no-op at runtime
+// but improves ergonomics when assigning numeric durations/timestamps across the codebase.
+export const seconds = (n: number): Seconds => n as Seconds;
+
+// Helper to convert Seconds back to number explicitly when needed.
+export const secondsToNumber = (s: Seconds): number => s as unknown as number;

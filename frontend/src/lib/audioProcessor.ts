@@ -1,4 +1,6 @@
-import { AudioFeatures, FrameAnalysis } from "shared/types";
+import { AudioFeatures, FrameAnalysis, seconds } from "shared/types";
+import { runPipeline, FramePlugin } from './audioPipeline';
+import * as audioWorklet from './audioWorklet';
 
 // Fallback values in case analysis fails
 const FALLBACK_ENERGY = 0.5;
@@ -36,6 +38,15 @@ const analyzeFullBuffer = async (audioBuffer: AudioBuffer): Promise<{ tempo: num
  */
 export const analyzeAudio = async (audioFile: File): Promise<AudioFeatures> => {
   const audioContext = new AudioContext();
+  // Try registering and using the AudioWorklet (best-effort). In test env this will be a no-op.
+  if (audioWorklet.isWorkletSupported()) {
+    try {
+      await audioWorklet.registerWorklet(audioContext);
+    } catch (e) {
+      // non-fatal
+      console.debug('[audioProcessor] worklet registration failed', e);
+    }
+  }
   let audioBuffer: AudioBuffer | null = null;
 
   // Primary attempt: Web Audio API decoding (preferred, allows full analysis)
@@ -93,7 +104,7 @@ export const analyzeAudio = async (audioFile: File): Promise<AudioFeatures> => {
 
       // Return partial AudioFeatures with valid duration and conservative defaults so downstream logic can proceed.
       return {
-        duration,
+        duration: seconds(duration),
         bpm: 120, // conservative default tempo
         energy: 0,
         spectralCentroid: 0,
@@ -142,49 +153,44 @@ export const analyzeAudio = async (audioFile: File): Promise<AudioFeatures> => {
   let totalSpectralCentroid = 0;
   let totalSpectralFlux = 0;
 
-  if (window.Meyda && (window.Meyda as any).extract) {
+  // Meyda plugin: returns partial FrameAnalysis for a given frame
+  const meydaPlugin: FramePlugin = (frame, sr) => {
+    if (!window.Meyda || !(window.Meyda as any).extract) return null;
     try {
-      console.log('Meyda global object:', window.Meyda);
-      (window.Meyda as any).bufferSize = MeydaBufferSize;
-      let prevCentroid: number | null = null;
+      const features = (window.Meyda as any).extract(['energy', 'spectralCentroid', 'spectralFlux', 'loudness'], frame);
+      const fEnergy = features.energy ?? 0;
+      const fCentroid = features.spectralCentroid ?? 0;
+      const fLoudness = features.loudness?.specific ?? new Float32Array(24).fill(0);
+      const flux = typeof features.spectralFlux === 'number' ? features.spectralFlux : 0;
 
-      for (let i = 0; i < channelData.length; i += MeydaBufferSize) {
-        const frame = channelData.slice(i, i + MeydaBufferSize);
-        if (frame.length !== MeydaBufferSize) continue;
-
-        try {
-          const features = (window.Meyda as any).extract(['energy', 'spectralCentroid', 'loudness'], frame);
-
-          const fEnergy = features.energy ?? 0;
-          const fCentroid = features.spectralCentroid ?? 0;
-          const fLoudness = features.loudness?.specific ?? new Float32Array(24).fill(0);
-
-          const flux = prevCentroid !== null ? Math.abs(fCentroid - prevCentroid) : 0;
-
-          totalEnergy += fEnergy;
-          totalSpectralCentroid += fCentroid;
-          totalSpectralFlux += flux;
-
-          frameAnalyses.push({
-            timestamp: (i / audioBuffer.sampleRate),
-            energy: fEnergy,
-            spectralCentroid: fCentroid,
-            spectralFlux: flux,
-            bass: fLoudness.slice(0, 8).reduce((s, v) => s + v, 0) / 8,
-            mid: fLoudness.slice(8, 16).reduce((s, v) => s + v, 0) / 8,
-            high: fLoudness.slice(16, 24).reduce((s, v) => s + v, 0) / 8,
-          });
-
-          prevCentroid = fCentroid;
-        } catch (frameErr) {
-          console.warn('[audioProcessor] Meyda.extract failed for a frame, skipping frame:', frameErr);
-        }
-      }
-    } catch (initErr) {
-      console.error('Error initializing Meyda analysis loop:', initErr);
+      return {
+        energy: fEnergy,
+        spectralCentroid: fCentroid,
+        spectralFlux: flux,
+        bass: fLoudness.slice(0, 8).reduce((s, v) => s + v, 0) / 8,
+        mid: fLoudness.slice(8, 16).reduce((s, v) => s + v, 0) / 8,
+        high: fLoudness.slice(16, 24).reduce((s, v) => s + v, 0) / 8,
+      };
+    } catch (err) {
+      console.warn('[audioProcessor] Meyda plugin error', err);
+      return null;
     }
-  } else {
-    console.warn('[audioProcessor] Meyda not available; using fallback audio feature values.');
+  };
+
+  try {
+    const pipelineResults = runPipeline(channelData, audioBuffer.sampleRate, {
+      bufferSize: MeydaBufferSize,
+      plugins: [meydaPlugin],
+    });
+
+    for (const fa of pipelineResults) {
+      frameAnalyses.push(fa);
+      totalEnergy += fa.energy;
+      totalSpectralCentroid += fa.spectralCentroid;
+      totalSpectralFlux += fa.spectralFlux;
+    }
+  } catch (err) {
+    console.warn('[audioProcessor] pipeline run failed, falling back to empty analyses', err);
   }
 
   const frameCount = frameAnalyses.length;
@@ -196,11 +202,39 @@ export const analyzeAudio = async (audioFile: File): Promise<AudioFeatures> => {
   await audioContext.close();
 
   return {
-    duration: audioBuffer.duration,
+    duration: seconds(audioBuffer.duration),
     bpm: bpm,
     energy: normalizedEnergy,
     spectralCentroid: avgSpectralCentroid,
     spectralFlux: avgSpectralFlux,
     frameAnalyses: frameAnalyses,
   };
+};
+
+// Create a live worklet-based analyzer attached to the provided AudioContext.
+// The onFrame callback receives FrameAnalysis objects created from worklet messages.
+export const createWorkletAnalyzerForContext = async (
+  audioContext: AudioContext,
+  onFrame: (frame: FrameAnalysis) => void
+): Promise<AudioWorkletNode | null> => {
+  if (!audioWorklet.isWorkletSupported()) return null;
+  try {
+    await audioWorklet.registerWorklet(audioContext);
+    const node = audioWorklet.createAnalyzerNode(audioContext, (a) => {
+      // Convert to FrameAnalysis shape; timestamp is in seconds already
+      onFrame({
+        timestamp: seconds(a.timestamp),
+        energy: a.energy,
+        spectralCentroid: a.spectralCentroid,
+        spectralFlux: a.spectralFlux,
+        bass: a.bass,
+        mid: a.mid,
+        high: a.high,
+      });
+    });
+    return node;
+  } catch (e) {
+    console.warn('[audioProcessor] createWorkletAnalyzerForContext failed', e);
+    return null;
+  }
 };

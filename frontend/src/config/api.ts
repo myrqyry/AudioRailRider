@@ -1,4 +1,4 @@
-import { env } from './environment';
+import { env, isDevelopment, isDebugEnabled } from './environment';
 
 /**
  * API-related configuration for the frontend application
@@ -134,7 +134,7 @@ export function validateApiConfig(): void {
   }
 
   // Log API configuration in development
-  if (env.isDevelopment() && env.isDebugEnabled()) {
+  if (isDevelopment() && isDebugEnabled()) {
     console.log('[API Config]', {
       baseURL: apiConfig.baseURL,
       version: apiConfig.version,

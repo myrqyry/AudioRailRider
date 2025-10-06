@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { RIDE_CONFIG } from 'shared/constants';
+import { FPSMeter } from './fpsMeter';
 
 export class SceneManager {
     readonly scene: THREE.Scene;
@@ -15,16 +16,19 @@ export class SceneManager {
         const height = this.container.clientHeight || (typeof window !== 'undefined' ? window.innerHeight : 1);
         this.camera = new THREE.PerspectiveCamera(RIDE_CONFIG.CAMERA_BASE_FOV, width / height, 0.1, 2000);
         this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            // Lightweight FPS meter for adaptive quality heuristics
+            (this.scene as any).userData = (this.scene as any).userData || {};
+            (this.scene as any).userData._fpsMeter = new FPSMeter(1000);
         this.init();
     }
 
     private init() {
         const width = this.container.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 1);
         const height = this.container.clientHeight || (typeof window !== 'undefined' ? window.innerHeight : 1);
-        const dpr = (typeof window !== 'undefined' && window.devicePixelRatio)
-          ? Math.min(window.devicePixelRatio, 2)
-          : 1;
-        this.renderer.setPixelRatio(dpr);
+                // Cap DPR to avoid excessive GPU work; we adaptively lower it if FPS drops.
+                const rawDpr = (typeof window !== 'undefined' && window.devicePixelRatio) ? window.devicePixelRatio : 1;
+                const capped = Math.min(rawDpr, 2);
+                this.renderer.setPixelRatio(capped);
         this.renderer.setSize(width, height);
         this.container.appendChild(this.renderer.domElement);
 
@@ -63,14 +67,29 @@ export class SceneManager {
         const containerHeight = this.container.clientHeight || (typeof window !== 'undefined' ? window.innerHeight : 1);
         this.camera.aspect = containerWidth / containerHeight;
         this.camera.updateProjectionMatrix();
-        const dpr = (typeof window !== 'undefined' && window.devicePixelRatio)
-          ? Math.min(window.devicePixelRatio, 2)
-          : 1;
-        this.renderer.setPixelRatio(dpr);
+                const rawDpr = (typeof window !== 'undefined' && window.devicePixelRatio) ? window.devicePixelRatio : 1;
+                const capped = Math.min(rawDpr, 2);
+                this.renderer.setPixelRatio(capped);
         this.renderer.setSize(containerWidth, containerHeight);
     };
 
     render(): void {
+        // Update adaptive hints before rendering
+        try {
+            const meter: FPSMeter | undefined = (this.scene as any).userData?._fpsMeter;
+            if (meter) {
+                const fps = meter.tick();
+                if (fps !== null) {
+                    // write a small LOD hint (simple heuristic) to scene.userData
+                    (this.scene as any).userData.lodHint = fps < 40 ? 'low' : 'high';
+                    // If FPS is very low, reduce DPR proactively
+                    if (fps < 30) this.renderer.setPixelRatio(1);
+                    else this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+                }
+            }
+        } catch (e) {
+            // non-fatal
+        }
         this.renderer.render(this.scene, this.camera);
     }
 

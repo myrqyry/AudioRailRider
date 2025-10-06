@@ -179,6 +179,9 @@ protected apiClient = {
 
 async function runTestCase(testName: string, file: MockFileLike) {
   try {
+    // Provide a minimal mockAi expected by prepareAudioPart. The harness
+    // previously referenced `mockAi` which didn't exist in this file.
+    const mockAi = new MockAIClient();
     const part = await prepareAudioPart(mockAi as any, file as File);
     const mode = 'inlineData' in part ? 'inline' : 'fileData' in part ? 'upload' : 'unknown';
     console.log(`[PASS] ${testName} => accepted. Mode: ${mode}. Detected mime (returned):`, (part as any).fileData?.mimeType ?? (part as any).inlineData?.mimeType);

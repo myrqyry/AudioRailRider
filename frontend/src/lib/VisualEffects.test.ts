@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { VisualEffects } from './VisualEffects';
 import { RIDE_CONFIG } from './constants';
-import { TrackData } from 'shared/types';
+import { TrackData, seconds } from 'shared/types';
 
 describe('VisualEffects', () => {
   let scene: THREE.Scene;
@@ -20,6 +20,16 @@ describe('VisualEffects', () => {
       segmentDetails: [],
       rideName: 'Test Ride',
       moodDescription: 'A test ride',
+      // Minimal audio/analysis data to satisfy shared types in tests
+      frameAnalyses: [],
+      audioFeatures: {
+        duration: seconds(1),
+        bpm: 120,
+        energy: 0,
+        spectralCentroid: 0,
+        spectralFlux: 0,
+        frameAnalyses: [],
+      },
     };
     visualEffects = new VisualEffects(scene, trackData);
   });

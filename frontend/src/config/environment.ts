@@ -39,6 +39,34 @@ function validateBooleanEnvVar(name: keyof EnvironmentConfig, value: string | un
   return value.toLowerCase() === 'true';
 }
 
+// Safe environment accessor: prefer Vite's import.meta.env in browser builds,
+// but fall back to Node's process.env when available (e.g., during SSR/test).
+function safeEnv(name: string): string | undefined {
+  // Avoid using `import.meta` here so the file can be parsed by Node/Jest
+  // (which do not understand the import.meta syntax). Prefer process.env
+  // (available in Node and can be polyfilled in browsers at startup),
+  // then fall back to a runtime-injected global object set by the app entry.
+  try {
+    if (typeof process !== 'undefined' && (process as any).env) {
+      const v = (process as any).env[name];
+      if (typeof v !== 'undefined' && v !== null && v !== '') return String(v);
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  try {
+    const runtimeEnv = (globalThis as any).__import_meta_env__;
+    if (runtimeEnv && typeof runtimeEnv[name] !== 'undefined' && runtimeEnv[name] !== null && runtimeEnv[name] !== '') {
+      return String(runtimeEnv[name]);
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  return undefined;
+}
+
 /**
  * Environment-specific configurations
  */
@@ -52,9 +80,9 @@ const ENVIRONMENTS = {
   },
   production: {
     NODE_ENV: 'production' as const,
-    VITE_BACKEND_URL: process.env.VITE_BACKEND_URL || 'https://your-production-backend.com',
+    VITE_BACKEND_URL: safeEnv('VITE_BACKEND_URL') || 'https://your-production-backend.com',
     VITE_DEV_PORT: '5173',
-    VITE_PROD_URL: process.env.VITE_PROD_URL || 'https://your-production-frontend.com',
+    VITE_PROD_URL: safeEnv('VITE_PROD_URL') || 'https://your-production-frontend.com',
     VITE_DEBUG: 'false',
   },
   test: {
@@ -70,9 +98,12 @@ const ENVIRONMENTS = {
  * Detects the current environment from NODE_ENV or Vite's mode
  */
 function detectEnvironment(): Environment {
-  // In Vite, we can use import.meta.env.MODE which is set by Vite
-  // In Node.js environments, we use NODE_ENV
-  const env = (import.meta.env?.MODE as Environment) || (process.env.NODE_ENV as Environment) || 'development';
+  // Vite exposes mode via import.meta.env.MODE at build time; however we avoid
+  // referencing import.meta here so tests and Node can parse this file. The
+  // recommended approach is to set NODE_ENV or provide a runtime `__import_meta_env__`
+  // object (populated by the app entry) when running in the browser.
+  const detected = (safeEnv('NODE_ENV') as Environment) || (safeEnv('MODE') as Environment) || 'development';
+  const env = detected;
 
   if (env && ['development', 'production', 'test'].includes(env)) {
     return env as Environment;
@@ -94,10 +125,10 @@ function getEnvironmentConfig(): EnvironmentConfig {
   // Override with actual environment variables if they exist
   const config: EnvironmentConfig = {
     NODE_ENV: currentEnv,
-    VITE_BACKEND_URL: validateRequiredEnvVar('VITE_BACKEND_URL', import.meta.env?.VITE_BACKEND_URL || process.env.VITE_BACKEND_URL || baseConfig.VITE_BACKEND_URL),
-    VITE_DEV_PORT: import.meta.env?.VITE_DEV_PORT || process.env.VITE_DEV_PORT || baseConfig.VITE_DEV_PORT,
-    VITE_PROD_URL: import.meta.env?.VITE_PROD_URL || process.env.VITE_PROD_URL || baseConfig.VITE_PROD_URL,
-    VITE_DEBUG: import.meta.env?.VITE_DEBUG || process.env.VITE_DEBUG || baseConfig.VITE_DEBUG,
+    VITE_BACKEND_URL: validateRequiredEnvVar('VITE_BACKEND_URL', safeEnv('VITE_BACKEND_URL') || baseConfig.VITE_BACKEND_URL),
+    VITE_DEV_PORT: safeEnv('VITE_DEV_PORT') || baseConfig.VITE_DEV_PORT,
+    VITE_PROD_URL: safeEnv('VITE_PROD_URL') || baseConfig.VITE_PROD_URL,
+    VITE_DEBUG: safeEnv('VITE_DEBUG') || baseConfig.VITE_DEBUG,
   };
 
   return config;

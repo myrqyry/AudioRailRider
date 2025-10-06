@@ -9,14 +9,19 @@ interface ReglOverlayProps {
 const ReglOverlay: React.FC<ReglOverlayProps> = ({ audioFeatures }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // Using refs to hold regl-related objects that shouldn't trigger re-renders
-  const reglRef = useRef<createREGL.Regl | null>(null);
-  const drawWaveformRef = useRef<createREGL.DrawCommand | null>(null);
+  // Use `any` for regl runtime objects to avoid strict type mismatches
+  const reglRef = useRef<any>(null);
+  const drawWaveformRef = useRef<any>(null);
   const vertexBufferRef = useRef<any>(null); // Use `any` for regl buffer type for simplicity
   const [pointCount, setPointCount] = useState(0); // State to hold the number of points to draw
+  // Keep a ref version of pointCount so the regl frame loop reads the latest value
+  const pointCountRef = useRef<number>(pointCount);
 
   useEffect(() => {
     if (canvasRef.current) {
-      const regl = createREGL(canvasRef.current);
+      // `createREGL`'s TS types can be incompatible with the bundled runtime in some
+      // toolchains; cast to `any` so we use the runtime object directly.
+      const regl = (createREGL as any)(canvasRef.current);
       reglRef.current = regl;
 
       const vertexBuffer = regl.buffer({
@@ -51,8 +56,9 @@ const ReglOverlay: React.FC<ReglOverlayProps> = ({ audioFeatures }) => {
 
       const frameLoop = regl.frame(() => {
         regl.clear({ color: [0, 0, 0, 0], depth: 1 });
-        if (pointCount > 0) {
-          drawWaveformRef.current?.({ count: pointCount });
+        const pc = pointCountRef.current;
+        if (pc > 0) {
+          drawWaveformRef.current?.({ count: pc });
         }
       });
 
@@ -78,7 +84,9 @@ const ReglOverlay: React.FC<ReglOverlayProps> = ({ audioFeatures }) => {
 
       if (vertexBufferRef.current) {
         vertexBufferRef.current(points);
-        setPointCount(points.length / 2);
+        const pc = points.length / 2;
+        pointCountRef.current = pc;
+        setPointCount(pc);
       }
     } else {
         // Clear the visualization if there are no features

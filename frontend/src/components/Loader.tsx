@@ -5,7 +5,7 @@ export interface LoaderProps {
   message: string;
 }
 
-export const Loader: React.FC<LoaderProps> = memo(({ message }) => {
+function LoaderComponent({ message }: LoaderProps) {
   return (
     <div
       className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm"
@@ -23,4 +23,6 @@ export const Loader: React.FC<LoaderProps> = memo(({ message }) => {
       </p>
     </div>
   );
-};
+}
+
+export const Loader = memo(LoaderComponent);

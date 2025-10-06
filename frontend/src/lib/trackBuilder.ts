@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { RideBlueprint, TrackSegment, TrackData } from 'shared/types';
+import { RideBlueprint, TrackSegmentWithMeta as TrackSegment, TrackData, seconds } from 'shared/types';
 import { RIDE_CONFIG, DEFAULT_SPACING } from 'shared/constants';
 
 /**
@@ -11,7 +11,7 @@ import { RIDE_CONFIG, DEFAULT_SPACING } from 'shared/constants';
  */
 import { AudioFeatures } from 'shared/types';
 
-export const buildTrackData = (blueprint: RideBlueprint, audioFeatures: AudioFeatures): TrackData => {
+export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFeatures): TrackData => {
     const points: THREE.Vector3[] = [];
     const upVectors: THREE.Vector3[] = [];
     const segmentDetails: TrackData['segmentDetails'] = [];
@@ -47,24 +47,24 @@ export const buildTrackData = (blueprint: RideBlueprint, audioFeatures: AudioFea
         initialSegmentUps.push(currentUp.clone());
     }
     addSegment(initialSegmentPoints, initialSegmentUps);
-    segmentDetails.push({
-      intensity: 0,
-      lightingEffect: "none",
-      environmentChange: "none",
-      audioSyncPoint: 0
-    });
+        segmentDetails.push({
+            intensity: 0,
+            lightingEffect: "none",
+            environmentChange: "none",
+            audioSyncPoint: seconds(0)
+        });
 
     blueprint.track.forEach((segment: TrackSegment) => {
         const segmentPoints: THREE.Vector3[] = [];
         const segmentUps: THREE.Vector3[] = [];
         const resolution = Math.max(1, Math.floor(RIDE_CONFIG.TRACK_SEGMENT_RESOLUTION ?? 100));
 
-        segmentDetails.push({
-          intensity: segment.intensity,
-          lightingEffect: segment.lightingEffect,
-          environmentChange: segment.environmentChange,
-          audioSyncPoint: segment.audioSyncPoint
-        });
+                segmentDetails.push({
+                    intensity: segment.intensity,
+                    lightingEffect: segment.lightingEffect,
+                    environmentChange: segment.environmentChange,
+                    audioSyncPoint: segment.audioSyncPoint
+                });
 
         switch (segment.component) {
             case 'climb':
@@ -177,6 +177,14 @@ export const buildTrackData = (blueprint: RideBlueprint, audioFeatures: AudioFea
         segmentDetails: segmentDetails,
         rideName: blueprint.rideName,
         moodDescription: blueprint.moodDescription,
-        frameAnalyses: audioFeatures.frameAnalyses,
+        frameAnalyses: (audioFeatures && audioFeatures.frameAnalyses) || [],
+        audioFeatures: audioFeatures || {
+            duration: 0 as any,
+            bpm: 120,
+            energy: 0,
+            spectralCentroid: 0,
+            spectralFlux: 0,
+            frameAnalyses: []
+        },
     };
 };

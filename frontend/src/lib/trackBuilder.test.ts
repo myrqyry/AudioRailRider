@@ -9,7 +9,7 @@ describe('buildTrackData', () => {
     palette: ['#ff0000', '#00ff00', '#0000ff'],
     track: [
       { component: 'climb', angle: 10, length: 100 },
-      { component: 'turn', direction: 'left', radius: 50, angle: 90 },
+  { component: 'turn', direction: 'left', radius: 50, angle: 90, length: 60 },
       { component: 'drop', angle: -20, length: 100 },
       { component: 'loop', radius: 40 },
       { component: 'barrelRoll', rotations: 2, length: 100 },

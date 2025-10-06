@@ -57,9 +57,21 @@ const ThreeCanvas = () => {
             // Clamp progress to [0, 1]
             progress = Math.min(1, Math.max(0, progress));
             
-            rideCamera.update(progress);
-            visualEffects.update(elapsedTime, featuresRef.current, sceneManager.camera.position);
-            sceneManager.render();
+            try {
+                // Re-read objects and guard in case of late disposal/hot reload
+                if (!rideCamera || !visualEffects || !sceneManager) return;
+                rideCamera.update(progress);
+                // featuresRef is updated by useAudioAnalysis; read current value at call time
+                const features = featuresRef == null ? null : featuresRef.current;
+                visualEffects.update(elapsedTime, features, sceneManager.camera.position);
+                sceneManager.render();
+            } catch (err) {
+                // Swallow errors to avoid stopping the animation loop; log for diagnostics
+                // This prevents a single frame error (e.g., transient null field) from crashing the app
+                // eslint-disable-next-line no-console
+                console.error('ThreeCanvas frame error:', err);
+                return;
+            }
         };
         animate();
         return () => {

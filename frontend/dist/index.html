@@ -1,0 +1,35 @@
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AudioRail Rider</title>
+    <style>
+      @keyframes fade-in {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .animate-fade-in { animation: fade-in 0.5s ease-out forwards; }
+    </style>
+    <!-- Meyda loader: resolves window.meydaLoaded promise when ready -->
+    <script>
+      window.meydaLoaded = new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/meyda@5.6.3/dist/web/meyda.min.js';
+        script.crossOrigin = 'anonymous';
+        script.onload = () => {
+          if (window.Meyda) return resolve(window.Meyda);
+          reject(new Error('Meyda loaded but window.Meyda is not available'));
+        };
+        script.onerror = (e) => reject(new Error('Failed to load Meyda: ' + (e?.message || 'unknown')));
+        document.head.appendChild(script);
+      });
+    </script>
+    <script type="module" crossorigin src="/assets/index-BdO85GN_.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-D4tbuneC.css">
+  </head>
+  <body class="bg-black text-white font-sans">
+    <div id="root"></div>
+  </body>
+</html>

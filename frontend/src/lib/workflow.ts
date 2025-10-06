@@ -67,6 +67,11 @@ export const runAudioProcessingWorkflow = async (
     checkAbort();
 
     console.log('[Workflow] Calling generateRideBlueprint with file:', file.name);
+    try {
+      // Log effective backend URL (if available) to help diagnose "Failed to fetch"
+      const backendUrl = (globalThis as any)?.BACKEND_URL || (require('../config/environment').env?.VITE_BACKEND_URL as string) || 'unknown';
+      console.debug('[Workflow] Backend URL (effective):', backendUrl);
+    } catch (e) {}
     // Pass the abort signal to the fetch call
     const { blueprint: rawBlueprint, features: audioFeatures } = await generateRideBlueprint(file, controller.signal);
     console.log('[Workflow] Successfully received blueprint and audio features');

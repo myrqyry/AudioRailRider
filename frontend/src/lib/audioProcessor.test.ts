@@ -1,4 +1,5 @@
 import { analyzeAudio } from './audioProcessor';
+import { secondsToNumber } from 'shared/types';
 
 // Mock AudioContext
 const mockDecodeAudioData = jest.fn();
@@ -9,8 +10,9 @@ global.AudioContext = jest.fn(() => ({
 })) as any;
 
 // Mock Meyda
-global.window.Meyda = {
-  extract: jest.fn(),
+(global.window as any).Meyda = {
+  // tests intentionally mock Meyda; treat as `any` to avoid narrowing the type
+  extract: (jest.fn() as unknown) as any,
 } as any;
 
 // Mock File.prototype.arrayBuffer
@@ -39,7 +41,7 @@ describe('analyzeAudio', () => {
       duration: 1.0,
     };
     mockDecodeAudioData.mockResolvedValue(mockAudioBuffer);
-    (global.window.Meyda.extract as jest.Mock).mockReturnValue({
+    ((global.window as any).Meyda.extract as jest.Mock).mockReturnValue({
       energy: 1,
       spectralCentroid: 1000,
       spectralFlux: 0.1,
@@ -49,7 +51,7 @@ describe('analyzeAudio', () => {
     const features = await analyzeAudio(file);
 
     expect(features).toBeDefined();
-    expect(features.duration).toBe(1.0);
+  expect(secondsToNumber(features.duration)).toBe(1.0);
     expect(features.bpm).toBe(120); // The mock BPM is 120
     expect(features.energy).toBeCloseTo(0.1); // 1 / 10
     expect(features.spectralCentroid).toBe(1000);
@@ -81,7 +83,7 @@ describe('analyzeAudio', () => {
     const features = await analyzeAudio(file);
 
     expect(features).toBeDefined();
-    expect(features.duration).toBe(2.0);
+  expect(secondsToNumber(features.duration)).toBe(2.0);
     expect(features.bpm).toBe(120);
     expect(features.energy).toBe(0);
     expect(features.spectralCentroid).toBe(0);
