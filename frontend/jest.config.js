@@ -14,4 +14,7 @@ export default {
       useESM: true,
     },
   },
+  testPathIgnorePatterns: [
+    "<rootDir>/tests/playwright/"
+  ],
 };

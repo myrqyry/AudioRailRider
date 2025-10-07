@@ -3,6 +3,14 @@ import { TrackData, FrameAnalysis, SegmentDetail } from 'shared/types';
 import { RIDE_CONFIG } from 'shared/constants';
 import { getCachedShader, getCachedLygiaResolver } from './preloader';
 
+interface FeatureVisualConfig {
+  color: [number, number, number];
+  sensitivity: number;
+  size: number; // base size multiplier
+  lifetime: number; // base lifetime in seconds
+  behavior: 'burst' | 'trail' | 'flow'; // for future use
+}
+
 // --- Constants ---
 const BASS_GLOW_MIN = 0.3; // The baseline glow intensity
 const BASS_GLOW_MAX = 1.8; // The maximum glow intensity when bass hits
@@ -77,15 +85,15 @@ export class VisualEffects {
   private readonly _colorTmp2 = new THREE.Color();
   private readonly _colorTmp3 = new THREE.Color();
   // Per-feature visual configuration (color, sensitivity) used when spawning particles
-  private featureConfigs: Record<string, { color?: [number, number, number]; sensitivity?: number }> = {
-    subBass: { color: [1.0, 0.45, 0.25], sensitivity: 1.1 },
-    bass: { color: [1.0, 0.6, 0.3], sensitivity: 1.0 },
-    lowMid: { color: [0.4, 0.8, 1.0], sensitivity: 0.9 },
-    mid: { color: [0.6, 0.9, 1.0], sensitivity: 0.8 },
-  highMid: { color: [0.7, 0.8, 1.0], sensitivity: 0.7 },
-    treble: { color: [0.9, 0.7, 1.0], sensitivity: 0.6 },
-    sparkle: { color: [1.0, 0.95, 1.0], sensitivity: 0.65 },
-  };
+  private featureVisuals: Map<string, FeatureVisualConfig> = new Map([
+    ['subBass', { color: [1.0, 0.2, 0.1], sensitivity: 1.2, size: 2.5, lifetime: 3.5, behavior: 'flow' }],
+    ['bass', { color: [1.0, 0.4, 0.2], sensitivity: 1.0, size: 2.0, lifetime: 3.0, behavior: 'flow' }],
+    ['lowMid', { color: [0.2, 0.8, 1.0], sensitivity: 0.9, size: 1.2, lifetime: 2.5, behavior: 'burst' }],
+    ['mid', { color: [0.5, 1.0, 0.8], sensitivity: 0.8, size: 1.0, lifetime: 2.0, behavior: 'burst' }],
+    ['highMid', { color: [0.8, 1.0, 0.6], sensitivity: 0.7, size: 0.8, lifetime: 1.8, behavior: 'trail' }],
+    ['treble', { color: [1.0, 0.8, 0.8], sensitivity: 0.6, size: 0.6, lifetime: 1.5, behavior: 'trail' }],
+    ['sparkle', { color: [1.0, 1.0, 1.0], sensitivity: 0.65, size: 0.7, lifetime: 1.2, behavior: 'trail' }],
+  ]);
   private highQualityMode: boolean = true;
   private lastPerformanceCheck: number = 0;
   private frameCount: number = 0;
@@ -175,6 +183,8 @@ export class VisualEffects {
       shader.uniforms.ghostTintA = { value: this.trackTintA };
       shader.uniforms.ghostTintB = { value: this.trackTintB };
       shader.uniforms.distortionStrength = { value: 0 };
+      shader.uniforms.bassIntensity = { value: 0 };
+      shader.uniforms.trebleIntensity = { value: 0 };
 
       shader.fragmentShader = shader.fragmentShader
         .replace(
@@ -204,12 +214,20 @@ vec3 totalEmissiveRadiance = emissive + dreamTint * spirit;`
           `#include <common>
 uniform float trackTime;
 uniform float distortionStrength;
+uniform float bassIntensity;
+uniform float trebleIntensity;
 `
         )
         .replace(
           '#include <begin_vertex>',
           `#include <begin_vertex>
 float vPath = clamp(uv.y, 0.0, 1.0);
+// Bass swell effect
+transformed += normal * bassIntensity * 1.5;
+// Treble wiggle effect
+float trebleWarp = sin(vPath * 60.0 - trackTime * 4.0) * trebleIntensity * 0.4;
+transformed += normal * trebleWarp;
+// Existing distortion
 float ribbon = sin(vPath * 18.0 + trackTime * 2.0);
 transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
 `
@@ -248,7 +266,8 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
       // Initialize instance matrices to identity and make them invisible initially
       const dummy = new THREE.Object3D();
       for (let i = 0; i < particleCount; i++) {
-        dummy.position.set(0, -9999, 0);
+        dummy.position.set(0, 0, 0);
+        dummy.scale.setScalar(0); // Use scale to hide instead of position
         dummy.updateMatrix();
         this.particleInstancedMesh.setMatrixAt(i, dummy.matrix);
       }
@@ -406,8 +425,22 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     // Initialize GPU-based particle update buffer and shaders (optional).
     // Call this once when a WebGL renderer is available.
     public async initGPU(renderer: THREE.WebGLRenderer) {
-      if (!this.particleInstancedMesh) return;
-      if (!renderer.capabilities.isWebGL2) return; // require WebGL2 for float RTTs
+      if (!this.particleInstancedMesh) {
+        console.log('[GPU Particles] No instanced mesh available, skipping GPU init.');
+        return;
+      }
+      const capabilities = renderer.capabilities;
+      const extensions = renderer.extensions;
+      console.log('[GPU Particles] Initializing GPU particle system...');
+      console.log('[GPU Particles] WebGL2 supported:', capabilities.isWebGL2);
+      console.log('[GPU Particles] Float textures support (OES_texture_float):', extensions.has('OES_texture_float'));
+      console.log('[GPU Particles] Float textures support (WEBGL_color_buffer_float):', extensions.has('WEBGL_color_buffer_float'));
+
+      if (!capabilities.isWebGL2) {
+        console.warn('[GPU Particles] GPU particle system requires WebGL2. Falling back to CPU particles.');
+        this.switchToFallbackParticles();
+        return;
+      }
       try {
         this.gpuRenderer = renderer;
         const size = Math.ceil(Math.sqrt(RIDE_CONFIG.PARTICLE_COUNT));
@@ -820,10 +853,24 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
 
   /**
    * Register or update a visual configuration for a named audio feature.
-   * Example: registerFeatureVisual('bass', { color: [1,0.5,0.3], sensitivity: 1.2 })
+   * Example: registerFeatureVisual('bass', { color: [1,0.5,0.3], sensitivity: 1.2, size: 2.0, lifetime: 3.0, behavior: 'flow' })
    */
-  public registerFeatureVisual(featureName: string, cfg: { color?: [number, number, number]; sensitivity?: number }) {
-    this.featureConfigs[featureName] = { ...(this.featureConfigs[featureName] || {}), ...cfg };
+  public registerFeatureVisual(featureName: string, cfg: Partial<FeatureVisualConfig>) {
+    const existing = this.featureVisuals.get(featureName);
+    if (existing) {
+      this.featureVisuals.set(featureName, { ...existing, ...cfg });
+    } else {
+      // If the feature doesn't exist, we should probably have some defaults
+      const defaultConfig: FeatureVisualConfig = {
+        color: [1, 1, 1],
+        sensitivity: 1,
+        size: 1,
+        lifetime: 2,
+        behavior: 'burst',
+        ...cfg,
+      };
+      this.featureVisuals.set(featureName, defaultConfig);
+    }
   }
 
   private driveAudioReactiveParticles(nowSeconds: number, deltaSeconds: number, cameraPosition: THREE.Vector3, lookAtPosition: THREE.Vector3) {
@@ -863,7 +910,10 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     for (const trigger of triggers) {
       const baseIntensity = this.audioFeatures[trigger.feature] ?? 0;
       if (baseIntensity <= 0) continue;
-      const sensitivity = this.featureConfigs[trigger.feature]?.sensitivity ?? 1;
+      const visualConfig = this.featureVisuals.get(trigger.feature);
+      if (!visualConfig) continue;
+
+      const sensitivity = visualConfig.sensitivity;
       const scaled = Math.min(1, baseIntensity * sensitivity * this.segmentIntensityBoost);
       if (scaled < trigger.threshold) continue;
       const last = this.featureCooldowns[trigger.feature] ?? 0;
@@ -1046,6 +1096,8 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
       uniforms.segmentBoost.value = this.segmentIntensityBoost;
       uniforms.audioFlow.value = Math.min(1.2, this.gpuAudioForce * 0.25);
       uniforms.distortionStrength.value = Math.min(0.6, 0.2 + this.trackPulse * 0.5 + this.segmentIntensityBoost * 0.1);
+      uniforms.bassIntensity.value = this.audioFeatures.bass || 0;
+      uniforms.trebleIntensity.value = this.audioFeatures.treble || 0;
     }
 
     if (this.ghostRibbonMaterial) {
@@ -1054,6 +1106,25 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
       uniforms.audioPulse.value = Math.min(1.8, this.trackPulse * 1.1 + this.gpuAudioForce * 0.1);
       uniforms.colorInner.value.copy(this.trackTintA);
       uniforms.colorOuter.value.copy(this.trackTintB);
+    }
+
+    // Update skybox and fog for environmental effects
+    const sky = this.scene.getObjectByName('sky');
+    if (sky && (sky as any).material?.uniforms) {
+      const uniforms = (sky as any).material.uniforms;
+      const bass = this.audioFeatures.bass || 0;
+      uniforms.turbidity.value = THREE.MathUtils.lerp(uniforms.turbidity.value, 10 + bass * 15, 0.1);
+      uniforms.rayleigh.value = THREE.MathUtils.lerp(uniforms.rayleigh.value, 2 + bass * 2, 0.1);
+    }
+
+    if (this.scene.fog instanceof THREE.FogExp2) {
+      const energy = currentFrame?.energy || 0;
+      const bass = this.audioFeatures.bass || 0;
+      const targetDensity = 0.0025 + energy * 0.005;
+      this.scene.fog.density = THREE.MathUtils.lerp(this.scene.fog.density, targetDensity, 0.1);
+      const bassColor = new THREE.Color(0x440000);
+      const defaultColor = new THREE.Color(0x000000);
+      this.scene.fog.color.lerp(bass > 0.5 ? bassColor : defaultColor, 0.1);
     }
 
     // Reclaim expired instances (simple lifetime model)
@@ -1067,7 +1138,9 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
         if (life > 0 && nowSeconds - start >= life) {
           // Return to free stack and hide instance
           this.freeInstance(i);
-          dummy.position.set(0, -9999, 0); dummy.updateMatrix();
+          dummy.position.set(0, 0, 0);
+          dummy.scale.setScalar(0);
+          dummy.updateMatrix();
           this.particleInstancedMesh.setMatrixAt(i, dummy.matrix);
           reclaimed++;
         }
@@ -1206,22 +1279,28 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
         const idx = this.allocateInstance();
         if (idx === -1) break; // no free instances
         allocated.push(idx);
-        // Apply a jitter scaled by optional feature intensity
+
+        const visualConfig = feature ? this.featureVisuals.get(feature) : undefined;
         const featureIntensity = Math.min(1, (feature ? (this.audioFeatures[feature] || 0) : 0) * this.segmentIntensityBoost);
+
         const jitter = 1.5 + featureIntensity * 2.0;
         const px = origin.x + (Math.random() - 0.5) * jitter;
         const py = origin.y + (Math.random() - 0.5) * jitter;
         const pz = origin.z + (Math.random() - 0.5) * jitter;
         dummy.position.set(px, py, pz);
-        const baseSize = RIDE_CONFIG.PARTICLE_BASE_SIZE * (0.5 + Math.random() * 0.8);
-        dummy.scale.setScalar(baseSize * (1 + featureIntensity * 0.8));
+
+        const baseSize = RIDE_CONFIG.PARTICLE_BASE_SIZE * (visualConfig?.size ?? 1.0) * (0.7 + Math.random() * 0.6);
+        dummy.scale.setScalar(baseSize * (1 + featureIntensity * 1.2));
         dummy.updateMatrix();
         this.particleInstancedMesh.setMatrixAt(idx, dummy.matrix);
+
         // mark start time and lifetime
         if (this.instanceStartTimes && this.instanceLifetimes) {
           this.instanceStartTimes[idx] = nowSeconds;
-          this.instanceLifetimes[idx] = 1.5 + Math.random() * 2.0; // seconds
+          const baseLifetime = visualConfig?.lifetime ?? 1.5;
+          this.instanceLifetimes[idx] = baseLifetime + (Math.random() - 0.2) * baseLifetime * 0.5; // seconds
         }
+
         const pa = idx * 3;
         positions.array[pa + 0] = px;
         positions.array[pa + 1] = py;
@@ -1240,11 +1319,12 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
             const ci = idx * 3;
             // color influenced by feature config if provided
             let col: [number, number, number] = [0.7, 0.7, 0.7];
-            if (feature && this.featureConfigs[feature] && this.featureConfigs[feature].color) {
-              col = this.featureConfigs[feature].color as [number, number, number];
+            if (visualConfig) {
+              col = visualConfig.color;
               // modulate by feature intensity
-              const inten = Math.min(1, (this.audioFeatures[feature] || 0) * this.segmentIntensityBoost);
-              col = [col[0] * (0.6 + 0.4 * inten), col[1] * (0.6 + 0.4 * inten), col[2] * (0.6 + 0.4 * inten)];
+              const inten = Math.min(1, (feature ? this.audioFeatures[feature] || 0 : 0) * this.segmentIntensityBoost);
+              const brightness = 0.6 + 0.4 * inten;
+              col = [col[0] * brightness, col[1] * brightness, col[2] * brightness];
             } else {
               col = [0.6 + Math.random() * 0.4, 0.6 + Math.random() * 0.4, 0.6 + Math.random() * 0.4];
             }
@@ -1402,6 +1482,22 @@ void main() {
     this.trackMesh.geometry = newGeometry;
     oldGeometry.dispose();
     this.rebuildGhostRibbon(curve, this.trackData.path.length * LOW_QUALITY_SEGMENTS);
+  }
+
+  private switchToFallbackParticles() {
+    console.warn('[VisualEffects] Switching to fallback particle system (THREE.Points).');
+    if (this.particleInstancedMesh) {
+      this.particleInstancedMesh.visible = false;
+    }
+    if (this.particleSystem) {
+      // Ensure it's in the scene. The constructor logic might have already added it.
+      if (!this.particleSystem.parent) {
+        this.scene.add(this.particleSystem);
+      }
+      this.particleSystem.visible = true;
+    }
+    // Disable GPU path to prevent further errors
+    this.gpuEnabled = false;
   }
 
   /**
