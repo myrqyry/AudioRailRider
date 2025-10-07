@@ -14,11 +14,6 @@
     "pw:headed": "npx playwright test --project=chromium --headed",
     "chrome:gpu": "./scripts/chrome-gpu-launch.sh"
   },
-  "jest": {
-    "testPathIgnorePatterns": [
-      "<rootDir>/tests/playwright/"
-    ]
-  },
   "dependencies": {
     "@google/genai": "^1.10.0",
     "meyda": "^5.6.3",
