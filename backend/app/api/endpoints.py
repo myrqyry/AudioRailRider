@@ -51,7 +51,7 @@ async def generate_skybox(
 
 @router.get('/api/generation-presets')
 @limiter.limit('60/minute')
-async def generation_presets():
+async def generation_presets(request: Request):
     # Mirror shared/types GenerationOptions presets so the frontend can present choices
     presets = {
         'trackStyles': ['classic', 'extreme', 'flowing', 'technical', 'experimental'],
