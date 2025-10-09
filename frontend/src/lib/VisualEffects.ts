@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { TrackData, FrameAnalysis, SegmentDetail, TimelineEvent, secondsToNumber } from 'shared/types';
 import { RIDE_CONFIG } from 'shared/constants';
 import { getCachedShader, getCachedLygiaResolver } from './preloader';
+import { VISUAL_EFFECTS_CONFIG } from '../config/visualEffects';
+import { GPUParticleSystem } from './GPUParticleSystem';
 
 interface FeatureVisualConfig {
   color: [number, number, number];
@@ -11,20 +13,13 @@ interface FeatureVisualConfig {
   behavior: 'burst' | 'trail' | 'flow'; // for future use
 }
 
-// --- Constants ---
-const BASS_GLOW_MIN = 0.3; // The baseline glow intensity
-const BASS_GLOW_MAX = 1.8; // The maximum glow intensity when bass hits
-const LERP_FACTOR = 0.12; // How quickly the glow intensity changes (smoothing factor)
+interface ParticleLODConfig {
+    maxParticles: number;
+    updateFrequency: number;
+    gpuEnabled: boolean;
+    qualityPreset: 'ultra' | 'high' | 'medium' | 'low' | 'potato';
+}
 
-// Performance optimization constants
-const HIGH_QUALITY_SEGMENTS = 2; // Segments per path point for high quality
-const LOW_QUALITY_SEGMENTS = 1; // Segments per path point for low quality
-const PERFORMANCE_CHECK_INTERVAL = 2000; // Check FPS every 2 seconds
-const TARGET_FPS = 50; // Target FPS for quality adjustment
-const LOW_QUALITY_DEBOUNCE_MS = 3000; // Wait this long before switching quality
-
-const TRACK_RADIUS = 0.9;
-const GHOST_RIBBON_RADIUS = 1.6;
 
 /**
  * Manages the visual representation of the rollercoaster track and its
@@ -49,17 +44,7 @@ export class VisualEffects {
   private targetGlowIntensity: number = BASS_GLOW_MIN;
   // Per-instance GPU attributes and GPU update state
   private gpuEnabled: boolean = false;
-  private gpuRenderer: THREE.WebGLRenderer | null = null;
-  // Separate ping-pong render targets for position and velocity
-  private gpuPosRTA: THREE.WebGLRenderTarget | null = null;
-  private gpuPosRTB: THREE.WebGLRenderTarget | null = null;
-  private gpuVelRTA: THREE.WebGLRenderTarget | null = null;
-  private gpuVelRTB: THREE.WebGLRenderTarget | null = null;
-  private gpuQuadScene: THREE.Scene | null = null;
-  private gpuQuadCamera: THREE.OrthographicCamera | null = null;
-  private gpuVelMaterial: THREE.ShaderMaterial | null = null;
-  private gpuPosMaterial: THREE.ShaderMaterial | null = null;
-  private gpuSwap = false; // false means A is current, true means B is current
+  private gpuParticleSystem: GPUParticleSystem | null = null;
   // audio-reactive scalar sent to GPU shaders
   private gpuAudioForce: number = 0;
   private rawAudioForce: number = 0;
@@ -118,11 +103,19 @@ export class VisualEffects {
   private readonly _spawnUp = new THREE.Vector3();
   private readonly _worldUp = new THREE.Vector3(0, 1, 0);
   private readonly _spawnWork = new THREE.Vector3();
+  private lodConfig: ParticleLODConfig;
   
 
   constructor(scene: THREE.Scene, trackData: TrackData) {
     this.scene = scene;
     this.trackData = trackData;
+
+    this.lodConfig = {
+      maxParticles: RIDE_CONFIG.PARTICLE_COUNT,
+      updateFrequency: 60,
+      gpuEnabled: true,
+      qualityPreset: 'high',
+    };
 
     // Detect device capability
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
@@ -185,7 +178,7 @@ export class VisualEffects {
     this.trackMaterial = new THREE.MeshStandardMaterial({
       color: this.baseRailColor.clone(),
       emissive: this.baseEmissiveColor.clone(),
-      emissiveIntensity: BASS_GLOW_MIN,
+      emissiveIntensity: VISUAL_EFFECTS_CONFIG.AUDIO.BASS_GLOW_MIN,
       metalness: 0.15,
       roughness: 0.65,
       transparent: true,
@@ -259,11 +252,11 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
 
     // 2. Create the track geometry with adaptive quality
     const segments = this.highQualityMode ? 
-      this.trackData.path.length * HIGH_QUALITY_SEGMENTS : 
-      this.trackData.path.length * LOW_QUALITY_SEGMENTS;
+      this.trackData.path.length * VISUAL_EFFECTS_CONFIG.TRACK.HIGH_QUALITY_SEGMENTS :
+      this.trackData.path.length * VISUAL_EFFECTS_CONFIG.TRACK.LOW_QUALITY_SEGMENTS;
     
     const curve = new THREE.CatmullRomCurve3(this.trackData.path.map(p => new THREE.Vector3(p.x, p.y, p.z)));
-  const geometry = new THREE.TubeGeometry(curve, segments, TRACK_RADIUS, 8, false);
+  const geometry = new THREE.TubeGeometry(curve, segments, VISUAL_EFFECTS_CONFIG.TRACK.RADIUS, 8, false);
 
     // 3. Create the track mesh and add to the scene
     this.trackMesh = new THREE.Mesh(geometry, this.trackMaterial);
@@ -278,7 +271,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
 
   // Prefer instancing for better performance when many particles are present.
     try {
-      const instanceGeo = new THREE.SphereGeometry(1, 6, 4);
+      const instanceGeo = new THREE.IcosahedronGeometry(1, 0); // Lower poly count
       const instanceMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
       this.particleInstancedMesh = new THREE.InstancedMesh(instanceGeo, instanceMat, particleCount);
       this.particleInstancedMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -443,7 +436,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     this.particleSystem = new THREE.Points(
       geometryParticles,
       new THREE.PointsMaterial({
-        size: RIDE_CONFIG.PARTICLE_BASE_SIZE,
+        size: VISUAL_EFFECTS_CONFIG.PARTICLE.BASE_SIZE,
         color: 0xffffff,
         transparent: true,
         depthWrite: false,
@@ -511,373 +504,48 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
       }
       const capabilities = renderer.capabilities;
       const extensions = renderer.extensions;
-      console.log('[GPU Particles] Initializing GPU particle system...');
-      console.log('[GPU Particles] WebGL2 supported:', capabilities.isWebGL2);
-      console.log('[GPU Particles] Float textures support (OES_texture_float):', extensions.has('OES_texture_float'));
-      console.log('[GPU Particles] Float textures support (WEBGL_color_buffer_float):', extensions.has('WEBGL_color_buffer_float'));
-
-      // Require WebGL2 plus float render-target support for stable GPU particles.
-      // Some drivers expose WebGL2 but lack color-buffer-float support which
-      // makes float ping-pong RTs unusable and causes shader/validation errors.
       const supportsFloatRT = capabilities.isWebGL2 && (
         extensions.has('EXT_color_buffer_float') || extensions.has('WEBGL_color_buffer_float') || (extensions.has('OES_texture_float') && extensions.has('OES_texture_float_linear'))
       );
+
       if (!supportsFloatRT) {
         console.warn('[GPU Particles] GPU particle system requires WebGL2 + float render-target support. Falling back to CPU particles.');
         this.switchToFallbackParticles();
         return;
       }
+
       try {
-        this.gpuRenderer = renderer;
-        const size = Math.ceil(Math.sqrt(RIDE_CONFIG.PARTICLE_COUNT));
-  const params: any = { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, type: THREE.FloatType, format: THREE.RGBAFormat };
-        // Try to load pre-resolved shader sources from /shaders/ (written by prebuild script)
-        // First check preloader cache, then fetch if not cached
-        let preResolvedVel: string | null = getCachedShader('/shaders/velFrag.resolved.glsl');
-        let preResolvedPos: string | null = getCachedShader('/shaders/posFrag.resolved.glsl');
-        
-        if (!preResolvedVel) {
-          try {
-            const velResp = await fetch('/shaders/velFrag.resolved.glsl');
-            if (velResp.ok) preResolvedVel = await velResp.text();
-          } catch (e) {}
-        }
-        if (!preResolvedPos) {
-          try {
-            const posResp = await fetch('/shaders/posFrag.resolved.glsl');
-            if (posResp.ok) preResolvedPos = await posResp.text();
-          } catch (e) {}
-        }
-
-        // If pre-resolved shaders aren't available, attempt to fetch base shader files from /shaders/
-        // First check preloader cache
-        let baseVelFrag = getCachedShader('/shaders/baseVelFrag.glsl') || '';
-        let basePosFrag = getCachedShader('/shaders/basePosFrag.glsl') || '';
-        
-        if ((!preResolvedVel || !preResolvedPos) && (!baseVelFrag || !basePosFrag)) {
-          try {
-            if (!baseVelFrag) {
-              const bvel = await fetch('/shaders/baseVelFrag.glsl');
-              if (bvel.ok) baseVelFrag = await bvel.text();
-            }
-            if (!basePosFrag) {
-              const bpos = await fetch('/shaders/basePosFrag.glsl');
-              if (bpos.ok) basePosFrag = await bpos.text();
-            }
-          } catch (e) {}
-        }
-  // If pre-resolved shaders aren't available, fall back to loading a runtime resolver
-        // First check preloader cache
-        let resolveLygia: ((s: string) => string) | null = getCachedLygiaResolver();
-        
-        if (!resolveLygia && (!preResolvedVel || !preResolvedPos)) {
-          try {
-              try {
-                const localUrl = window.location.origin + '/lygia/resolve.esm.js';
-                // @ts-ignore: prevent bundlers from resolving this import at build-time
-                const local = await import(/* @vite-ignore */ localUrl);
-                resolveLygia = (local && (local.default || local.resolveLygia || local.resolve)) ? (local.default || local.resolveLygia || local.resolve) : null;
-              } catch (e) {
-                resolveLygia = null;
-              }
-          } catch (e) {
-            try {
-              const cdnUrl = 'https://lygia.xyz/resolve.esm.js';
-              // @ts-ignore: prevent bundlers from resolving this import at build-time
-              const mod = await import(/* @vite-ignore */ cdnUrl);
-              resolveLygia = (mod && (mod.default || mod.resolveLygia || mod.resolve) ) ? (mod.default || mod.resolveLygia || mod.resolve) : null;
-            } catch (e2) {
-              resolveLygia = null;
-            }
-          }
-        }
-
-        // Initialize data textures for positions and speeds
-  const totalTexels = size * size;
-  const posArray = new Float32Array(totalTexels * 4);
-  const velArrayInit = new Float32Array(totalTexels * 4);
-        // Fill arrays with current instance positions/speeds where possible
-        const tempMat = new THREE.Matrix4();
-        for (let i = 0; i < RIDE_CONFIG.PARTICLE_COUNT; i++) {
-          const ti = i * 4;
-          let px = 0, py = -9999, pz = 0, sp = 0;
-          try {
-            if (this.particleInstancedMesh) {
-              this.particleInstancedMesh.getMatrixAt(i, tempMat);
-              const e = tempMat.elements;
-              px = e[12]; py = e[13]; pz = e[14];
-            }
-            if (this.particleInstancedMesh && (this.particleInstancedMesh.geometry as any).getAttribute('instanceSpeed')) {
-              const spAttr = (this.particleInstancedMesh.geometry as any).getAttribute('instanceSpeed');
-              sp = spAttr.array[i] || 0;
-            }
-          } catch (e) {}
-          posArray[ti + 0] = px; posArray[ti + 1] = py; posArray[ti + 2] = pz; posArray[ti + 3] = 1.0;
-          velArrayInit[ti + 0] = sp; velArrayInit[ti + 1] = 0; velArrayInit[ti + 2] = 0; velArrayInit[ti + 3] = 0;
-        }
-
-        // Create textures for position and velocity
-  const posTexture = new THREE.DataTexture(posArray, size, size, THREE.RGBAFormat, THREE.FloatType);
-  posTexture.needsUpdate = true;
-  for (let i = 0; i < totalTexels; i++) { velArrayInit[i*4 + 0] = 0; velArrayInit[i*4 + 1] = 0; velArrayInit[i*4 + 2] = 0; velArrayInit[i*4 + 3] = 0; }
-  const velTexture = new THREE.DataTexture(velArrayInit, size, size, THREE.RGBAFormat, THREE.FloatType);
-  velTexture.needsUpdate = true;
-
-        // Quad scene
-        this.gpuQuadScene = new THREE.Scene();
-        this.gpuQuadCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-
-    // Velocity update shader: reads prevVel and prevPos and applies forces/damping
-    const baseVelInline = `
-            precision highp float; varying vec2 vUv;
-            uniform sampler2D prevVel; uniform sampler2D prevPos; uniform float dt; uniform float time;
-      uniform float audioForce; uniform float subBass; uniform float bass; uniform float lowMid; uniform float mid; uniform float highMid; uniform float treble; uniform float sparkle;
-            // Lightweight fallback noise/curl functions (used when LYGIA isn't available)
-            vec3 hash3(vec2 p) {
-              vec3 q = vec3( dot(p,vec2(127.1,311.7)), dot(p,vec2(269.5,183.3)), dot(p,vec2(419.2,371.9)) );
-              return fract(sin(q) * 43758.5453);
-            }
-            float noise(vec2 p) {
-              vec2 i = floor(p); vec2 f = fract(p);
-              vec3 a = hash3(i + vec2(0.0,0.0));
-              vec3 b = hash3(i + vec2(1.0,0.0));
-              vec3 c = hash3(i + vec2(0.0,1.0));
-              vec3 d = hash3(i + vec2(1.0,1.0));
-              vec2 u = f*f*(3.0-2.0*f);
-              return mix(mix(a.x,b.x,u.x), mix(c.x,d.x,u.x), u.y);
-            }
-            uniform float noiseScale;
-            uniform float noiseSpeed;
-            uniform float curlStrength;
-            vec3 curlNoise(vec3 p){
-              float n1 = noise(p.xy * noiseScale + time * noiseSpeed);
-              float n2 = noise(p.yz * noiseScale + time * noiseSpeed * 1.1);
-              float n3 = noise(p.zx * noiseScale + time * noiseSpeed * 0.95);
-              // simple pseudo-curl using neighboring noise samples
-              return normalize(vec3(n2 - n3, n3 - n1, n1 - n2));
-            }
-            void main(){
-              vec3 v = texture2D(prevVel, vUv).rgb;
-              vec3 p = texture2D(prevPos, vUv).rgb;
-              // simple gravity and damping
-              vec3 accel = vec3(0.0, -0.98, 0.0);
-              v += accel * dt;
-                // audio-driven impulse: combine global audioForce with band-specific impulses
-                float bandPulse = clamp((sin(time*10.0 + vUv.x*50.0) * 0.5 + 0.5), 0.0, 1.0);
-                float audio = bandPulse * audioForce;
-                // weighted band contributions (these uniforms are set from JS)
-                audio += subBass * 3.0;
-                audio += bass * 2.0;
-                audio += lowMid * 1.4;
-                audio += mid * 1.2;
-                audio += highMid * 1.0;
-                audio += treble * 0.8;
-                audio += sparkle * 0.6;
-                v.y += audio * 2.5;
-                // Add curl noise perturbation to velocities for richer motion
-                vec3 c = curlNoise(p + v * 0.5);
-                v += c * curlStrength * (0.5 + bass);
-              v *= 0.995; // damping
-              gl_FragColor = vec4(v, 1.0);
-            }
-          `;
-
-        if (!baseVelFrag) baseVelFrag = baseVelInline;
-
-        if (preResolvedVel && preResolvedVel.includes('#include')) {
-          preResolvedVel = null;
-        }
-        if (preResolvedPos && preResolvedPos.includes('#include')) {
-          preResolvedPos = null;
-        }
-
-        let velFragSrc = baseVelFrag;
-        if (preResolvedVel) {
-          velFragSrc = preResolvedVel;
-        } else if (resolveLygia) {
-          try {
-            const header = '#include "lygia/generative/simplex.glsl"\n#include "lygia/generative/curl.glsl"\n#include "lygia/color/palettes.glsl"\n';
-            const resolved = resolveLygia(header + baseVelFrag);
-            // Defensive: resolver may return an error string. Validate output
-            if (typeof resolved === 'string' && resolved.length > 32 && !resolved.includes('Path ') && !resolved.toLowerCase().includes('not found') && (resolved.includes('void main') || resolved.includes('gl_FragColor') || resolved.includes('gl_FragData'))) {
-              velFragSrc = resolved;
-            } else {
-              velFragSrc = baseVelFrag;
-            }
-          } catch (e) {
-            velFragSrc = baseVelFrag;
-          }
-        }
-        const velShader = new THREE.ShaderMaterial({
-          uniforms: {
-            prevVel: { value: velTexture },
-            prevPos: { value: posTexture },
-            audioForce: { value: 0 },
-            curlStrength: { value: this.curlStrength },
-            noiseScale: { value: this.noiseScale },
-            noiseSpeed: { value: this.noiseSpeed },
-            subBass: { value: 0.0 },
-            bass: { value: 0.0 },
-            lowMid: { value: 0.0 },
-            mid: { value: 0.0 },
-            highMid: { value: 0.0 },
-            treble: { value: 0.0 },
-            sparkle: { value: 0.0 },
-            time: { value: 0 },
-            dt: { value: 1/60 },
-            texSize: { value: size },
-          },
-          vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position,1.0); }`,
-          fragmentShader: velFragSrc,
-          depthTest: false, depthWrite: false
-        });
-
-        // Position update shader: integrates velocity
-        const basePosInline = `
-            precision highp float; varying vec2 vUv;
-            uniform sampler2D prevPos; uniform sampler2D velTex; uniform float dt;
-            void main(){
-              vec3 p = texture2D(prevPos, vUv).rgb;
-              vec3 v = texture2D(velTex, vUv).rgb;
-              p += v * dt;
-              // bounds
-              if (p.y < -100.0) p.y = -9999.0;
-              gl_FragColor = vec4(p, 1.0);
-            }
-          `;
-        if (!basePosFrag) basePosFrag = basePosInline;
-
-        let posFragSrc = basePosFrag;
-        if (preResolvedPos) {
-          posFragSrc = preResolvedPos;
-        } else if (resolveLygia) {
-          try {
-            const header = '#include "lygia/generative/simplex.glsl"\n';
-            const resolvedPos = resolveLygia(header + basePosFrag);
-            if (typeof resolvedPos === 'string' && resolvedPos.length > 32 && !resolvedPos.includes('Path ') && !resolvedPos.toLowerCase().includes('not found') && (resolvedPos.includes('void main') || resolvedPos.includes('gl_FragColor') || resolvedPos.includes('gl_FragData'))) {
-              posFragSrc = resolvedPos;
-            } else {
-              posFragSrc = basePosFrag;
-            }
-          } catch (e) {
-            posFragSrc = basePosFrag;
-          }
-        }
-
-        const posShader = new THREE.ShaderMaterial({
-          uniforms: {
-            prevPos: { value: posTexture },
-            velTex: { value: velTexture },
-            dt: { value: 1/60 },
-            texSize: { value: size },
-          },
-          vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position,1.0); }`,
-          fragmentShader: posFragSrc,
-          depthTest: false, depthWrite: false
-        });
-
-        // Store materials for passes and add two quads to the scene
-        this.gpuVelMaterial = velShader;
-        this.gpuPosMaterial = posShader;
-        const quadVel = new THREE.Mesh(new THREE.PlaneGeometry(2,2), this.gpuVelMaterial);
-        const quadPos = new THREE.Mesh(new THREE.PlaneGeometry(2,2), this.gpuPosMaterial);
-        this.gpuQuadScene.add(quadVel);
-        this.gpuQuadScene.add(quadPos);
-
-        // Create separate ping-pong RTs for vel and pos
-        const rtParams: any = { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, type: THREE.FloatType, format: THREE.RGBAFormat };
-        this.gpuVelRTA = new THREE.WebGLRenderTarget(size, size, rtParams);
-        this.gpuVelRTB = new THREE.WebGLRenderTarget(size, size, rtParams);
-        this.gpuPosRTA = new THREE.WebGLRenderTarget(size, size, rtParams);
-        this.gpuPosRTB = new THREE.WebGLRenderTarget(size, size, rtParams);
-
-        // Prime velRTA with velTexture and posRTA with posTexture by rendering a simple copy
-        // Vel prime
-        (this.gpuVelMaterial as any).uniforms.prevVel.value = velTexture;
-        (this.gpuVelMaterial as any).uniforms.prevPos.value = posTexture;
-        renderer.setRenderTarget(this.gpuVelRTA);
-        renderer.render(this.gpuQuadScene, this.gpuQuadCamera);
-        renderer.setRenderTarget(null);
-        // Pos prime
-        (this.gpuPosMaterial as any).uniforms.prevPos.value = posTexture;
-        (this.gpuPosMaterial as any).uniforms.velTex.value = velTexture;
-        renderer.setRenderTarget(this.gpuPosRTA);
-        renderer.render(this.gpuQuadScene, this.gpuQuadCamera);
-        renderer.setRenderTarget(null);
-
-        this.gpuSwap = false;
+        this.gpuParticleSystem = new GPUParticleSystem(renderer, RIDE_CONFIG.PARTICLE_COUNT);
+        await this.gpuParticleSystem.init();
         this.gpuEnabled = true;
+        console.log('[GPU Particles] GPU particle system initialized successfully.');
       } catch (e) {
-        // disable GPU path if any error occurs
+        console.error('[GPU Particles] Failed to initialize GPUParticleSystem:', e);
         this.gpuEnabled = false;
+        this.switchToFallbackParticles();
       }
     }
 
     // Called each update tick when GPU path is enabled; performs ping-pong passes.
-    private updateGPU() {
-    if (!this.gpuEnabled || !this.gpuRenderer || !this.gpuQuadScene || !this.gpuQuadCamera) return;
+    private updateGPU(deltaSeconds: number) {
+      if (!this.gpuEnabled || !this.gpuParticleSystem || !this.particleInstancedMesh) return;
       try {
-        const size = (this.gpuPosRTA as THREE.WebGLRenderTarget).width;
-        // Determine read/write RTs based on swap state
-        const readPos = this.gpuSwap ? this.gpuPosRTB : this.gpuPosRTA;
-        const readVel = this.gpuSwap ? this.gpuVelRTB : this.gpuVelRTA;
-        const writeVel = this.gpuSwap ? this.gpuVelRTA : this.gpuVelRTB;
-        const writePos = this.gpuSwap ? this.gpuPosRTA : this.gpuPosRTB;
+        const curlParams = {
+            curlStrength: this.curlStrength,
+            noiseScale: this.noiseScale,
+            noiseSpeed: this.noiseSpeed
+        };
+        this.gpuParticleSystem.update(deltaSeconds, this.audioFeatures, curlParams, this.segmentIntensityBoost, this.gpuAudioForce);
 
-        // Velocity pass: set uniforms to read previous vel/pos and write into writeVel
-        try {
-          const velMat = this.gpuVelMaterial as any;
-          velMat.uniforms.time.value = performance.now() / 1000;
-          velMat.uniforms.dt.value = 1/60;
-          velMat.uniforms.texSize.value = size;
-          velMat.uniforms.prevVel.value = readVel!.texture;
-          velMat.uniforms.prevPos.value = readPos!.texture;
-          const boost = this.segmentIntensityBoost;
-          velMat.uniforms.subBass.value = (this.audioFeatures.subBass || 0.0) * boost;
-          velMat.uniforms.bass.value = (this.audioFeatures.bass || 0.0) * boost;
-          velMat.uniforms.lowMid.value = (this.audioFeatures.lowMid || 0.0) * boost;
-          velMat.uniforms.mid.value = (this.audioFeatures.mid || 0.0) * boost;
-          velMat.uniforms.highMid.value = (this.audioFeatures.highMid || 0.0) * boost;
-          velMat.uniforms.treble.value = (this.audioFeatures.treble || 0.0) * boost;
-          velMat.uniforms.sparkle.value = (this.audioFeatures.sparkle || 0.0) * boost;
-          velMat.uniforms.audioForce.value = this.gpuAudioForce || 0.0;
-          // curl/noise uniform updates
-          velMat.uniforms.curlStrength.value = this.curlStrength;
-          velMat.uniforms.noiseScale.value = this.noiseScale;
-          velMat.uniforms.noiseSpeed.value = this.noiseSpeed;
-        } catch (e) {}
-        // ensure quad0 uses vel material
-        (this.gpuQuadScene!.children[0] as THREE.Mesh).material = this.gpuVelMaterial!;
-        this.gpuRenderer!.setRenderTarget(writeVel!);
-        this.gpuRenderer!.render(this.gpuQuadScene!, this.gpuQuadCamera!);
-        this.gpuRenderer!.setRenderTarget(null);
-
-        // Position pass: read prevPos and the newly-written vel texture to integrate
-        try {
-          const posMat = this.gpuPosMaterial as any;
-          posMat.uniforms.dt.value = 1/60;
-          posMat.uniforms.prevPos.value = readPos!.texture;
-          posMat.uniforms.velTex.value = writeVel!.texture;
-        } catch (e) {}
-        // ensure quad1 uses pos material
-        (this.gpuQuadScene!.children[1] as THREE.Mesh).material = this.gpuPosMaterial!;
-        this.gpuRenderer!.setRenderTarget(writePos!);
-        this.gpuRenderer!.render(this.gpuQuadScene!, this.gpuQuadCamera!);
-        this.gpuRenderer!.setRenderTarget(null);
-
-        // update instanced shader to sample the latest position texture
-        const latestPos = writePos!;
-        try {
-          const shaderMat = this.particleInstancedMesh!.material as any;
-          shaderMat.uniforms.posTex.value = latestPos.texture;
-          shaderMat.uniforms.texSize.value = size;
-          shaderMat.needsUpdate = true;
-        } catch (e) {}
-
-        this.gpuSwap = !this.gpuSwap;
+        const posTex = this.gpuParticleSystem.getPositionTexture();
+        const shaderMat = this.particleInstancedMesh.material as any;
+        shaderMat.uniforms.posTex.value = posTex;
+        shaderMat.uniforms.texSize.value = posTex.image.width;
+        shaderMat.needsUpdate = true;
       } catch (e) {
-        // on any failure, disable GPU path to avoid repeated errors
+        console.error('[VisualEffects] Error during GPU update:', e);
         this.gpuEnabled = false;
+        this.switchToFallbackParticles();
       }
     }
 
@@ -1056,7 +724,8 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
   // Allocate a free instance index or return -1 if none are available
   private allocateInstance(): number {
     if (!this.instanceFreeStack || this.instanceFreeStack.length === 0) return -1;
-    return this.instanceFreeStack.pop() as number;
+    const idx = this.instanceFreeStack.pop();
+    return idx !== undefined ? idx : -1;
   }
 
   // Free an instance index back to the pool
@@ -1128,8 +797,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     }
     
     // Warmup period: skip FPS checks for 5 seconds after first update to allow GPU/shader compilation
-    const WARMUP_PERIOD = 5000; // 5 seconds
-    if (!this.isWarmedUp && now - this.firstUpdateTime > WARMUP_PERIOD) {
+    if (!this.isWarmedUp && now - this.firstUpdateTime > VISUAL_EFFECTS_CONFIG.PERFORMANCE.WARMUP_PERIOD) {
       this.isWarmedUp = true;
       // Reset counters after warmup
       this.lastPerformanceCheck = now;
@@ -1137,47 +805,30 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     }
     
     // Only check performance after warmup period
-    if (this.isWarmedUp && now - this.lastPerformanceCheck > PERFORMANCE_CHECK_INTERVAL) {
+    if (this.isWarmedUp && now - this.lastPerformanceCheck > VISUAL_EFFECTS_CONFIG.PERFORMANCE.CHECK_INTERVAL) {
       const fps = (this.frameCount * 1000) / (now - this.lastPerformanceCheck);
       this.lastPerformanceCheck = now;
       this.frameCount = 0;
       
-      // Adaptive quality: lower quality if FPS drops
-      if (fps < TARGET_FPS && this.highQualityMode) {
-        // On first detection, capture renderer info and start debounce timer
-        if (this.lowQualitySince === null) {
-          this.lowQualitySince = now;
-          const ri = this.detectRenderer();
-          console.log(`[VisualEffects] Low perf detected: ${fps.toFixed(1)} FPS; renderer=${ri.renderer}; vendor=${ri.vendor}`);
-        }
-        // Only actually switch after the debounce period to avoid spurious flips
-        if (this.lowQualitySince !== null && now - this.lowQualitySince >= LOW_QUALITY_DEBOUNCE_MS) {
-          console.log(`[VisualEffects] Performance: ${fps.toFixed(1)} FPS - Switching to low quality mode`);
-          this.switchToLowQuality();
-          this.lowQualitySince = null;
-        }
-      } else {
-        // performance recovered — reset debounce
-        this.lowQualitySince = null;
-      }
+      this.applyAdvancedLOD(fps);
     }
 
-    const baseMinGlow = BASS_GLOW_MIN * this.segmentIntensityBoost;
-    const baseMaxGlow = BASS_GLOW_MAX * this.segmentIntensityBoost;
-    const glowCeiling = BASS_GLOW_MAX * Math.max(1, this.segmentIntensityBoost);
+    const baseMinGlow = VISUAL_EFFECTS_CONFIG.AUDIO.BASS_GLOW_MIN * this.segmentIntensityBoost;
+    const baseMaxGlow = VISUAL_EFFECTS_CONFIG.AUDIO.BASS_GLOW_MAX * this.segmentIntensityBoost;
+    const glowCeiling = VISUAL_EFFECTS_CONFIG.AUDIO.BASS_GLOW_MAX * Math.max(1, this.segmentIntensityBoost);
     const fallbackBass = this.audioFeatures.bass || 0;
 
     if (currentFrame) {
       const bassValue = THREE.MathUtils.clamp(currentFrame.bass, 0, 1);
       this.targetGlowIntensity = THREE.MathUtils.clamp(
         baseMinGlow + bassValue * (baseMaxGlow - baseMinGlow),
-        BASS_GLOW_MIN,
+        VISUAL_EFFECTS_CONFIG.AUDIO.BASS_GLOW_MIN,
         glowCeiling
       );
     } else {
       this.targetGlowIntensity = THREE.MathUtils.clamp(
         baseMinGlow + fallbackBass * (baseMaxGlow - baseMinGlow),
-        BASS_GLOW_MIN,
+        VISUAL_EFFECTS_CONFIG.AUDIO.BASS_GLOW_MIN,
         glowCeiling
       );
     }
@@ -1191,7 +842,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     this.trackMaterial.emissiveIntensity = THREE.MathUtils.lerp(
       this.trackMaterial.emissiveIntensity,
       this.targetGlowIntensity,
-      LERP_FACTOR
+      VISUAL_EFFECTS_CONFIG.AUDIO.LERP_FACTOR
     );
 
     // Apply LOD hints set by SceneManager (non-invasive): 'low' or 'high'
@@ -1276,7 +927,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
 
     // Run GPU update pass if enabled
     if (this.gpuEnabled) {
-      this.updateGPU();
+      this.updateGPU(deltaSeconds);
     }
 
     // Audio-reactive scene light and point-size adjustments for immersion
@@ -1297,8 +948,8 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     try {
       if (this.particleSystem) {
         const mat = this.particleSystem.material as THREE.PointsMaterial;
-        const targetSize = RIDE_CONFIG.PARTICLE_BASE_SIZE * (1 + (this.audioFeatures.bass || 0) * 1.2);
-        mat.size = THREE.MathUtils.lerp(mat.size || RIDE_CONFIG.PARTICLE_BASE_SIZE, targetSize, 0.06);
+        const targetSize = VISUAL_EFFECTS_CONFIG.PARTICLE.BASE_SIZE * (1 + (this.audioFeatures.bass || 0) * 1.2);
+        mat.size = THREE.MathUtils.lerp(mat.size || VISUAL_EFFECTS_CONFIG.PARTICLE.BASE_SIZE, targetSize, 0.06);
         // Slight hue shift on point material to enhance immersion
         // (PointsMaterial stores color as Color; we tint toward current segment color)
         const targetCol = this.segmentColorTarget.clone().lerp(this.baseRailColor, 0.5);
@@ -1403,12 +1054,20 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     const startTimes = geom.attributes.startTime as THREE.BufferAttribute;
 
     const particleCount = RIDE_CONFIG.PARTICLE_COUNT;
-    const spawnCount = count > 0 ? Math.min(count, RIDE_CONFIG.PARTICLE_SPAWN_COUNT) : RIDE_CONFIG.PARTICLE_SPAWN_COUNT;
+    const spawnCount = count > 0 ? Math.min(count, VISUAL_EFFECTS_CONFIG.PARTICLE.SPAWN_COUNT) : VISUAL_EFFECTS_CONFIG.PARTICLE.SPAWN_COUNT;
 
     const nowSeconds = performance.now() / 1000;
 
     // If we're using InstancedMesh, set the instance matrices for spawned particles
     if (this.particleInstancedMesh) {
+      if (this.lodConfig) {
+        const totalParticles = this.particleInstancedMesh.count;
+        const activeParticles = totalParticles - this.instanceFreeStack.length;
+        if (activeParticles + spawnCount > this.lodConfig.maxParticles) {
+          // Don't spawn if we would exceed the cap.
+          return;
+        }
+      }
       // Also update the Points-based geometry's updateRange so unit tests that
       // inspect those attributes remain compatible with the previous API.
       const geom = this.particleSystem.geometry as THREE.BufferGeometry;
@@ -1443,7 +1102,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
         const pz = origin.z + (Math.random() - 0.5) * jitter;
         dummy.position.set(px, py, pz);
 
-        const baseSize = RIDE_CONFIG.PARTICLE_BASE_SIZE * (visualConfig?.size ?? 1.0) * (0.7 + Math.random() * 0.6);
+        const baseSize = VISUAL_EFFECTS_CONFIG.PARTICLE.BASE_SIZE * (visualConfig?.size ?? 1.0) * (0.7 + Math.random() * 0.6);
         dummy.scale.setScalar(baseSize * (1 + featureIntensity * 1.2));
         dummy.updateMatrix();
         this.particleInstancedMesh.setMatrixAt(idx, dummy.matrix);
@@ -1580,7 +1239,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
    */
   public spawnFeatureBurst(featureName: string, intensity: number, origin: THREE.Vector3) {
     const scaled = Math.max(0, Math.min(1, intensity));
-    const count = Math.max(1, Math.round(RIDE_CONFIG.PARTICLE_SPAWN_COUNT * (0.5 + scaled * 2.0)));
+    const count = Math.max(1, Math.round(VISUAL_EFFECTS_CONFIG.PARTICLE.SPAWN_COUNT * (0.5 + scaled * 2.0)));
     this.spawnParticles(count, origin, featureName);
   }
 
@@ -1773,7 +1432,7 @@ void main() {
   private rebuildGhostRibbon(curve: THREE.CatmullRomCurve3, segments: number) {
     if (!this.ghostRibbonMaterial) return;
     const tubularSegments = Math.max(6, Math.floor(segments));
-    const newGeometry = new THREE.TubeGeometry(curve, tubularSegments, GHOST_RIBBON_RADIUS, 6, false);
+    const newGeometry = new THREE.TubeGeometry(curve, tubularSegments, VISUAL_EFFECTS_CONFIG.TRACK.GHOST_RIBBON_RADIUS, 6, false);
     if (!this.ghostRibbonMesh) {
       this.ghostRibbonMesh = new THREE.Mesh(newGeometry, this.ghostRibbonMaterial);
       this.ghostRibbonMesh.frustumCulled = true;
@@ -1795,8 +1454,8 @@ void main() {
     const curve = new THREE.CatmullRomCurve3(this.trackData.path.map(p => new THREE.Vector3(p.x, p.y, p.z)));
     const newGeometry = new THREE.TubeGeometry(
       curve, 
-      this.trackData.path.length * LOW_QUALITY_SEGMENTS, 
-      TRACK_RADIUS, 
+      this.trackData.path.length * VISUAL_EFFECTS_CONFIG.TRACK.LOW_QUALITY_SEGMENTS,
+      VISUAL_EFFECTS_CONFIG.TRACK.RADIUS,
       6, // Reduced radial segments
       false
     );
@@ -1804,6 +1463,73 @@ void main() {
     this.trackMesh.geometry = newGeometry;
     oldGeometry.dispose();
     this.rebuildGhostRibbon(curve, this.trackData.path.length * LOW_QUALITY_SEGMENTS);
+  }
+
+  private switchToHighQuality() {
+    if (this.highQualityMode) return;
+    this.highQualityMode = true;
+
+    // Rebuild geometry with higher quality
+    const oldGeometry = this.trackMesh.geometry;
+    const curve = new THREE.CatmullRomCurve3(this.trackData.path.map(p => new THREE.Vector3(p.x, p.y, p.z)));
+    const newGeometry = new THREE.TubeGeometry(
+      curve,
+      this.trackData.path.length * VISUAL_EFFECTS_CONFIG.TRACK.HIGH_QUALITY_SEGMENTS,
+      VISUAL_EFFECTS_CONFIG.TRACK.RADIUS,
+      8, // Back to original radial segments
+      false
+    );
+
+    this.trackMesh.geometry = newGeometry;
+    oldGeometry.dispose();
+    this.rebuildGhostRibbon(curve, this.trackData.path.length * HIGH_QUALITY_SEGMENTS);
+  }
+
+  private applyAdvancedLOD(fps: number) {
+    const gpuMemory = 1024; // Mock value as we can't easily detect this.
+    const qualityPreset = fps > VISUAL_EFFECTS_CONFIG.PERFORMANCE.TARGET_FPS ? 'high' : fps > 30 ? 'medium' : 'low';
+
+    if (this.lodConfig.qualityPreset === qualityPreset) {
+      return; // No change
+    }
+
+    const config: ParticleLODConfig = {
+        maxParticles: fps > VISUAL_EFFECTS_CONFIG.PERFORMANCE.TARGET_FPS ? RIDE_CONFIG.PARTICLE_COUNT : Math.floor(RIDE_CONFIG.PARTICLE_COUNT * 0.7),
+        updateFrequency: fps > 30 ? 60 : 30,
+        gpuEnabled: fps > 25 && gpuMemory > 512,
+        qualityPreset: qualityPreset,
+    };
+    this.applyLODConfig(config);
+  }
+
+  private applyLODConfig(config: ParticleLODConfig) {
+    console.log(`[VisualEffects] Applying LOD config: ${config.qualityPreset}`);
+    this.lodConfig = config;
+
+    const isLowQuality = config.qualityPreset === 'low' || config.qualityPreset === 'potato';
+    if (isLowQuality) {
+      if (this.lowQualitySince === null) {
+        this.lowQualitySince = performance.now();
+      }
+      if (performance.now() - (this.lowQualitySince || 0) >= VISUAL_EFFECTS_CONFIG.PERFORMANCE.DEBOUNCE_MS) {
+        if (this.highQualityMode) {
+          console.log(`[VisualEffects] Performance low, switching to low quality mode`);
+          this.switchToLowQuality();
+        }
+      }
+    } else {
+      // high or medium
+      this.lowQualitySince = null;
+      if (!this.highQualityMode) {
+        console.log(`[VisualEffects] Performance recovered, switching to high quality mode`);
+        this.switchToHighQuality();
+      }
+    }
+
+    this.gpuEnabled = config.gpuEnabled;
+    if (!this.gpuEnabled) {
+      this.switchToFallbackParticles();
+    }
   }
 
   private switchToFallbackParticles() {
@@ -1826,6 +1552,11 @@ void main() {
    * Cleans up resources when the ride is finished or reset.
    */
   public dispose() {
+    if (this.gpuParticleSystem) {
+      this.gpuParticleSystem.dispose();
+      this.gpuParticleSystem = null;
+    }
+
     if (this.trackMesh) {
       this.scene.remove(this.trackMesh);
       try { this.trackMesh.geometry.dispose(); } catch (e) {}
