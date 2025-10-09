@@ -12,8 +12,11 @@ interface AppState {
     statusMessage: string;
     audioFile: File | null;
     trackData: TrackData | null;
+    // User-selected generation options used to influence AI generation
+    generationOptions?: import('shared/types').GenerationOptions | null;
     workflowProgress: number;
     actions: {
+    setGenerationOptions: (opts: import('shared/types').GenerationOptions | null) => void;
         setStatus: (status: AppStatus, message?: string) => void;
         setTrackData: (data: TrackData | null) => void;
         setError: (error: ErrorState | null) => void;
@@ -33,7 +36,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     audioFile: null,
     trackData: null,
     workflowProgress: 0,
+    generationOptions: null,
     actions: {
+    setGenerationOptions: (opts: import('shared/types').GenerationOptions | null) => set({ generationOptions: opts }),
         setStatus: (status: AppStatus, message?: string) => set({ status, statusMessage: message || '', error: null }),
         setTrackData: (data: TrackData | null) => set({ trackData: data }),
         setError: (error: ErrorState | null) => set({ error, status: error ? AppStatus.Error : get().status }),

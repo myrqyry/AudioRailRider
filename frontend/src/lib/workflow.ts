@@ -7,7 +7,7 @@ import { AppStatus } from 'shared/types';
 
 export const runAudioProcessingWorkflow = async (
   file: File,
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal; generationOptions?: Record<string, any> }
 ): Promise<void> => {
   const { setStatus, setTrackData, setError } = useAppStore.getState().actions;
   const signal = options?.signal;
@@ -72,8 +72,8 @@ export const runAudioProcessingWorkflow = async (
       const backendUrl = (globalThis as any)?.BACKEND_URL || (require('../config/environment').env?.VITE_BACKEND_URL as string) || 'unknown';
       console.debug('[Workflow] Backend URL (effective):', backendUrl);
     } catch (e) {}
-    // Pass the abort signal to the fetch call
-    const { blueprint: rawBlueprint, features: audioFeatures } = await generateRideBlueprint(file, controller.signal);
+  // Pass the abort signal and any user-selected generation options to the backend
+  const { blueprint: rawBlueprint, features: audioFeatures } = await generateRideBlueprint(file, controller.signal, options?.generationOptions);
     console.log('[Workflow] Successfully received blueprint and audio features');
 
     clearTimeout(timeoutId); // Clear the timeout if the request succeeds

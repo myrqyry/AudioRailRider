@@ -68,6 +68,49 @@ export interface RideBlueprint {
   track: TrackSegment[];
   rideName: string;
   moodDescription: string;
+  // Optional generation options that were used to produce this blueprint
+  generationOptions?: GenerationOptions;
+  // Optional timeline of small visual events (type + timestamp + params)
+  events?: TimelineEvent[];
+}
+
+// Enumerated presets for track and world generation. These inform the AI
+// prompt and allow the user to select a preferred stylistic direction.
+export type TrackStyle = 'classic' | 'extreme' | 'flowing' | 'technical' | 'experimental';
+export type WorldTheme = 'fantasy' | 'cyberpunk' | 'aurora' | 'desert' | 'space' | 'underwater' | 'noir';
+export type VisualStyle = 'photorealistic' | 'stylized' | 'painterly' | 'lowpoly' | 'retro';
+export type DetailLevel = 'low' | 'medium' | 'high';
+export type CameraPreset = 'epic' | 'immersive' | 'first_person' | 'wide_angle';
+
+export interface GenerationOptions {
+  trackStyle?: TrackStyle;
+  worldTheme?: WorldTheme;
+  visualStyle?: VisualStyle;
+  paletteHint?: string[]; // optional array of preferred hex colors
+  detailLevel?: DetailLevel;
+  cameraPreset?: CameraPreset;
+  // Optional small visual event presets that should be favored when generating
+  // timeline events (e.g., fireworks, fog, starshow). If omitted, the AI may
+  // choose sensible defaults based on the music.
+  preferredEventPresets?: EventPreset[];
+}
+
+// Small timeline events that can be spawned during the ride and be audio-reactive
+export type EventPreset = 'fog' | 'fireworks' | 'starshow' | 'lightBurst' | 'sparkRing' | 'confetti';
+
+export interface TimelineEvent {
+  // Named preset describing the visual event type
+  type: EventPreset;
+  // Time (seconds) from start of track; may be provided as an absolute timestamp
+  timestamp?: Seconds;
+  // Relative intensity (0..1) the generator thinks is appropriate
+  intensity?: number;
+  // Optional duration in seconds for events that span time (fog, starshow)
+  duration?: Seconds;
+  // Whether the event should be audio-reactive (default true)
+  audioReactive?: boolean;
+  // Free-form parameters specific to the event type (e.g., color overrides)
+  params?: Record<string, any> | null;
 }
 
 export interface SegmentDetail {
@@ -94,6 +137,8 @@ export interface TrackData {
   moodDescription: string;
   frameAnalyses: FrameAnalysis[];
   audioFeatures: AudioFeatures;
+  // Runtime timeline events materialized from the blueprint (optional)
+  events?: TimelineEvent[];
 }
 
 // Helper to create a Seconds branded value from a plain number. This is a no-op at runtime

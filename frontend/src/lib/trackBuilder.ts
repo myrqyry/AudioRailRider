@@ -236,6 +236,9 @@ export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFe
             spectralFlux: 0,
             frameAnalyses: []
         },
+        // Attach any timeline events from the blueprint so runtime consumers
+        // (VisualEffects) can schedule them appropriately.
+        events: Array.isArray((blueprint as any).events) ? (blueprint as any).events : [],
     };
 };
 

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { TrackData, FrameAnalysis, SegmentDetail } from 'shared/types';
+import { TrackData, FrameAnalysis, SegmentDetail, TimelineEvent, secondsToNumber } from 'shared/types';
 import { RIDE_CONFIG } from 'shared/constants';
 import { getCachedShader, getCachedLygiaResolver } from './preloader';
 
@@ -71,6 +71,10 @@ export class VisualEffects {
   // Common keys: 'subBass','bass','lowMid','mid','highMid','treble','sparkle'
   private audioFeatures: Record<string, number> = { subBass: 0, bass: 0, lowMid: 0, mid: 0, highMid: 0, treble: 0, sparkle: 0 };
   private segmentProgress: number[] = [];
+  // Timeline events (from blueprint) and a small map to avoid repeated triggers
+  private timelineEvents: TimelineEvent[] = [];
+  private timelineTriggeredUntil: Map<number, number> = new Map();
+  private lastAudioTimeSeconds: number = 0;
   private baseRailColor: THREE.Color;
   private baseEmissiveColor: THREE.Color;
   private baseGhostTintA: THREE.Color;
@@ -136,7 +140,7 @@ export class VisualEffects {
   this.trackTintA = this.baseRailColor.clone().lerp(this.baseGhostTintA, 0.5);
   this.trackTintB = this.baseEmissiveColor.clone().lerp(this.baseGhostTintB, 0.6);
 
-    let derivedProgress = Array.isArray(trackData.segmentProgress) ? [...trackData.segmentProgress] : [];
+  let derivedProgress = Array.isArray(trackData.segmentProgress) ? [...trackData.segmentProgress] : [];
     if (!derivedProgress.length && trackData.segmentDetails.length > 0) {
       const count = trackData.segmentDetails.length;
       derivedProgress = Array.from({ length: count }, (_, idx) => (idx + 1) / count);
@@ -161,6 +165,20 @@ export class VisualEffects {
         if (derivedProgress.length) derivedProgress[derivedProgress.length - 1] = 1;
       }
     }
+    // Materialize timeline events from blueprint for runtime triggering
+    try {
+      this.timelineEvents = Array.isArray((trackData as any).events) ? (trackData as any).events.slice() : [];
+      // Normalize timestamps in case Blueprint used seconds-branding as numbers
+      for (const ev of this.timelineEvents) {
+        if (ev && ev.timestamp === undefined && ev.params && ev.params.audioSyncPoint) {
+          ev.timestamp = ev.params.audioSyncPoint as any;
+        }
+      }
+      // Sort events by timestamp to make triggering predictable
+      this.timelineEvents.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+    } catch (e) {
+      this.timelineEvents = [];
+    }
     this.segmentProgress = derivedProgress;
 
     // 1. Create the track material
@@ -182,14 +200,14 @@ export class VisualEffects {
       shader.uniforms.audioFlow = { value: 0 };
       shader.uniforms.ghostTintA = { value: this.trackTintA };
       shader.uniforms.ghostTintB = { value: this.trackTintB };
-      shader.uniforms.distortionStrength = { value: 0 };
-      shader.uniforms.bassIntensity = { value: 0 };
-      shader.uniforms.trebleIntensity = { value: 0 };
-
+  shader.uniforms.distortionStrength = { value: 0 };
+  shader.uniforms.bassIntensity = { value: 0 };
+  shader.uniforms.trebleIntensity = { value: 0 };
       shader.fragmentShader = shader.fragmentShader
         .replace(
           '#include <common>',
           `#include <common>
+varying vec2 vUv;
 uniform float trackTime;
 uniform float pulseIntensity;
 uniform float segmentBoost;
@@ -206,12 +224,13 @@ float traveler = smoothstep(0.05, 0.95, fract(pathV - trackTime * 0.35));
 float spirit = pulseIntensity + audioFlow * 0.35 + segmentBoost * 0.2;
 vec3 dreamTint = mix(ghostTintA, ghostTintB, pathV) * (0.35 + 0.25 * traveler + 0.2 * max(loopWave, 0.0));
 vec3 totalEmissiveRadiance = emissive + dreamTint * spirit;`
-        );
+  );
 
       shader.vertexShader = shader.vertexShader
         .replace(
           '#include <common>',
           `#include <common>
+varying vec2 vUv;
 uniform float trackTime;
 uniform float distortionStrength;
 uniform float bassIntensity;
@@ -221,6 +240,8 @@ uniform float trebleIntensity;
         .replace(
           '#include <begin_vertex>',
           `#include <begin_vertex>
+// expose UVs to fragment shader code injected above
+vUv = uv;
 float vPath = clamp(uv.y, 0.0, 1.0);
 // Bass swell effect
 transformed += normal * bassIntensity * 1.5;
@@ -271,26 +292,58 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
         dummy.updateMatrix();
         this.particleInstancedMesh.setMatrixAt(i, dummy.matrix);
       }
+      // Initialize per-instance position/scale attributes to offscreen so
+      // the shader won't accidentally render any particles before they are
+      // explicitly spawned.
+      try {
+        const geo: any = this.particleInstancedMesh.geometry;
+        const posAttr = geo.getAttribute('instancePosition');
+        const scaleAttr = geo.getAttribute('instanceScale');
+        if (posAttr && scaleAttr) {
+          for (let i = 0; i < particleCount; i++) {
+            const bi = i * 3;
+            posAttr.array[bi + 0] = 0;
+            posAttr.array[bi + 1] = -9999;
+            posAttr.array[bi + 2] = 0;
+            scaleAttr.array[i] = 0;
+          }
+          posAttr.needsUpdate = true;
+          scaleAttr.needsUpdate = true;
+        }
+      } catch (e) {}
       // Add per-instance attributes: color (vec3) and speed (float)
       try {
-        const colors = new Float32Array(particleCount * 3);
-        const speeds = new Float32Array(particleCount);
-        const colorAttr = new THREE.InstancedBufferAttribute(colors, 3);
-        const speedAttr = new THREE.InstancedBufferAttribute(speeds, 1);
-        (this.particleInstancedMesh.geometry as any).setAttribute('instanceColor', colorAttr);
-        (this.particleInstancedMesh.geometry as any).setAttribute('instanceSpeed', speedAttr);
+  const colors = new Float32Array(particleCount * 3);
+  const speeds = new Float32Array(particleCount);
+  const positionsAttrArray = new Float32Array(particleCount * 3);
+  const scalesAttrArray = new Float32Array(particleCount);
+  const colorAttr = new THREE.InstancedBufferAttribute(colors, 3);
+  const speedAttr = new THREE.InstancedBufferAttribute(speeds, 1);
+  const posAttr = new THREE.InstancedBufferAttribute(positionsAttrArray, 3);
+  const scaleAttr = new THREE.InstancedBufferAttribute(scalesAttrArray, 1);
+  (this.particleInstancedMesh.geometry as any).setAttribute('instanceColor', colorAttr);
+  (this.particleInstancedMesh.geometry as any).setAttribute('instanceSpeed', speedAttr);
+  // New attributes used as a robust, WebGL1-friendly fallback to instanceMatrix
+  // Many platforms/contexts struggle with attribute mat4; providing explicit
+  // per-instance position + scale attributes makes the instanced shader
+  // much more portable and easier to update from JS.
+  (this.particleInstancedMesh.geometry as any).setAttribute('instancePosition', posAttr);
+  (this.particleInstancedMesh.geometry as any).setAttribute('instanceScale', scaleAttr);
 
         // Replace material with a lightweight instanced shader that samples a
         // position texture when GPU path is enabled. It falls back to the
         // basic instanceMatrix when no texture is provided.
         const vert = `
-          attribute mat4 instanceMatrix;
+          attribute vec3 instancePosition;
+          attribute float instanceScale;
           attribute vec3 instanceColor;
           attribute float instanceSpeed;
           attribute float instanceFeature;
           uniform sampler2D posTex;
           uniform float texSize;
           varying vec3 vColor;
+          varying float vFeature;
+          varying vec3 vNormal;
 
           vec3 sampleTexturePosition(float id, float dimension) {
             float row = floor(id / dimension);
@@ -299,33 +352,48 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
             return texture2D(posTex, uv).rgb;
           }
 
-          vec3 transformVertex(vec3 local, mat4 inst) {
-            vec3 basisX = vec3(inst[0][0], inst[0][1], inst[0][2]);
-            vec3 basisY = vec3(inst[1][0], inst[1][1], inst[1][2]);
-            vec3 basisZ = vec3(inst[2][0], inst[2][1], inst[2][2]);
-            return basisX * local.x + basisY * local.y + basisZ * local.z;
-          }
-
           void main() {
             float fi = instanceFeature;
+            vFeature = fi;
             float tint = 0.15 * (fi - 3.0);
             vColor = instanceColor + vec3(tint, -tint * 0.2, tint * 0.1);
 
-            vec3 center = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
             float id = float(gl_InstanceID);
+            vec3 center = instancePosition;
             if (texSize > 0.5) {
+              // When a GPU position texture is provided we prefer it as the
+              // authoritative source of particle positions. Otherwise we fall
+              // back to per-instance attributes populated by JS.
               center = sampleTexturePosition(id, texSize);
             }
 
-            vec3 displaced = transformVertex(position, instanceMatrix) + center;
-            vec4 mvPosition = modelViewMatrix * vec4(displaced, 1.0);
+            // Apply a simple uniform scale per-instance and translate the
+            // local vertex coordinates into world space. This avoids
+            // relying on attribute mat4 instanceMatrix which is fragile on
+            // some platforms and shader profiles.
+            float sc = max(0.0001, instanceScale);
+            vec3 localScaled = position * sc;
+            vec4 mvPosition = modelViewMatrix * vec4(localScaled + center, 1.0);
+            // Provide transformed normal for per-fragment shading
+            vNormal = normalize(normalMatrix * normal);
             gl_Position = projectionMatrix * mvPosition;
           }
         `;
         const frag = `
           varying vec3 vColor;
+          varying float vFeature;
           void main() {
-            gl_FragColor = vec4(vColor, 1.0);
+            // Simple rim-light-like shading to give particles more depth and
+            // improve perceived motion. Keep alpha at 1.0 because we use
+            // additive blending on top of the scene.
+            vec3 n = normalize(vNormal);
+            float rim = pow(1.0 - max(0.0, dot(n, vec3(0.0, 0.0, 1.0))), 2.0);
+            float brightness = 0.75 + rim * 0.8;
+            vec3 color = vColor * brightness;
+            // Slight per-feature desaturation to add visual variety
+            float desat = 1.0 - clamp((vFeature - 2.0) * 0.06, 0.0, 0.35);
+            color = mix(vec3(dot(color, vec3(0.333))), color, desat);
+            gl_FragColor = vec4(color, 1.0);
           }
         `;
         const shaderMat = new THREE.ShaderMaterial({
@@ -344,7 +412,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
       } catch (e) {
         // If InstancedBufferAttribute isn't supported, continue without per-instance attributes
       }
-      // Ensure instanceFeature attribute exists (maps to a feature index: 0=subBass,1=bass,2=lowMid,3=mid,4=highMid,5=treble,6=sparkle)
+        // Ensure instanceFeature attribute exists (maps to a feature index: 0=subBass,1=bass,2=lowMid,3=mid,4=highMid,5=treble,6=sparkle)
       try {
         const feat = new Float32Array(particleCount);
         const featAttr = new THREE.InstancedBufferAttribute(feat, 1);
@@ -398,6 +466,18 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
         this.instanceLifetimes[i] = 0;
       }
     }
+
+    // Add an audio-reactive PointLight positioned near the camera to create
+    // a subtle local glow that follows the listener and pulses with bass
+    // energy. This improves immersion without relying on expensive post
+    // processing.
+    try {
+      const audioGlow = new THREE.PointLight(this.baseEmissiveColor.clone(), 0.0, 48, 2);
+      audioGlow.name = 'audioGlow';
+      // Start slightly behind the camera so it doesn't occlude the track
+      audioGlow.position.set(0, 0, 0);
+      this.scene.add(audioGlow);
+    } catch (e) {}
   }
 
   // Detect the underlying GL renderer and vendor. This is a best-effort
@@ -436,8 +516,14 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
       console.log('[GPU Particles] Float textures support (OES_texture_float):', extensions.has('OES_texture_float'));
       console.log('[GPU Particles] Float textures support (WEBGL_color_buffer_float):', extensions.has('WEBGL_color_buffer_float'));
 
-      if (!capabilities.isWebGL2) {
-        console.warn('[GPU Particles] GPU particle system requires WebGL2. Falling back to CPU particles.');
+      // Require WebGL2 plus float render-target support for stable GPU particles.
+      // Some drivers expose WebGL2 but lack color-buffer-float support which
+      // makes float ping-pong RTs unusable and causes shader/validation errors.
+      const supportsFloatRT = capabilities.isWebGL2 && (
+        extensions.has('EXT_color_buffer_float') || extensions.has('WEBGL_color_buffer_float') || (extensions.has('OES_texture_float') && extensions.has('OES_texture_float_linear'))
+      );
+      if (!supportsFloatRT) {
+        console.warn('[GPU Particles] GPU particle system requires WebGL2 + float render-target support. Falling back to CPU particles.');
         this.switchToFallbackParticles();
         return;
       }
@@ -611,7 +697,13 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
         } else if (resolveLygia) {
           try {
             const header = '#include "lygia/generative/simplex.glsl"\n#include "lygia/generative/curl.glsl"\n#include "lygia/color/palettes.glsl"\n';
-            velFragSrc = resolveLygia(header + baseVelFrag);
+            const resolved = resolveLygia(header + baseVelFrag);
+            // Defensive: resolver may return an error string. Validate output
+            if (typeof resolved === 'string' && resolved.length > 32 && !resolved.includes('Path ') && !resolved.toLowerCase().includes('not found') && (resolved.includes('void main') || resolved.includes('gl_FragColor') || resolved.includes('gl_FragData'))) {
+              velFragSrc = resolved;
+            } else {
+              velFragSrc = baseVelFrag;
+            }
           } catch (e) {
             velFragSrc = baseVelFrag;
           }
@@ -661,7 +753,12 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
         } else if (resolveLygia) {
           try {
             const header = '#include "lygia/generative/simplex.glsl"\n';
-            posFragSrc = resolveLygia(header + basePosFrag);
+            const resolvedPos = resolveLygia(header + basePosFrag);
+            if (typeof resolvedPos === 'string' && resolvedPos.length > 32 && !resolvedPos.includes('Path ') && !resolvedPos.toLowerCase().includes('not found') && (resolvedPos.includes('void main') || resolvedPos.includes('gl_FragColor') || resolvedPos.includes('gl_FragData'))) {
+              posFragSrc = resolvedPos;
+            } else {
+              posFragSrc = basePosFrag;
+            }
           } catch (e) {
             posFragSrc = basePosFrag;
           }
@@ -969,6 +1066,26 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     if (this.instanceLifetimes) this.instanceLifetimes[idx] = 0;
     if (this.instanceStartTimes) this.instanceStartTimes[idx] = 0;
     this.instanceFreeStack.push(idx);
+    // Also clear any per-instance attributes so the shader no longer
+    // renders the freed instance (keep it offscreen / zero scale).
+    try {
+      if (this.particleInstancedMesh) {
+        const geo: any = this.particleInstancedMesh.geometry;
+        const posAttr = geo.getAttribute('instancePosition');
+        const scaleAttr = geo.getAttribute('instanceScale');
+        if (posAttr) {
+          const base = idx * 3;
+          posAttr.array[base + 0] = 0;
+          posAttr.array[base + 1] = -9999;
+          posAttr.array[base + 2] = 0;
+          posAttr.needsUpdate = true;
+        }
+        if (scaleAttr) {
+          scaleAttr.array[idx] = 0;
+          scaleAttr.needsUpdate = true;
+        }
+      }
+    } catch (e) {}
   }
 
   /**
@@ -1088,6 +1205,15 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     this.trackPulse = Math.max(0, this.trackPulse - deltaSeconds * 1.4);
 
     this.driveAudioReactiveParticles(nowSeconds, deltaSeconds, cameraPosition, lookAtPosition);
+    // Trigger timeline events from blueprint (if any) based on ride progress/time
+    try {
+      const durationNum = (this.trackData && this.trackData.audioFeatures && typeof this.trackData.audioFeatures.duration === 'number')
+        ? secondsToNumber(this.trackData.audioFeatures.duration)
+        : 0;
+      const currentAudioTime = durationNum > 0 ? (clampedProgress * durationNum) : 0;
+      this.handleTimelineEvents(currentAudioTime, deltaSeconds, cameraPosition, lookAtPosition);
+      this.lastAudioTimeSeconds = currentAudioTime;
+    } catch (e) {}
 
     if (this.trackShaderUniforms) {
       const uniforms = this.trackShaderUniforms;
@@ -1152,6 +1278,34 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     if (this.gpuEnabled) {
       this.updateGPU();
     }
+
+    // Audio-reactive scene light and point-size adjustments for immersion
+    try {
+      const glow = this.scene.getObjectByName('audioGlow') as THREE.PointLight | undefined;
+      if (glow) {
+        // Position near the listener/camera and pulse intensity based on bass + GPU audio force
+        glow.position.copy(cameraPosition);
+        const bass = this.audioFeatures.bass || 0;
+        const targetIntensity = 0.12 + (this.gpuAudioForce * 1.6) + (bass * 1.5) * this.segmentIntensityBoost;
+        glow.intensity = THREE.MathUtils.lerp(glow.intensity || 0, Math.max(0, targetIntensity), 0.08);
+        // keep glow color aligned with current segment mood
+        glow.color.lerp(this.segmentColorTarget, 0.06);
+      }
+    } catch (e) {}
+
+    // Smoothly adjust Points fallback size to respond to bass without abrupt pops
+    try {
+      if (this.particleSystem) {
+        const mat = this.particleSystem.material as THREE.PointsMaterial;
+        const targetSize = RIDE_CONFIG.PARTICLE_BASE_SIZE * (1 + (this.audioFeatures.bass || 0) * 1.2);
+        mat.size = THREE.MathUtils.lerp(mat.size || RIDE_CONFIG.PARTICLE_BASE_SIZE, targetSize, 0.06);
+        // Slight hue shift on point material to enhance immersion
+        // (PointsMaterial stores color as Color; we tint toward current segment color)
+        const targetCol = this.segmentColorTarget.clone().lerp(this.baseRailColor, 0.5);
+        (mat.color as THREE.Color).lerp(targetCol, 0.02);
+        mat.needsUpdate = true;
+      }
+    } catch (e) {}
   }
 
   // Allow external audio pipeline to push a force value (alternative to FrameAnalysis propagation)
@@ -1315,6 +1469,8 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
           const colorAttr = geo.getAttribute('instanceColor');
           const speedAttr = geo.getAttribute('instanceSpeed');
           const featAttr = geo.getAttribute('instanceFeature');
+          const posAttr = geo.getAttribute('instancePosition');
+          const scaleAttr = geo.getAttribute('instanceScale');
           if (colorAttr) {
             const ci = idx * 3;
             // color influenced by feature config if provided
@@ -1336,6 +1492,17 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
           if (speedAttr) {
             speedAttr.array[idx] = 0.5 + Math.random() * 2.0;
             speedAttr.needsUpdate = true;
+          }
+          if (posAttr) {
+            posAttr.array[pa + 0] = px;
+            posAttr.array[pa + 1] = py;
+            posAttr.array[pa + 2] = pz;
+            posAttr.needsUpdate = true;
+          }
+          if (scaleAttr) {
+            // store a scale that the shader will use (sphere geometry is unit-sized)
+            scaleAttr.array[idx] = baseSize;
+            scaleAttr.needsUpdate = true;
           }
           if (featAttr) {
             // choose feature index based on provided feature name
@@ -1369,6 +1536,16 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
       (positions as any).updateRange = { offset: 0, count: -1 };
       (velocities as any).updateRange = { offset: 0, count: -1 };
       (startTimes as any).updateRange = { offset: 0, count: -1 };
+      // also mark instancePosition/scale attributes for full update when using instancing
+      try {
+        if (this.particleInstancedMesh) {
+          const geo: any = this.particleInstancedMesh.geometry;
+          const posAttr = geo.getAttribute('instancePosition');
+          const scaleAttr = geo.getAttribute('instanceScale');
+          if (posAttr) posAttr.updateRange = { offset: 0, count: -1 };
+          if (scaleAttr) scaleAttr.updateRange = { offset: 0, count: -1 };
+        }
+      } catch (e) {}
       this.particleCursor = (this.particleCursor + spawnCount) % particleCount;
       return;
     }
@@ -1405,6 +1582,151 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     const scaled = Math.max(0, Math.min(1, intensity));
     const count = Math.max(1, Math.round(RIDE_CONFIG.PARTICLE_SPAWN_COUNT * (0.5 + scaled * 2.0)));
     this.spawnParticles(count, origin, featureName);
+  }
+
+  // Trigger timeline events when their timestamp occurs. currentAudioTime is
+  // seconds from start of track (derived from ride progress and audio duration).
+  private handleTimelineEvents(currentAudioTime: number, deltaSeconds: number, cameraPosition: THREE.Vector3, lookAtPosition: THREE.Vector3) {
+    if (!this.timelineEvents || !this.timelineEvents.length) return;
+    const now = currentAudioTime;
+    for (let i = 0; i < this.timelineEvents.length; i++) {
+      const ev = this.timelineEvents[i];
+      if (!ev || typeof ev.timestamp !== 'number') continue;
+      const triggeredUntil = this.timelineTriggeredUntil.get(i) || 0;
+      // If we're already within the active window, skip
+      if (now <= triggeredUntil) continue;
+      // If the event timestamp has passed (or occurs within a small lookahead), trigger it
+      const lookahead = Math.max(0.05, deltaSeconds * 1.5);
+      if (now + lookahead >= ev.timestamp) {
+        const intensity = Math.max(0, Math.min(1, (ev.intensity ?? 0.6) * (this.segmentIntensityBoost || 1)));
+        try {
+          // Compute an origin roughly in front of the camera for visual focus
+          // Place event a few units ahead/up from the camera so it feels centered
+          const spawnPos = cameraPosition.clone().addScaledVector(this._spawnForward, 8).addScaledVector(this._spawnUp, 1.5);
+          this.spawnEvent(ev, intensity, spawnPos);
+        } catch (e) {}
+        // mark triggered until timestamp + duration + safety buffer
+        const duration = ev.duration ? (typeof ev.duration === 'number' ? ev.duration : Number(ev.duration)) : 2.0;
+        this.timelineTriggeredUntil.set(i, ev.timestamp + duration + 0.5);
+      }
+    }
+  }
+
+  // Map event presets to concrete visual actions. Keep these lightweight and
+  // reuse existing particle & audio-reactive mechanisms.
+  private spawnEvent(ev: TimelineEvent, intensity: number, origin: THREE.Vector3) {
+    const t = ev.type;
+    const inten = Math.max(0.02, Math.min(1, intensity));
+    switch (t) {
+      case 'fireworks': {
+        // Spawn multiple high-intensity sparkle bursts in the sky above the ride
+        const bursts = 3 + Math.round(inten * 5);
+        for (let i = 0; i < bursts; i++) {
+          const jitter = new THREE.Vector3((Math.random() - 0.5) * 6, 6 + Math.random() * 6, (Math.random() - 0.5) * 6);
+          const pos = origin.clone().add(jitter);
+          this.spawnFeatureBurst('sparkle', inten * (0.8 + Math.random() * 0.6), pos);
+        }
+        // Brief flash light to enhance the effect
+        try {
+          const flash = new THREE.PointLight(this.segmentColorTarget.clone(), 0.0, 40, 2);
+          flash.position.copy(origin).add(new THREE.Vector3(0, 6, 0));
+          this.scene.add(flash);
+          // Fade out using a simple timeout-ish decay driven by animation ticks
+          const start = performance.now() / 1000;
+          const fade = () => {
+            const now = performance.now() / 1000;
+            const dt = now - start;
+            flash.intensity = Math.max(0, 6.0 * inten * (1.0 - dt / 0.6));
+            if (flash.intensity <= 0.01) {
+              try { this.scene.remove(flash); } catch (e) {}
+            } else {
+              requestAnimationFrame(fade);
+            }
+          };
+          requestAnimationFrame(fade);
+        } catch (e) {}
+        break;
+      }
+      case 'fog': {
+        // Temporarily increase fog density and spawn a few slow-moving particles
+        try {
+          if (this.scene.fog instanceof THREE.FogExp2) {
+            const base = this.scene.fog.density || 0.001;
+            const target = base + 0.0025 * (0.5 + inten);
+            // animate the fog density over ~duration
+            const start = performance.now() / 1000;
+            const dur = Math.max(3.0, (ev.duration as number) || 6.0);
+            const anim = () => {
+              const now = performance.now() / 1000;
+              const tNorm = Math.min(1, (now - start) / 0.6);
+              this.scene.fog.density = THREE.MathUtils.lerp(base, target, tNorm);
+              if (now - start < dur) {
+                requestAnimationFrame(anim);
+              } else {
+                // fade back
+                const fadeStart = performance.now() / 1000;
+                const fade = () => {
+                  const then = performance.now() / 1000;
+                  const ft = Math.min(1, (then - fadeStart) / 2.0);
+                  this.scene.fog.density = THREE.MathUtils.lerp(target, base, ft);
+                  if (ft < 1) requestAnimationFrame(fade);
+                };
+                requestAnimationFrame(fade);
+              }
+            };
+            requestAnimationFrame(anim);
+          }
+        } catch (e) {}
+        // spawn a gentle ambient of sparkles
+        for (let i = 0; i < Math.max(2, Math.round(4 * inten)); i++) {
+          const p = origin.clone().add(new THREE.Vector3((Math.random() - 0.5) * 6, (Math.random() - 0.2) * 2, (Math.random() - 0.5) * 6));
+          this.spawnFeatureBurst('sparkle', 0.25 + Math.random() * 0.4, p);
+        }
+        break;
+      }
+      case 'starshow': {
+        // Broad distribution of light twinkles across the sky; many low-intensity sparks
+        const total = 30 + Math.round(inten * 80);
+        for (let i = 0; i < total; i++) {
+          const p = origin.clone().add(new THREE.Vector3((Math.random() - 0.5) * 40, 8 + Math.random() * 20, (Math.random() - 0.5) * 40));
+          this.spawnFeatureBurst('sparkle', 0.25 + Math.random() * inten * 0.6, p);
+        }
+        break;
+      }
+      case 'lightBurst': {
+        try {
+          const glow = this.scene.getObjectByName('audioGlow') as THREE.PointLight | undefined;
+          if (glow) {
+            glow.intensity = Math.max(glow.intensity || 0, 2.0 * inten + (this.gpuAudioForce || 0));
+          }
+        } catch (e) {}
+        break;
+      }
+      case 'sparkRing': {
+        // Ring of sparks around the forward direction
+        const ringCount = 10 + Math.round(inten * 30);
+        for (let r = 0; r < ringCount; r++) {
+          const ang = (r / ringCount) * Math.PI * 2;
+          const off = new THREE.Vector3(Math.cos(ang) * (3 + Math.random() * 2), -1 + Math.random() * 3, Math.sin(ang) * (3 + Math.random() * 2));
+          this.spawnFeatureBurst('sparkle', 0.5 * inten, origin.clone().add(off));
+        }
+        break;
+      }
+      case 'confetti': {
+        // Confetti as many small particles with random colours
+        const confettiCount = 30 + Math.round(inten * 60);
+        for (let k = 0; k < confettiCount; k++) {
+          const p = origin.clone().add(new THREE.Vector3((Math.random() - 0.5) * 6, Math.random() * 6, (Math.random() - 0.5) * 6));
+          // spawn small bursts of low lifetime sparkles
+          this.spawnParticles(2, p, 'sparkle');
+        }
+        break;
+      }
+      default: {
+        // Unknown event -> treat as sparkle
+        this.spawnFeatureBurst('sparkle', inten, origin);
+      }
+    }
   }
 
   private createGhostRibbonMaterial(): THREE.ShaderMaterial {
@@ -1542,5 +1864,13 @@ void main() {
       } catch (e) {}
       this.particleSystem = null;
     }
+
+    // Remove audio-reactive light if it exists
+    try {
+      const glow = this.scene.getObjectByName('audioGlow');
+      if (glow) {
+        this.scene.remove(glow);
+      }
+    } catch (e) {}
   }
 }

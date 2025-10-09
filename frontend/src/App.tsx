@@ -52,11 +52,23 @@ const App: React.FC = () => {
         }
     }, [status]);
 
+    // Preset options (kept inline for now — server endpoint exists for dynamic lists)
+    const TRACK_STYLES = ['classic', 'extreme', 'flowing', 'technical', 'experimental'];
+    const WORLD_THEMES = ['fantasy', 'cyberpunk', 'aurora', 'desert', 'space', 'underwater', 'noir'];
+    const VISUAL_STYLES = ['photorealistic', 'stylized', 'painterly', 'lowpoly', 'retro'];
+    const DETAIL_LEVELS = ['low', 'medium', 'high'];
+    const CAMERA_PRESETS = ['epic', 'immersive', 'first_person', 'wide_angle'];
+
+    const generationOptions = useAppStore(state => state.generationOptions);
+    const setGenerationOptions = useAppStore(state => state.actions.setGenerationOptions);
+
     useEffect(() => {
         if (audioFile) {
-            runAudioProcessingWorkflow(audioFile);
+            // Pass current generation options into workflow so the backend / Gemini
+            // model can honor the user's stylistic choices.
+            runAudioProcessingWorkflow(audioFile, { generationOptions });
         }
-    }, [audioFile]);
+    }, [audioFile, generationOptions]);
 
     const renderContent = () => {
         switch (status) {
@@ -81,6 +93,74 @@ const App: React.FC = () => {
                         </label>
                         <input ref={fileInputRef} id="audio-upload" type="file" accept="audio/mp3, audio/wav, audio/mpeg" className="hidden" onChange={handleFileChange} />
                         <p className="text-xs text-gray-600 mt-4">For the best experience, use a track with dynamic range.</p>
+                        <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-3 max-w-xl mx-auto text-left">
+                            <div>
+                                <label className="block text-xs text-gray-400">Track Style</label>
+                                <select
+                                    value={(generationOptions && (generationOptions as any).trackStyle) || ''}
+                                    onChange={(e) => setGenerationOptions({ ...(generationOptions || {}), trackStyle: (e.target.value ? (e.target.value as import('shared/types').TrackStyle) : undefined) })}
+                                    className="mt-1 w-full bg-gray-800/60 border border-gray-700 rounded-md p-2 text-sm text-gray-200"
+                                >
+                                    <option value="">(auto)</option>
+                                    {TRACK_STYLES.map(s => <option key={s} value={s}>{s}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs text-gray-400">World Theme</label>
+                                <select
+                                    value={(generationOptions && (generationOptions as any).worldTheme) || ''}
+                                    onChange={(e) => setGenerationOptions({ ...(generationOptions || {}), worldTheme: (e.target.value ? (e.target.value as import('shared/types').WorldTheme) : undefined) })}
+                                    className="mt-1 w-full bg-gray-800/60 border border-gray-700 rounded-md p-2 text-sm text-gray-200"
+                                >
+                                    <option value="">(auto)</option>
+                                    {WORLD_THEMES.map(s => <option key={s} value={s}>{s}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs text-gray-400">Visual Style</label>
+                                <select
+                                    value={(generationOptions && (generationOptions as any).visualStyle) || ''}
+                                    onChange={(e) => setGenerationOptions({ ...(generationOptions || {}), visualStyle: (e.target.value ? (e.target.value as import('shared/types').VisualStyle) : undefined) })}
+                                    className="mt-1 w-full bg-gray-800/60 border border-gray-700 rounded-md p-2 text-sm text-gray-200"
+                                >
+                                    <option value="">(auto)</option>
+                                    {VISUAL_STYLES.map(s => <option key={s} value={s}>{s}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs text-gray-400">Detail Level</label>
+                                <select
+                                    value={(generationOptions && (generationOptions as any).detailLevel) || ''}
+                                    onChange={(e) => setGenerationOptions({ ...(generationOptions || {}), detailLevel: (e.target.value ? (e.target.value as import('shared/types').DetailLevel) : undefined) })}
+                                    className="mt-1 w-full bg-gray-800/60 border border-gray-700 rounded-md p-2 text-sm text-gray-200"
+                                >
+                                    <option value="">(auto)</option>
+                                    {DETAIL_LEVELS.map(s => <option key={s} value={s}>{s}</option>)}
+                                </select>
+                            </div>
+                            <div className="md:col-span-2">
+                                <label className="block text-xs text-gray-400">Event Presets</label>
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                    {['fog', 'fireworks', 'starshow', 'lightBurst', 'sparkRing', 'confetti'].map((ev) => {
+                                        const checked = (generationOptions && (generationOptions as any).preferredEventPresets || []).includes(ev);
+                                        return (
+                                            <label key={ev} className="inline-flex items-center gap-2 text-sm text-gray-300 bg-gray-800/40 px-3 py-1 rounded-md cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={checked}
+                                                    onChange={(e) => {
+                                                        const cur = (generationOptions && (generationOptions as any).preferredEventPresets) || [];
+                                                        const next = e.target.checked ? Array.from(new Set([...cur, ev])) : cur.filter((x: string) => x !== ev);
+                                                        setGenerationOptions({ ...(generationOptions || {}), preferredEventPresets: next as any });
+                                                    }}
+                                                />
+                                                <span className="capitalize">{ev}</span>
+                                            </label>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        </div>
                          <div className="mt-8 text-sm text-gray-500">
                              Powered by <span className="font-semibold text-gray-400">Gemini</span> & <span className="font-semibold text-gray-400">Three.js</span>
                          </div>

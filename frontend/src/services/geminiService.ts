@@ -118,7 +118,8 @@ export const generateRideBlueprintWithAI = async (
  */
 export const generateRideBlueprintFromBackend = async (
   audioFile: File,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  options?: Record<string, any>
 ): Promise<{ blueprint: RideBlueprint; features: any }> => {
   const backendUrl = (globalThis as any)?.BACKEND_URL || env.VITE_BACKEND_URL;
   if (!backendUrl) throw new Error('BACKEND_URL is not defined');
@@ -126,6 +127,11 @@ export const generateRideBlueprintFromBackend = async (
 
   const fd = new FormData();
   fd.append('audio_file', audioFile);
+  if (options && typeof options === 'object') {
+    try {
+      fd.append('options', JSON.stringify(options));
+    } catch (e) {}
+  }
 
   try {
     console.debug('[GeminiService] Posting audio to backend', { url, fileName: audioFile.name, fileSize: audioFile.size });
@@ -165,7 +171,8 @@ export const generateRideBlueprint = async (...args: any[]): Promise<any> => {
   if (args.length >= 1 && args[0] instanceof File && (args.length === 1 || args[1] instanceof AbortSignal || typeof args[1] === 'undefined')) {
     const file: File = args[0];
     const signal: AbortSignal | undefined = args[1];
-    return await generateRideBlueprintFromBackend(file, signal);
+    const options: Record<string, any> | undefined = args[2];
+    return await generateRideBlueprintFromBackend(file, signal, options);
   }
 
   // Otherwise, delegate to the AI-backed generator (used by unit tests)
@@ -188,12 +195,15 @@ export const generateSkyboxImage = async (prompt: string, blueprint?: any): Prom
   try {
     const backendUrl = (globalThis as any)?.BACKEND_URL || env.VITE_BACKEND_URL;
     if (!backendUrl) throw new Error('BACKEND_URL is not defined');
+    // Extract any generation options embedded in the blueprint and send them
+    // explicitly as part of the request body so the backend can respect them.
+    const optionsPayload = blueprint && (blueprint as any).generationOptions ? (blueprint as any).generationOptions : null;
     const response = await fetch(`${backendUrl}/api/generate-skybox`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ prompt, blueprint }),
+      body: JSON.stringify({ prompt, blueprint, options: optionsPayload }),
     });
 
     if (!response.ok) {

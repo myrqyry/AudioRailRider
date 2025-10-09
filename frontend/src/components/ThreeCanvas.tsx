@@ -78,8 +78,10 @@ const ThreeCanvas: React.FC = () => {
     // Generate and apply the skybox with full blueprint context
     if (trackData.moodDescription) {
       const prompt = trackData.moodDescription;
-      // Pass the full trackData (blueprint) for richer contextual generation
-      generateSkyboxImage(prompt, trackData)
+      // Pass the full trackData (blueprint) and any generation options for richer contextual generation
+  const options = (trackData as any).generationOptions;
+  const blueprintWithOptions = { ...trackData, generationOptions: options };
+  generateSkyboxImage(prompt, blueprintWithOptions)
         .then(imageUrl => {
           console.log('[ThreeCanvas] Skybox generated successfully with Gemini 2.5 Flash Image');
           sceneManager.updateSkybox(imageUrl);

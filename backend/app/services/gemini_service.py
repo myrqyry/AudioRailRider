@@ -55,14 +55,43 @@ class GeminiService:
             self.client = None
 
     def generate_prompt_text(self, duration: float, bpm: float, energy: float,
-                             spectral_centroid: float, spectral_flux: float) -> str:
+                             spectral_centroid: float, spectral_flux: float,
+                             options: dict | None = None) -> str:
+        # Include optional generation options to give Gemini explicit stylistic
+        # constraints. This allows users to choose a track/world style and have
+        # the model respect that in its blueprint output.
+        opt_lines = []
+        if options:
+            ts = options.get('trackStyle')
+            if ts:
+                opt_lines.append(f"Preferred track style: {ts}.")
+            wt = options.get('worldTheme')
+            if wt:
+                opt_lines.append(f"World/theme: {wt}.")
+            vs = options.get('visualStyle')
+            if vs:
+                opt_lines.append(f"Visual style: {vs}.")
+            dl = options.get('detailLevel')
+            if dl:
+                opt_lines.append(f"Detail level: {dl}.")
+            cp = options.get('cameraPreset')
+            if cp:
+                opt_lines.append(f"Preferred camera preset: {cp}.")
+            pal = options.get('paletteHint')
+            if pal and isinstance(pal, list) and len(pal) >= 1:
+                opt_lines.append(f"Palette hint: {', '.join(pal[:3])}.")
+
+        option_block = ('\n'.join(opt_lines) + '\n') if opt_lines else ''
+
         return f"""
 Audio analysis: {duration:.0f}s, {bpm:.0f} BPM, Energy {energy:.2f}, Spectral Centroid {spectral_centroid:.0f}Hz, Spectral Flux {spectral_flux:.3f}.
+{option_block}
 Create a rollercoaster blueprint (12-20 segments) from this audio.
 - rideName: Creative name reflecting the music.
 - moodDescription: Short, evocative theme.
 - palette: 3 hex colors [rail, glow, sky] matching the mood.
 - track: Design a track where intensity mirrors the music's dynamics. Use high-excitement components ('drop', 'loop', 'barrelRoll') for energetic parts.
+ - events: Provide a short timeline of small, audio-synchronized visual events (optional). Use events like 'fog', 'fireworks', 'starshow', 'lightBurst', 'sparkRing', or 'confetti'. For each event include: type, timestamp (seconds from start), intensity (0..1), optional duration (for sustained events), audioReactive (true/false), and params for color or scale if relevant. Favor the preferredEventPresets listed in options if provided.
 """
 
     SYSTEM_INSTRUCTION = """
@@ -75,7 +104,7 @@ Track components: 'climb', 'drop', 'turn', 'loop', 'barrelRoll'.
 - 'barrelRoll': rotations (1-2), length (100-200).
 """
 
-    async def generate_blueprint(self, audio_bytes: bytes, content_type: str):
+    async def generate_blueprint(self, audio_bytes: bytes, content_type: str, options: dict | None = None):
         try:
             # Server-side audio analysis
             audio_features = analyze_audio(audio_bytes)
@@ -85,7 +114,8 @@ Track components: 'climb', 'drop', 'turn', 'loop', 'barrelRoll'.
                 audio_features["bpm"],
                 audio_features["energy"],
                 audio_features["spectralCentroid"],
-                audio_features["spectralFlux"]
+                audio_features["spectralFlux"],
+                options
             )
 
             # Choose an upload strategy based on payload size:
@@ -152,6 +182,20 @@ Track components: 'climb', 'drop', 'turn', 'loop', 'barrelRoll'.
                 # Fallback: parse raw JSON text
                 blueprint = json.loads(response.text)
 
+            # Attach the generation options used so downstream consumers (frontend/UI)
+            # can surface or persist the selected preferences.
+            try:
+                if blueprint is not None:
+                    try:
+                        # If it's a Pydantic model, set attribute
+                        setattr(blueprint, 'generationOptions', options)
+                    except Exception:
+                        # If it's a dict, attach key
+                        if isinstance(blueprint, dict):
+                            blueprint['generationOptions'] = options
+            except Exception:
+                pass
+
             # Return both the blueprint and the audio features
             return {"blueprint": blueprint, "features": audio_features}
 
@@ -207,13 +251,45 @@ Track components: 'climb', 'drop', 'turn', 'loop', 'barrelRoll'.
             "track": track
         }
 
+        # Generate a simple events timeline heuristically from audio features.
+        try:
+            events = []
+            # Place fireworks at high-energy progression points
+            for i in range(max(1, int(segs / 4))):
+                t = float(i + 1) * dur / max(1, int(segs / 4) + 1)
+                # intensity scales with energy and an alternating pattern
+                inten = min(1.0, energy * (0.6 + (i % 2) * 0.6))
+                if inten > 0.35:
+                    events.append({"type": "fireworks", "timestamp": t, "intensity": round(float(inten), 2), "duration": 2.0, "audioReactive": True})
+
+            # Fog events for sustained lower-energy sections
+            if energy < 0.4:
+                # place a couple of fog patches across the ride
+                events.append({"type": "fog", "timestamp": max(1.0, dur * 0.15), "intensity": 0.5, "duration": min(10.0, dur * 0.08), "audioReactive": True})
+                events.append({"type": "fog", "timestamp": max(1.0, dur * 0.5), "intensity": 0.35, "duration": min(8.0, dur * 0.06), "audioReactive": False})
+
+            # Starshow: ambient twinkle near quieter sections or at the finale
+            events.append({"type": "starshow", "timestamp": max(2.0, dur * 0.8), "intensity": 0.5, "duration": min(12.0, dur * 0.1), "audioReactive": True})
+
+            # Light bursts tuned to the bpm (one every few beats) if bpm exists
+            if bpm > 0:
+                beat_interval = 60.0 / bpm
+                for k in range(1, min(8, int(dur / (beat_interval * 4) + 1))):
+                    events.append({"type": "lightBurst", "timestamp": min(dur - 0.5, k * 4 * beat_interval), "intensity": 0.4, "audioReactive": True})
+
+            # Attach events to blueprint
+            blueprint_dict["events"] = events
+        except Exception:
+            # do not fail fallback if event heuristics fail
+            pass
+
         # Return a Pydantic Blueprint instance for consistency with response_schema
         try:
             return Blueprint(**blueprint_dict)
         except Exception:
             return blueprint_dict
 
-    async def generate_skybox(self, prompt: str, blueprint_data: dict | None = None):
+    async def generate_skybox(self, prompt: str, blueprint_data: dict | None = None, options: dict | None = None):
         """
         Generate a skybox image using Gemini 2.5 Flash Image Preview model.
         This model excels at creative image generation with rich context understanding.
@@ -234,10 +310,22 @@ Track components: 'climb', 'drop', 'turn', 'loop', 'barrelRoll'.
                 if palette and len(palette) >= 3:
                     palette_desc = f" with colors {palette[0]} (rail), {palette[1]} (glow), and {palette[2]} (sky)"
                 
+                # Integrate generation options if provided
+                opt_lines = []
+                if options:
+                    if options.get('worldTheme'):
+                        opt_lines.append(f"Theme: {options.get('worldTheme')}")
+                    if options.get('visualStyle'):
+                        opt_lines.append(f"Visual style: {options.get('visualStyle')}")
+                    if options.get('paletteHint') and isinstance(options.get('paletteHint'), list):
+                        opt_lines.append(f"Palette hint: {', '.join(options.get('paletteHint')[:3])}")
+
+                options_block = ('\n'.join(opt_lines) + '\n') if opt_lines else ''
+
                 full_prompt = f"""Create a breathtaking, cinematic wide-angle sky scene for a rollercoaster experience called "{ride_name}".
 
 Mood: {mood}
-Visual Style: Photorealistic, epic, atmospheric, with dynamic lighting and volumetric effects{palette_desc}.
+{options_block}Visual Style: Photorealistic, epic, atmospheric, with dynamic lighting and volumetric effects{palette_desc}.
 
 Requirements:
 - Seamless, tileable 360° equirectangular image suitable for a skybox
