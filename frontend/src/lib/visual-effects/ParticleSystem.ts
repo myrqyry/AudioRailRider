@@ -45,8 +45,25 @@ export class ParticleSystem {
   private readonly spawnUp = new THREE.Vector3();
   private readonly worldUp = new THREE.Vector3(0, 1, 0);
   private readonly spawnWork = new THREE.Vector3();
+  public readonly texSize: number;
+
+  private gpuEnabled: boolean = false;
+  private gpuRenderer: THREE.WebGLRenderer | null = null;
+  private gpuPosRTA: THREE.WebGLRenderTarget | null = null;
+  private gpuPosRTB: THREE.WebGLRenderTarget | null = null;
+  private gpuVelRTA: THREE.WebGLRenderTarget | null = null;
+  private gpuVelRTB: THREE.WebGLRenderTarget | null = null;
+  private gpuQuadScene: THREE.Scene | null = null;
+  private gpuQuadCamera: THREE.OrthographicCamera | null = null;
+  private gpuVelMaterial: THREE.ShaderMaterial | null = null;
+  private gpuPosMaterial: THREE.ShaderMaterial | null = null;
+  private gpuVelQuad: THREE.Mesh | null = null;
+  private gpuPosQuad: THREE.Mesh | null = null;
+  private gpuSwap = false;
+  private rendererInfo: { ok: boolean; renderer: string; vendor: string } | null = null;
 
   constructor(private readonly scene: THREE.Scene) {
+    this.texSize = Math.ceil(Math.sqrt(RIDE_CONFIG.PARTICLE_COUNT));
     this.featureVisuals = new Map([
       ['subBass', { color: [1.0, 0.2, 0.1], sensitivity: 1.2, size: 2.5, lifetime: 3.5, behavior: 'flow' }],
       ['bass', { color: [1.0, 0.4, 0.2], sensitivity: 1.0, size: 2.0, lifetime: 3.0, behavior: 'flow' }],
@@ -270,6 +287,421 @@ export class ParticleSystem {
         (this.particleSystem.material as THREE.Material).dispose();
       } catch (e) {}
       this.particleSystem = null;
+    }
+    this.disposeGPU();
+  }
+
+  public isGPUEnabled(): boolean {
+    return this.gpuEnabled;
+  }
+
+  private detectRenderer() {
+    if (this.rendererInfo !== null) return this.rendererInfo;
+    try {
+      const canvas = document.createElement('canvas');
+      const gl = (canvas.getContext('webgl2') || canvas.getContext('webgl')) as WebGLRenderingContext | null;
+      if (!gl) {
+        this.rendererInfo = { ok: false, renderer: 'no-webgl', vendor: 'unknown' };
+        return this.rendererInfo;
+      }
+      const dbg = (gl as any).getExtension && (gl as any).getExtension('WEBGL_debug_renderer_info');
+      const renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : (gl.getParameter((gl as any).RENDERER) as string);
+      const vendor = dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : (gl.getParameter((gl as any).VENDOR) as string);
+      this.rendererInfo = { ok: true, renderer: renderer || 'unknown', vendor: vendor || 'unknown' };
+      return this.rendererInfo;
+    } catch (e) {
+      this.rendererInfo = { ok: false, renderer: 'error', vendor: 'error' };
+      return this.rendererInfo;
+    }
+  }
+
+  private disposeGPU() {
+    if (this.gpuVelRTA) {
+      this.gpuVelRTA.dispose();
+      this.gpuVelRTA = null;
+    }
+    if (this.gpuVelRTB) {
+      this.gpuVelRTB.dispose();
+      this.gpuVelRTB = null;
+    }
+    if (this.gpuPosRTA) {
+      this.gpuPosRTA.dispose();
+      this.gpuPosRTA = null;
+    }
+    if (this.gpuPosRTB) {
+      this.gpuPosRTB.dispose();
+      this.gpuPosRTB = null;
+    }
+    if (this.gpuVelMaterial) {
+      this.gpuVelMaterial.dispose();
+      this.gpuVelMaterial = null;
+    }
+    if (this.gpuPosMaterial) {
+      this.gpuPosMaterial.dispose();
+      this.gpuPosMaterial = null;
+    }
+    if (this.gpuQuadScene) {
+      this.gpuQuadScene.clear();
+      this.gpuQuadScene = null;
+    }
+    this.gpuVelQuad = null;
+    this.gpuPosQuad = null;
+    this.gpuQuadCamera = null;
+    this.gpuRenderer = null;
+    this.gpuEnabled = false;
+  }
+
+  public async initGPU(renderer: THREE.WebGLRenderer, curlParams: { curlStrength: number; noiseScale: number; noiseSpeed: number; }) {
+    const instancedMesh = this.particleInstancedMesh;
+    if (!instancedMesh) {
+      console.log('[GPU Particles] No instanced mesh available, skipping GPU init.');
+      return;
+    }
+    const capabilities = renderer.capabilities;
+    const extensions = renderer.extensions;
+
+    const supportsFloatRT = capabilities.isWebGL2 && (
+      extensions.has('EXT_color_buffer_float') || extensions.has('WEBGL_color_buffer_float')
+    );
+    if (!supportsFloatRT) {
+      console.warn('[GPU Particles] GPU particle system requires WebGL2 + float render-target support. Falling back to CPU particles.');
+      this.switchToFallback();
+      return;
+    }
+    try {
+      this.gpuRenderer = renderer;
+      const size = this.texSize;
+      let preResolvedVel: string | null = getCachedShader('/shaders/velFrag.resolved.glsl');
+      let preResolvedPos: string | null = getCachedShader('/shaders/posFrag.resolved.glsl');
+
+      if (!preResolvedVel) {
+        try {
+          const velResp = await fetch('/shaders/velFrag.resolved.glsl');
+          if (velResp.ok) preResolvedVel = await velResp.text();
+        } catch (e) {}
+      }
+      if (!preResolvedPos) {
+        try {
+          const posResp = await fetch('/shaders/posFrag.resolved.glsl');
+          if (posResp.ok) preResolvedPos = await posResp.text();
+        } catch (e) {}
+      }
+
+      let baseVelFrag = getCachedShader('/shaders/baseVelFrag.glsl') || '';
+      let basePosFrag = getCachedShader('/shaders/basePosFrag.glsl') || '';
+
+      if ((!preResolvedVel || !preResolvedPos) && (!baseVelFrag || !basePosFrag)) {
+        try {
+          if (!baseVelFrag) {
+            const bvel = await fetch('/shaders/baseVelFrag.glsl');
+            if (bvel.ok) baseVelFrag = await bvel.text();
+          }
+          if (!basePosFrag) {
+            const bpos = await fetch('/shaders/basePosFrag.glsl');
+            if (bpos.ok) basePosFrag = await bpos.text();
+          }
+        } catch (e) {}
+      }
+      let resolveLygia: ((s: string) => string) | null = getCachedLygiaResolver();
+
+      if (!resolveLygia && (!preResolvedVel || !preResolvedPos)) {
+        try {
+            try {
+              const localUrl = window.location.origin + '/lygia/resolve.esm.js';
+              const local = await import(/* @vite-ignore */ localUrl);
+              resolveLygia = (local && (local.default || local.resolveLygia || local.resolve)) ? (local.default || local.resolveLygia || local.resolve) : null;
+            } catch (e) {
+              resolveLygia = null;
+            }
+        } catch (e) {
+          try {
+            const cdnUrl = 'https://lygia.xyz/resolve.esm.js';
+            const mod = await import(/* @vite-ignore */ cdnUrl);
+            resolveLygia = (mod && (mod.default || mod.resolveLygia || mod.resolve) ) ? (mod.default || mod.resolveLygia || mod.resolve) : null;
+          } catch (e2) {
+            resolveLygia = null;
+          }
+        }
+      }
+
+      const totalTexels = size * size;
+      const posArray = new Float32Array(totalTexels * 4);
+      const velArrayInit = new Float32Array(totalTexels * 4);
+      const tempMat = new THREE.Matrix4();
+      for (let i = 0; i < RIDE_CONFIG.PARTICLE_COUNT; i++) {
+        const ti = i * 4;
+        let px = 0, py = -9999, pz = 0, sp = 0;
+        try {
+          if (instancedMesh) {
+            instancedMesh.getMatrixAt(i, tempMat);
+            const e = tempMat.elements;
+            px = e[12];
+            py = e[13];
+            pz = e[14];
+          }
+          if (instancedMesh && (instancedMesh.geometry as any).getAttribute('instanceSpeed')) {
+            const spAttr = (instancedMesh.geometry as any).getAttribute('instanceSpeed');
+            sp = spAttr.array[i] || 0;
+          }
+        } catch (e) {}
+        posArray[ti + 0] = px; posArray[ti + 1] = py; posArray[ti + 2] = pz; posArray[ti + 3] = 1.0;
+        velArrayInit[ti + 0] = sp; velArrayInit[ti + 1] = 0; velArrayInit[ti + 2] = 0; velArrayInit[ti + 3] = 0;
+      }
+
+      const posTexture = new THREE.DataTexture(posArray, size, size, THREE.RGBAFormat, THREE.FloatType);
+      posTexture.needsUpdate = true;
+      for (let i = 0; i < totalTexels; i++) { velArrayInit[i*4 + 0] = 0; velArrayInit[i*4 + 1] = 0; velArrayInit[i*4 + 2] = 0; velArrayInit[i*4 + 3] = 0; }
+      const velTexture = new THREE.DataTexture(velArrayInit, size, size, THREE.RGBAFormat, THREE.FloatType);
+      velTexture.needsUpdate = true;
+
+      this.gpuQuadScene = new THREE.Scene();
+      this.gpuQuadCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+      const baseVelInline = `
+              precision highp float; varying vec2 vUv;
+              uniform sampler2D prevVel; uniform sampler2D prevPos; uniform float dt; uniform float time;
+        uniform float audioForce; uniform float subBass; uniform float bass; uniform float lowMid; uniform float mid; uniform float highMid; uniform float treble; uniform float sparkle;
+              vec3 hash3(vec2 p) {
+                vec3 q = vec3( dot(p,vec2(127.1,311.7)), dot(p,vec2(269.5,183.3)), dot(p,vec2(419.2,371.9)) );
+                return fract(sin(q) * 43758.5453);
+              }
+              float noise(vec2 p) {
+                vec2 i = floor(p); vec2 f = fract(p);
+                vec3 a = hash3(i + vec2(0.0,0.0));
+                vec3 b = hash3(i + vec2(1.0,0.0));
+                vec3 c = hash3(i + vec2(0.0,1.0));
+                vec3 d = hash3(i + vec2(1.0,1.0));
+                vec2 u = f*f*(3.0-2.0*f);
+                return mix(mix(a.x,b.x,u.x), mix(c.x,d.x,u.x), u.y);
+              }
+              uniform float noiseScale;
+              uniform float noiseSpeed;
+              uniform float curlStrength;
+              vec3 curlNoise(vec3 p){
+                float n1 = noise(p.xy * noiseScale + time * noiseSpeed);
+                float n2 = noise(p.yz * noiseScale + time * noiseSpeed * 1.1);
+                float n3 = noise(p.zx * noiseScale + time * noiseSpeed * 0.95);
+                return normalize(vec3(n2 - n3, n3 - n1, n1 - n2));
+              }
+              void main(){
+                vec3 v = texture2D(prevVel, vUv).rgb;
+                vec3 p = texture2D(prevPos, vUv).rgb;
+                vec3 accel = vec3(0.0, -0.98, 0.0);
+                v += accel * dt;
+                  float bandPulse = clamp((sin(time*10.0 + vUv.x*50.0) * 0.5 + 0.5), 0.0, 1.0);
+                  float audio = bandPulse * audioForce;
+                  audio += subBass * 3.0;
+                  audio += bass * 2.0;
+                  audio += lowMid * 1.4;
+                  audio += mid * 1.2;
+                  audio += highMid * 1.0;
+                  audio += treble * 0.8;
+                  audio += sparkle * 0.6;
+                  v.y += audio * 2.5;
+                  vec3 c = curlNoise(p + v * 0.5);
+                  v += c * curlStrength * (0.5 + bass);
+                v *= 0.995;
+                gl_FragColor = vec4(v, 1.0);
+              }
+            `;
+
+      if (!baseVelFrag) baseVelFrag = baseVelInline;
+
+      if (preResolvedVel && preResolvedVel.includes('#include')) {
+        preResolvedVel = null;
+      }
+      if (preResolvedVel) {
+        const requiredUniforms = ['subBass', 'lowMid', 'highMid', 'sparkle'];
+        const missingUniform = requiredUniforms.some((name) => !new RegExp(`uniform\\s+float\\s+${name}\\b`).test(preResolvedVel!));
+        if (missingUniform) {
+          console.warn('[GPU Particles] Resolved velocity shader missing expected audio uniforms; falling back to base shader.');
+          preResolvedVel = null;
+        }
+      }
+      if (preResolvedPos && preResolvedPos.includes('#include')) {
+        preResolvedPos = null;
+      }
+
+      let velFragSrc = baseVelFrag;
+      if (preResolvedVel) {
+        velFragSrc = preResolvedVel;
+      } else if (resolveLygia) {
+        try {
+          const header = '#include "lygia/generative/simplex.glsl"\n#include "lygia/generative/curl.glsl"\n#include "lygia/color/palettes.glsl"\n';
+          const resolved = resolveLygia(header + baseVelFrag);
+          if (typeof resolved === 'string' && resolved.length > 32 && !resolved.includes('Path ') && !resolved.toLowerCase().includes('not found') && (resolved.includes('void main') || resolved.includes('gl_FragColor') || resolved.includes('gl_FragData'))) {
+            velFragSrc = resolved;
+          } else {
+            velFragSrc = baseVelFrag;
+          }
+        } catch (e) {
+          velFragSrc = baseVelFrag;
+        }
+      }
+      const velShader = new THREE.ShaderMaterial({
+        uniforms: {
+          prevVel: { value: velTexture },
+          prevPos: { value: posTexture },
+          audioForce: { value: 0 },
+          curlStrength: { value: curlParams.curlStrength },
+          noiseScale: { value: curlParams.noiseScale },
+          noiseSpeed: { value: curlParams.noiseSpeed },
+          subBass: { value: 0.0 },
+          bass: { value: 0.0 },
+          lowMid: { value: 0.0 },
+          mid: { value: 0.0 },
+          highMid: { value: 0.0 },
+          treble: { value: 0.0 },
+          sparkle: { value: 0.0 },
+          time: { value: 0 },
+          dt: { value: 1/60 },
+          texSize: { value: size },
+        },
+        vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position,1.0); }`,
+        fragmentShader: velFragSrc,
+        depthTest: false, depthWrite: false
+      });
+
+      const basePosInline = `
+              precision highp float; varying vec2 vUv;
+              uniform sampler2D prevPos; uniform sampler2D velTex; uniform float dt;
+              void main(){
+                vec3 p = texture2D(prevPos, vUv).rgb;
+                vec3 v = texture2D(velTex, vUv).rgb;
+                p += v * dt;
+                if (p.y < -100.0) p.y = -9999.0;
+                gl_FragColor = vec4(p, 1.0);
+              }
+            `;
+      if (!basePosFrag) basePosFrag = basePosInline;
+
+      let posFragSrc = basePosFrag;
+      if (preResolvedPos) {
+        posFragSrc = preResolvedPos;
+      } else if (resolveLygia) {
+        try {
+          const header = '#include "lygia/generative/simplex.glsl"\n';
+          const resolvedPos = resolveLygia(header + basePosFrag);
+          if (typeof resolvedPos === 'string' && resolvedPos.length > 32 && !resolvedPos.includes('Path ') && !resolvedPos.toLowerCase().includes('not found') && (resolvedPos.includes('void main') || resolvedPos.includes('gl_FragColor') || resolvedPos.includes('gl_FragData'))) {
+            posFragSrc = resolvedPos;
+          } else {
+            posFragSrc = basePosFrag;
+          }
+        } catch (e) {
+          posFragSrc = basePosFrag;
+        }
+      }
+
+      const posShader = new THREE.ShaderMaterial({
+        uniforms: {
+          prevPos: { value: posTexture },
+          velTex: { value: velTexture },
+          dt: { value: 1/60 },
+          texSize: { value: size },
+        },
+        vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position,1.0); }`,
+        fragmentShader: posFragSrc,
+        depthTest: false, depthWrite: false
+      });
+
+      this.gpuVelMaterial = velShader;
+      this.gpuPosMaterial = posShader;
+      this.gpuVelQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.gpuVelMaterial);
+      this.gpuPosQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.gpuPosMaterial);
+      this.gpuVelQuad.visible = false;
+      this.gpuPosQuad.visible = false;
+      this.gpuQuadScene.add(this.gpuVelQuad);
+      this.gpuQuadScene.add(this.gpuPosQuad);
+
+      const rtParams: any = { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, type: THREE.FloatType, format: THREE.RGBAFormat };
+      this.gpuVelRTA = new THREE.WebGLRenderTarget(size, size, rtParams);
+      this.gpuVelRTB = new THREE.WebGLRenderTarget(size, size, rtParams);
+      this.gpuPosRTA = new THREE.WebGLRenderTarget(size, size, rtParams);
+      this.gpuPosRTB = new THREE.WebGLRenderTarget(size, size, rtParams);
+
+      (this.gpuVelMaterial as any).uniforms.prevVel.value = velTexture;
+      (this.gpuVelMaterial as any).uniforms.prevPos.value = posTexture;
+      renderer.setRenderTarget(this.gpuVelRTA);
+      renderer.render(this.gpuQuadScene, this.gpuQuadCamera);
+      renderer.setRenderTarget(null);
+      (this.gpuPosMaterial as any).uniforms.prevPos.value = posTexture;
+      (this.gpuPosMaterial as any).uniforms.velTex.value = velTexture;
+      renderer.setRenderTarget(this.gpuPosRTA);
+      renderer.render(this.gpuQuadScene, this.gpuQuadCamera);
+      renderer.setRenderTarget(null);
+
+      this.gpuSwap = false;
+      this.gpuEnabled = true;
+    } catch (e) {
+      const ri = this.detectRenderer();
+      console.error(`[GPU Particles] Failed to initialize GPU particle system. renderer=${ri.renderer}, vendor=${ri.vendor}`, e);
+      this.gpuEnabled = false;
+      this.switchToFallback();
+    }
+  }
+
+  public updateGPU(deltaSeconds: number, params: GPUUpdateParams) {
+    if (!this.gpuEnabled || !this.gpuRenderer || !this.gpuQuadScene || !this.gpuQuadCamera) return;
+    const instancedMesh = this.particleInstancedMesh;
+    if (!instancedMesh) return;
+    try {
+      const size = (this.gpuPosRTA as THREE.WebGLRenderTarget).width;
+      const readPos = this.gpuSwap ? this.gpuPosRTB : this.gpuPosRTA;
+      const readVel = this.gpuSwap ? this.gpuVelRTB : this.gpuVelRTA;
+      const writeVel = this.gpuSwap ? this.gpuVelRTA : this.gpuVelRTB;
+      const writePos = this.gpuSwap ? this.gpuPosRTA : this.gpuPosRTB;
+
+      try {
+        const velMat = this.gpuVelMaterial as any;
+        velMat.uniforms.time.value = performance.now() / 1000;
+        velMat.uniforms.dt.value = deltaSeconds;
+        velMat.uniforms.texSize.value = size;
+        velMat.uniforms.prevVel.value = readVel!.texture;
+        velMat.uniforms.prevPos.value = readPos!.texture;
+        const boost = params.segmentIntensityBoost;
+        velMat.uniforms.subBass.value = (params.audioFeatures.subBass || 0.0) * boost;
+        velMat.uniforms.bass.value = (params.audioFeatures.bass || 0.0) * boost;
+        velMat.uniforms.lowMid.value = (params.audioFeatures.lowMid || 0.0) * boost;
+        velMat.uniforms.mid.value = (params.audioFeatures.mid || 0.0) * boost;
+        velMat.uniforms.highMid.value = (params.audioFeatures.highMid || 0.0) * boost;
+        velMat.uniforms.treble.value = (params.audioFeatures.treble || 0.0) * boost;
+        velMat.uniforms.sparkle.value = (params.audioFeatures.sparkle || 0.0) * boost;
+        velMat.uniforms.audioForce.value = params.gpuAudioForce || 0.0;
+        velMat.uniforms.curlStrength.value = params.curlStrength;
+        velMat.uniforms.noiseScale.value = params.noiseScale;
+        velMat.uniforms.noiseSpeed.value = params.noiseSpeed;
+      } catch (e) {}
+      this.gpuVelQuad!.visible = true;
+      this.gpuRenderer!.setRenderTarget(writeVel!);
+      this.gpuRenderer!.render(this.gpuQuadScene!, this.gpuQuadCamera!);
+      this.gpuVelQuad!.visible = false;
+
+      try {
+        const posMat = this.gpuPosMaterial as any;
+        posMat.uniforms.dt.value = deltaSeconds;
+        posMat.uniforms.prevPos.value = readPos!.texture;
+        posMat.uniforms.velTex.value = writeVel!.texture;
+      } catch (e) {}
+
+      this.gpuPosQuad!.visible = true;
+      this.gpuRenderer!.setRenderTarget(writePos!);
+      this.gpuRenderer!.render(this.gpuQuadScene!, this.gpuQuadCamera!);
+      this.gpuPosQuad!.visible = false;
+
+      this.gpuRenderer!.setRenderTarget(null);
+
+      const latestPos = writePos!;
+      try {
+        const shaderMat = instancedMesh.material as any;
+        shaderMat.uniforms.posTex.value = latestPos.texture;
+        shaderMat.uniforms.texSize.value = size;
+        shaderMat.needsUpdate = true;
+      } catch (e) {}
+
+      this.gpuSwap = !this.gpuSwap;
+    } catch (e) {
+      this.gpuEnabled = false;
+      this.switchToFallback();
     }
   }
 
