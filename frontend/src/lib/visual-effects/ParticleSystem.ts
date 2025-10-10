@@ -428,23 +428,30 @@ export class ParticleSystem {
       const posArray = new Float32Array(totalTexels * 4);
       const velArrayInit = new Float32Array(totalTexels * 4);
       const tempMat = new THREE.Matrix4();
+      const _pos = new THREE.Vector3();
+
       for (let i = 0; i < RIDE_CONFIG.PARTICLE_COUNT; i++) {
         const ti = i * 4;
-        let px = 0, py = -9999, pz = 0, sp = 0;
+        let sp = 0;
         try {
           if (instancedMesh) {
             instancedMesh.getMatrixAt(i, tempMat);
-            const e = tempMat.elements;
-            px = e[12];
-            py = e[13];
-            pz = e[14];
+            tempMat.multiplyMatrices(instancedMesh.matrixWorld, tempMat);
+            _pos.setFromMatrixPosition(tempMat);
+          } else {
+            _pos.set(0, -9999, 0);
           }
           if (instancedMesh && (instancedMesh.geometry as any).getAttribute('instanceSpeed')) {
             const spAttr = (instancedMesh.geometry as any).getAttribute('instanceSpeed');
             sp = spAttr.array[i] || 0;
           }
-        } catch (e) {}
-        posArray[ti + 0] = px; posArray[ti + 1] = py; posArray[ti + 2] = pz; posArray[ti + 3] = 1.0;
+        } catch (e) {
+          _pos.set(0, -9999, 0);
+        }
+        posArray[ti + 0] = _pos.x;
+        posArray[ti + 1] = _pos.y;
+        posArray[ti + 2] = _pos.z;
+        posArray[ti + 3] = 1.0;
         velArrayInit[ti + 0] = sp; velArrayInit[ti + 1] = 0; velArrayInit[ti + 2] = 0; velArrayInit[ti + 3] = 0;
       }
 
