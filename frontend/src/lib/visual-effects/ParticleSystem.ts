@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { RIDE_CONFIG } from 'shared/constants';
+import { getCachedShader, getCachedLygiaResolver } from '../preloader';
 
 export interface FeatureVisualConfig {
   color: [number, number, number];
@@ -27,6 +28,15 @@ export interface SpawnContext {
   audioFeatures: Record<string, number>;
   segmentIntensityBoost: number;
   nowSeconds: number;
+}
+
+export interface GPUUpdateParams {
+  audioFeatures: Record<string, number>;
+  segmentIntensityBoost: number;
+  gpuAudioForce: number;
+  curlStrength: number;
+  noiseScale: number;
+  noiseSpeed: number;
 }
 
 export class ParticleSystem {
@@ -102,6 +112,18 @@ export class ParticleSystem {
       ...cfg,
     };
     this.featureVisuals.set(featureName, defaultConfig);
+  }
+
+  public applyShaderUniform(name: string, value: unknown) {
+    if (!this.gpuEnabled) return;
+
+    const materials = [this.gpuVelMaterial, this.gpuPosMaterial];
+    for (const material of materials) {
+      const uniform = material?.uniforms?.[name];
+      if (uniform) {
+        uniform.value = value as never;
+      }
+    }
   }
 
   public driveReactiveParticles(params: DriveReactiveParticlesParams, trackPulse: number): number {

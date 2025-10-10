@@ -93,11 +93,33 @@ export class VisualEffects {
   }
 
   private updateColorUniformSafe(uniform: THREE.IUniform, newColor: THREE.Color, epsilon = 1e-3): boolean {
-    if (uniform && uniform.value && uniform.value.distanceTo(newColor) > epsilon) {
-      uniform.value.copy(newColor);
-      return true;
+    if (!uniform || !uniform.value) {
+      return false;
     }
-    return false;
+
+  const value = uniform.value as THREE.Color | THREE.Vector3 | undefined;
+
+    if (value instanceof THREE.Color) {
+      if (!value.equals(newColor)) {
+        value.copy(newColor);
+        return true;
+      }
+      return false;
+    }
+
+    if (value instanceof THREE.Vector3) {
+      const dr = Math.abs(value.x - newColor.r);
+      const dg = Math.abs(value.y - newColor.g);
+      const db = Math.abs(value.z - newColor.b);
+      if (dr > epsilon || dg > epsilon || db > epsilon) {
+        value.set(newColor.r, newColor.g, newColor.b);
+        return true;
+      }
+      return false;
+    }
+
+    uniform.value = newColor.clone();
+    return true;
   }
 
   constructor(scene: THREE.Scene, trackData: TrackData, camera: THREE.Camera) {
@@ -120,7 +142,7 @@ export class VisualEffects {
     this.trackTintA = this.baseRailColor.clone().lerp(this.baseGhostTintA, 0.5);
     this.trackTintB = this.baseEmissiveColor.clone().lerp(this.baseGhostTintB, 0.6);
 
-    const n = trackData.segmentDetails?.length ?? trackData.segments?.length ?? 0;
+  const n = trackData.segmentDetails?.length ?? 0;
     this.segmentProgress = this.ensureSegmentMidpoints(
       trackData.segmentProgress,
       trackData.segmentDetails,
@@ -536,6 +558,17 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
       this.noiseSpeed = value;
     }
     this.particles.applyShaderUniform(name, value);
+  }
+
+  public setShaderUniformsFromManifest(manifest: Record<string, any>) {
+    if (!manifest || typeof manifest !== 'object') return;
+    for (const [name, entry] of Object.entries(manifest)) {
+      if (!entry) continue;
+      const value = (entry as any).value ?? (entry as any).defaultValue;
+      if (value !== undefined) {
+        this.applyShaderUniform(name, value);
+      }
+    }
   }
 
   private applyLOD(mode: 'low' | 'high') {

@@ -118,6 +118,8 @@ export interface SegmentDetail {
   lightingEffect?: string;
   environmentChange?: string;
   audioSyncPoint?: Seconds;
+  start?: Seconds;
+  end?: Seconds;
 }
 
 export interface TrackData {

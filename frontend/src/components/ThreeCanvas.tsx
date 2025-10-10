@@ -61,7 +61,7 @@ const ThreeCanvas: React.FC = () => {
 
     rideCameraRef.current = new RideCamera(sceneManager.camera, trackData);
     console.log('[ThreeCanvas] RideCamera created');
-    visualEffectsRef.current = new VisualEffects(sceneManager.scene, trackData);
+  visualEffectsRef.current = new VisualEffects(sceneManager.scene, trackData, sceneManager.camera);
     console.log('[ThreeCanvas] VisualEffects created');
     gpuInitRequestedRef.current = false;
     const renderer = sceneManager.renderer;

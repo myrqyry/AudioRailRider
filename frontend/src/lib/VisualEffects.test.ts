@@ -5,11 +5,13 @@ import { TrackData, seconds } from 'shared/types';
 
 describe('VisualEffects', () => {
   let scene: THREE.Scene;
+  let camera: THREE.PerspectiveCamera;
   let trackData: TrackData;
   let visualEffects: VisualEffects;
 
   beforeEach(() => {
     scene = new THREE.Scene();
+    camera = new THREE.PerspectiveCamera();
     trackData = {
       path: [new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -10)],
       upVectors: [new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 1, 0)],
@@ -31,7 +33,7 @@ describe('VisualEffects', () => {
         frameAnalyses: [],
       },
     };
-    visualEffects = new VisualEffects(scene, trackData);
+    visualEffects = new VisualEffects(scene, trackData, camera);
   });
 
   it('should set updateRange correctly when not wrapping around', () => {
