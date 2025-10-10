@@ -320,7 +320,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
   public update(elapsedTime: number, currentFrame: FrameAnalysis | null, cameraPosition: THREE.Vector3, lookAtPosition: THREE.Vector3, rideProgress: number) {
     const now = performance.now();
     const nowSeconds = now / 1000;
-    const deltaSeconds = this.lastUpdateSeconds === 0 ? 1 / 60 : Math.min(0.25, Math.max(0, nowSeconds - this.lastUpdateSeconds));
+    const deltaSeconds = this.lastUpdateSeconds === 0 ? 1 / 60 : Math.min(0.25, Math.max(1/240, nowSeconds - this.lastUpdateSeconds));
     this.lastUpdateSeconds = nowSeconds;
 
     const clampedProgress = THREE.MathUtils.clamp(rideProgress ?? 0, 0, 1);

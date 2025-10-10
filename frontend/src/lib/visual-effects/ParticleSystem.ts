@@ -295,6 +295,27 @@ export class ParticleSystem {
     return this.gpuEnabled;
   }
 
+  private validateParticleLayout(): boolean {
+    if (!this.particleInstancedMesh) return false;
+
+    const expectedCount = RIDE_CONFIG.PARTICLE_COUNT;
+    const actualCount = this.particleInstancedMesh.count;
+    const texSize = Math.ceil(Math.sqrt(expectedCount));
+    const texCapacity = texSize * texSize;
+
+    if (actualCount !== expectedCount) {
+      console.error(`[ParticleSystem] Instance count mismatch: expected ${expectedCount}, got ${actualCount}`);
+      return false;
+    }
+
+    if (texCapacity < expectedCount) {
+      console.error(`[ParticleSystem] Texture too small: ${texSize}x${texSize} (${texCapacity}) < ${expectedCount}`);
+      return false;
+    }
+
+    return true;
+  }
+
   private detectRenderer() {
     if (this.rendererInfo !== null) return this.rendererInfo;
     try {
@@ -315,38 +336,71 @@ export class ParticleSystem {
     }
   }
 
+  private validateFloatRenderTargets(renderer: THREE.WebGLRenderer): boolean {
+    const gl = renderer.getContext();
+    const isWebGL2 = typeof WebGL2RenderingContext !== 'undefined' && gl instanceof WebGL2RenderingContext;
+    if (!isWebGL2) {
+      console.warn('[GPU Particles] WebGL2 is not available.');
+      return false;
+    }
+
+    const hasFloatExt = gl.getExtension('EXT_color_buffer_float');
+    if (!hasFloatExt) {
+      console.warn('[GPU Particles] EXT_color_buffer_float extension is not available.');
+      return false;
+    }
+
+    // Test actual renderability
+    const testRT = new THREE.WebGLRenderTarget(1, 1, {
+      format: THREE.RGBAFormat,
+      type: THREE.FloatType
+    });
+
+    try {
+      renderer.setRenderTarget(testRT);
+      const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+      renderer.setRenderTarget(null);
+      testRT.dispose();
+      const isComplete = status === gl.FRAMEBUFFER_COMPLETE;
+      if (!isComplete) {
+        console.warn(`[GPU Particles] Float render target framebuffer check failed with status: ${status}.`);
+      }
+      return isComplete;
+    } catch (e) {
+      console.error('[GPU Particles] Error during float render target validation:', e);
+      testRT.dispose();
+      return false;
+    }
+  }
+
   private disposeGPU() {
-    if (this.gpuVelRTA) {
-      this.gpuVelRTA.dispose();
-      this.gpuVelRTA = null;
-    }
-    if (this.gpuVelRTB) {
-      this.gpuVelRTB.dispose();
-      this.gpuVelRTB = null;
-    }
-    if (this.gpuPosRTA) {
-      this.gpuPosRTA.dispose();
-      this.gpuPosRTA = null;
-    }
-    if (this.gpuPosRTB) {
-      this.gpuPosRTB.dispose();
-      this.gpuPosRTB = null;
-    }
-    if (this.gpuVelMaterial) {
-      this.gpuVelMaterial.dispose();
-      this.gpuVelMaterial = null;
-    }
-    if (this.gpuPosMaterial) {
-      this.gpuPosMaterial.dispose();
-      this.gpuPosMaterial = null;
-    }
+    // Render targets
+    if (this.gpuPosRTA) { this.gpuPosRTA.dispose(); this.gpuPosRTA = null; }
+    if (this.gpuPosRTB) { this.gpuPosRTB.dispose(); this.gpuPosRTB = null; }
+    if (this.gpuVelRTA) { this.gpuVelRTA.dispose(); this.gpuVelRTA = null; }
+    if (this.gpuVelRTB) { this.gpuVelRTB.dispose(); this.gpuVelRTB = null; }
+
+    // Materials
+    if (this.gpuVelMaterial) { this.gpuVelMaterial.dispose(); this.gpuVelMaterial = null; }
+    if (this.gpuPosMaterial) { this.gpuPosMaterial.dispose(); this.gpuPosMaterial = null; }
+
+    // Scene and camera
     if (this.gpuQuadScene) {
       this.gpuQuadScene.clear();
       this.gpuQuadScene = null;
     }
-    this.gpuVelQuad = null;
-    this.gpuPosQuad = null;
-    this.gpuQuadCamera = null;
+    if (this.gpuQuadCamera) { this.gpuQuadCamera = null; }
+
+    // Quad meshes
+    if (this.gpuVelQuad) {
+      this.gpuVelQuad.geometry.dispose();
+      this.gpuVelQuad = null;
+    }
+    if (this.gpuPosQuad) {
+      this.gpuPosQuad.geometry.dispose();
+      this.gpuPosQuad = null;
+    }
+
     this.gpuRenderer = null;
     this.gpuEnabled = false;
   }
@@ -357,14 +411,9 @@ export class ParticleSystem {
       console.log('[GPU Particles] No instanced mesh available, skipping GPU init.');
       return;
     }
-    const capabilities = renderer.capabilities;
-    const extensions = renderer.extensions;
-
-    const supportsFloatRT = capabilities.isWebGL2 && (
-      extensions.has('EXT_color_buffer_float') || extensions.has('WEBGL_color_buffer_float')
-    );
-    if (!supportsFloatRT) {
-      console.warn('[GPU Particles] GPU particle system requires WebGL2 + float render-target support. Falling back to CPU particles.');
+    if (!this.validateFloatRenderTargets(renderer)) {
+      const ri = this.detectRenderer();
+      console.warn(`[GPU Particles] GPU particle system requires WebGL2 + float render-target support. Falling back to CPU particles. renderer=${ri.renderer}, vendor=${ri.vendor}`);
       this.switchToFallback();
       return;
     }
@@ -651,6 +700,14 @@ export class ParticleSystem {
     if (!this.gpuEnabled || !this.gpuRenderer || !this.gpuQuadScene || !this.gpuQuadCamera) return;
     const instancedMesh = this.particleInstancedMesh;
     if (!instancedMesh) return;
+
+    // Quick sanity check (development builds only)
+    if (process.env.NODE_ENV === 'development') {
+      const maxSafeId = this.texSize * this.texSize - 1;
+      if (this.particleInstancedMesh.count > maxSafeId + 1) {
+        console.warn(`[ParticleSystem] Particle count ${this.particleInstancedMesh.count} exceeds texture capacity ${maxSafeId + 1}`);
+      }
+    }
     try {
       const size = (this.gpuPosRTA as THREE.WebGLRenderTarget).width;
       const readPos = this.gpuSwap ? this.gpuPosRTB : this.gpuPosRTA;
@@ -817,6 +874,7 @@ export class ParticleSystem {
       this.particleInstancedMesh.matrixAutoUpdate = false;
       this.particleInstancedMesh.matrix.identity();
       this.scene.add(this.particleInstancedMesh);
+      this.validateParticleLayout();
     } catch (e) {
       // instancing unavailable; fall back to Points
     }
