@@ -2,14 +2,7 @@ import * as THREE from 'three';
 import { TrackData, FrameAnalysis, SegmentDetail, TimelineEvent, secondsToNumber } from 'shared/types';
 import { RIDE_CONFIG } from 'shared/constants';
 import { getCachedShader, getCachedLygiaResolver } from './preloader';
-
-interface FeatureVisualConfig {
-  color: [number, number, number];
-  sensitivity: number;
-  size: number; // base size multiplier
-  lifetime: number; // base lifetime in seconds
-  behavior: 'burst' | 'trail' | 'flow'; // for future use
-}
+import { ParticleSystem, FeatureVisualConfig } from './visual-effects/ParticleSystem';
 
 // --- Constants ---
 const BASS_GLOW_MIN = 0.3; // The baseline glow intensity
@@ -37,15 +30,7 @@ export class VisualEffects {
   private trackMaterial: THREE.MeshStandardMaterial;
   private ghostRibbonMesh: THREE.Mesh | null = null;
   private ghostRibbonMaterial: THREE.ShaderMaterial | null = null;
-  // Minimal particle system used by tests
-  private particleSystem: THREE.Points | null = null;
-  // Use InstancedMesh for higher particle counts when available
-  private particleInstancedMesh: THREE.InstancedMesh | null = null;
-  private particleCursor: number = 0;
-  // Instance pooling structures
-  private instanceFreeStack: number[] = [];
-  private instanceStartTimes: Float32Array | null = null; // per-instance spawn time
-  private instanceLifetimes: Float32Array | null = null; // per-instance lifetime
+  private particles: ParticleSystem;
   private targetGlowIntensity: number = BASS_GLOW_MIN;
   // Per-instance GPU attributes and GPU update state
   private gpuEnabled: boolean = false;
@@ -88,16 +73,6 @@ export class VisualEffects {
   private readonly _colorTmp = new THREE.Color();
   private readonly _colorTmp2 = new THREE.Color();
   private readonly _colorTmp3 = new THREE.Color();
-  // Per-feature visual configuration (color, sensitivity) used when spawning particles
-  private featureVisuals: Map<string, FeatureVisualConfig> = new Map([
-    ['subBass', { color: [1.0, 0.2, 0.1], sensitivity: 1.2, size: 2.5, lifetime: 3.5, behavior: 'flow' }],
-    ['bass', { color: [1.0, 0.4, 0.2], sensitivity: 1.0, size: 2.0, lifetime: 3.0, behavior: 'flow' }],
-    ['lowMid', { color: [0.2, 0.8, 1.0], sensitivity: 0.9, size: 1.2, lifetime: 2.5, behavior: 'burst' }],
-    ['mid', { color: [0.5, 1.0, 0.8], sensitivity: 0.8, size: 1.0, lifetime: 2.0, behavior: 'burst' }],
-    ['highMid', { color: [0.8, 1.0, 0.6], sensitivity: 0.7, size: 0.8, lifetime: 1.8, behavior: 'trail' }],
-    ['treble', { color: [1.0, 0.8, 0.8], sensitivity: 0.6, size: 0.6, lifetime: 1.5, behavior: 'trail' }],
-    ['sparkle', { color: [1.0, 1.0, 1.0], sensitivity: 0.65, size: 0.7, lifetime: 1.2, behavior: 'trail' }],
-  ]);
   private highQualityMode: boolean = true;
   private lastPerformanceCheck: number = 0;
   private frameCount: number = 0;
@@ -108,16 +83,8 @@ export class VisualEffects {
   // Track initialization to avoid false positive FPS warnings during GPU warmup
   private isWarmedUp: boolean = false;
   private firstUpdateTime: number = 0;
-  private featureCooldowns: Record<string, number> = {};
-  private ambientAccumulator: number = 0;
   private lastUpdateSeconds: number = 0;
   private trackPulse: number = 0;
-  private readonly _spawnOrigin = new THREE.Vector3();
-  private readonly _spawnForward = new THREE.Vector3();
-  private readonly _spawnRight = new THREE.Vector3();
-  private readonly _spawnUp = new THREE.Vector3();
-  private readonly _worldUp = new THREE.Vector3(0, 1, 0);
-  private readonly _spawnWork = new THREE.Vector3();
   
 
   constructor(scene: THREE.Scene, trackData: TrackData) {
@@ -273,199 +240,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
   this.ghostRibbonMaterial = this.createGhostRibbonMaterial();
   this.rebuildGhostRibbon(curve, segments);
 
-    // Create a minimal particle system with attribute arrays similar to runtime implementation
-    const particleCount = RIDE_CONFIG.PARTICLE_COUNT;
-
-  // Prefer instancing for better performance when many particles are present.
-    try {
-      const instanceGeo = new THREE.SphereGeometry(1, 6, 4);
-      const instanceMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-      this.particleInstancedMesh = new THREE.InstancedMesh(instanceGeo, instanceMat, particleCount);
-      this.particleInstancedMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      this.particleInstancedMesh.frustumCulled = false;
-      this.particleInstancedMesh.renderOrder = 10;
-      // Initialize instance matrices to identity and make them invisible initially
-      const dummy = new THREE.Object3D();
-      for (let i = 0; i < particleCount; i++) {
-        dummy.position.set(0, 0, 0);
-        dummy.scale.setScalar(0); // Use scale to hide instead of position
-        dummy.updateMatrix();
-        this.particleInstancedMesh.setMatrixAt(i, dummy.matrix);
-      }
-      // Initialize per-instance position/scale attributes to offscreen so
-      // the shader won't accidentally render any particles before they are
-      // explicitly spawned.
-      try {
-        const geo: any = this.particleInstancedMesh.geometry;
-        const posAttr = geo.getAttribute('instancePosition');
-        const scaleAttr = geo.getAttribute('instanceScale');
-        if (posAttr && scaleAttr) {
-          for (let i = 0; i < particleCount; i++) {
-            const bi = i * 3;
-            posAttr.array[bi + 0] = 0;
-            posAttr.array[bi + 1] = -9999;
-            posAttr.array[bi + 2] = 0;
-            scaleAttr.array[i] = 0;
-          }
-          posAttr.needsUpdate = true;
-          scaleAttr.needsUpdate = true;
-        }
-      } catch (e) {}
-      // Add per-instance attributes: color (vec3) and speed (float)
-      try {
-  const colors = new Float32Array(particleCount * 3);
-  const speeds = new Float32Array(particleCount);
-  const positionsAttrArray = new Float32Array(particleCount * 3);
-  const scalesAttrArray = new Float32Array(particleCount);
-  const colorAttr = new THREE.InstancedBufferAttribute(colors, 3);
-  const speedAttr = new THREE.InstancedBufferAttribute(speeds, 1);
-  const posAttr = new THREE.InstancedBufferAttribute(positionsAttrArray, 3);
-  const scaleAttr = new THREE.InstancedBufferAttribute(scalesAttrArray, 1);
-  (this.particleInstancedMesh.geometry as any).setAttribute('instanceColor', colorAttr);
-  (this.particleInstancedMesh.geometry as any).setAttribute('instanceSpeed', speedAttr);
-  // New attributes used as a robust, WebGL1-friendly fallback to instanceMatrix
-  // Many platforms/contexts struggle with attribute mat4; providing explicit
-  // per-instance position + scale attributes makes the instanced shader
-  // much more portable and easier to update from JS.
-  (this.particleInstancedMesh.geometry as any).setAttribute('instancePosition', posAttr);
-  (this.particleInstancedMesh.geometry as any).setAttribute('instanceScale', scaleAttr);
-
-        // Replace material with a lightweight instanced shader that samples a
-        // position texture when GPU path is enabled. It falls back to the
-        // basic instanceMatrix when no texture is provided.
-        const vert = `
-          attribute vec3 instancePosition;
-          attribute float instanceScale;
-          attribute vec3 instanceColor;
-          attribute float instanceSpeed;
-          attribute float instanceFeature;
-          uniform sampler2D posTex;
-          uniform float texSize;
-          varying vec3 vColor;
-          varying float vFeature;
-          varying vec3 vNormal;
-
-          vec3 sampleTexturePosition(float id, float dimension) {
-            float row = floor(id / dimension);
-            float col = mod(id, dimension);
-            vec2 uv = (vec2(col, row) + 0.5) / dimension;
-            return texture2D(posTex, uv).rgb;
-          }
-
-          void main() {
-            float fi = instanceFeature;
-            vFeature = fi;
-            float tint = 0.15 * (fi - 3.0);
-            vColor = instanceColor + vec3(tint, -tint * 0.2, tint * 0.1);
-
-            float id = float(gl_InstanceID);
-            vec3 center = instancePosition;
-            if (texSize > 0.5) {
-              // When a GPU position texture is provided we prefer it as the
-              // authoritative source of particle positions. Otherwise we fall
-              // back to per-instance attributes populated by JS.
-              center = sampleTexturePosition(id, texSize);
-            }
-
-            // Apply a simple uniform scale per-instance and translate the
-            // local vertex coordinates into world space. This avoids
-            // relying on attribute mat4 instanceMatrix which is fragile on
-            // some platforms and shader profiles.
-            float sc = max(0.0001, instanceScale);
-            vec3 localScaled = position * sc;
-            vec4 mvPosition = modelViewMatrix * vec4(localScaled + center, 1.0);
-            // Provide transformed normal for per-fragment shading
-            vNormal = normalize(normalMatrix * normal);
-            gl_Position = projectionMatrix * mvPosition;
-          }
-        `;
-        const frag = `
-          varying vec3 vColor;
-          varying float vFeature;
-          void main() {
-            // Simple rim-light-like shading to give particles more depth and
-            // improve perceived motion. Keep alpha at 1.0 because we use
-            // additive blending on top of the scene.
-            vec3 n = normalize(vNormal);
-            float rim = pow(1.0 - max(0.0, dot(n, vec3(0.0, 0.0, 1.0))), 2.0);
-            float brightness = 0.75 + rim * 0.8;
-            vec3 color = vColor * brightness;
-            // Slight per-feature desaturation to add visual variety
-            float desat = 1.0 - clamp((vFeature - 2.0) * 0.06, 0.0, 0.35);
-            color = mix(vec3(dot(color, vec3(0.333))), color, desat);
-            gl_FragColor = vec4(color, 1.0);
-          }
-        `;
-        const shaderMat = new THREE.ShaderMaterial({
-          uniforms: { posTex: { value: null }, texSize: { value: 0 } },
-          vertexShader: vert,
-          fragmentShader: frag,
-          transparent: true,
-          depthWrite: false,
-          depthTest: false,
-          blending: THREE.AdditiveBlending,
-        });
-        this.particleInstancedMesh.material = shaderMat as any;
-        // Ensure mesh world transform is identity; we handle positioning in shader
-        this.particleInstancedMesh.matrixAutoUpdate = false;
-        this.particleInstancedMesh.matrix.identity();
-      } catch (e) {
-        // If InstancedBufferAttribute isn't supported, continue without per-instance attributes
-      }
-        // Ensure instanceFeature attribute exists (maps to a feature index: 0=subBass,1=bass,2=lowMid,3=mid,4=highMid,5=treble,6=sparkle)
-      try {
-        const feat = new Float32Array(particleCount);
-        const featAttr = new THREE.InstancedBufferAttribute(feat, 1);
-        (this.particleInstancedMesh.geometry as any).setAttribute('instanceFeature', featAttr);
-      } catch (e) {}
-      this.scene.add(this.particleInstancedMesh);
-    } catch (e) {
-      // instancing failed; we'll fall back to Points below
-    }
-
-    // Always create the Points-based geometry and keep it on `this.particleSystem`
-    // so unit tests can access its attributes. We only add it to the scene if
-    // instancing isn't available (fallback case) to avoid double-rendering.
-    const positions = new Float32Array(particleCount * 3);
-    const velocities = new Float32Array(particleCount * 3);
-    const startTimes = new Float32Array(particleCount);
-
-    const geometryParticles = new THREE.BufferGeometry();
-    geometryParticles.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometryParticles.setAttribute('velocity', new THREE.BufferAttribute(velocities, 3));
-    geometryParticles.setAttribute('startTime', new THREE.BufferAttribute(startTimes, 1));
-
-    // Ensure updateRange shapes exist for tests
-    (geometryParticles.attributes.position as any).updateRange = { offset: 0, count: 0 };
-    (geometryParticles.attributes.velocity as any).updateRange = { offset: 0, count: 0 };
-    (geometryParticles.attributes.startTime as any).updateRange = { offset: 0, count: 0 };
-
-    this.particleSystem = new THREE.Points(
-      geometryParticles,
-      new THREE.PointsMaterial({
-        size: RIDE_CONFIG.PARTICLE_BASE_SIZE,
-        color: 0xffffff,
-        transparent: true,
-        depthWrite: false,
-        depthTest: false,
-        blending: THREE.AdditiveBlending,
-        sizeAttenuation: true,
-      })
-    );
-    // Add Points fallback only when instancing isn't available to avoid double-rendering
-    if (!this.particleInstancedMesh) this.scene.add(this.particleSystem);
-
-    // Initialize instance pool metadata if instanced mesh was created
-    if (this.particleInstancedMesh) {
-      this.instanceStartTimes = new Float32Array(particleCount);
-      this.instanceLifetimes = new Float32Array(particleCount);
-      // Push indices in reverse so allocateInstance() (pop) returns 0,1,2... order
-      for (let i = particleCount - 1; i >= 0; i--) {
-        this.instanceFreeStack.push(i);
-        this.instanceStartTimes[i] = 0;
-        this.instanceLifetimes[i] = 0;
-      }
-    }
+    this.particles = new ParticleSystem(this.scene);
 
     // Add an audio-reactive PointLight positioned near the camera to create
     // a subtle local glow that follows the listener and pulses with bass
@@ -505,7 +280,8 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     // Initialize GPU-based particle update buffer and shaders (optional).
     // Call this once when a WebGL renderer is available.
     public async initGPU(renderer: THREE.WebGLRenderer) {
-      if (!this.particleInstancedMesh) {
+      const instancedMesh = this.particles.instancedMesh;
+      if (!instancedMesh) {
         console.log('[GPU Particles] No instanced mesh available, skipping GPU init.');
         return;
       }
@@ -602,13 +378,13 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
           const ti = i * 4;
           let px = 0, py = -9999, pz = 0, sp = 0;
           try {
-            if (this.particleInstancedMesh) {
-              this.particleInstancedMesh.getMatrixAt(i, tempMat);
+            if (instancedMesh) {
+              instancedMesh.getMatrixAt(i, tempMat);
               const e = tempMat.elements;
               px = e[12]; py = e[13]; pz = e[14];
             }
-            if (this.particleInstancedMesh && (this.particleInstancedMesh.geometry as any).getAttribute('instanceSpeed')) {
-              const spAttr = (this.particleInstancedMesh.geometry as any).getAttribute('instanceSpeed');
+            if (instancedMesh && (instancedMesh.geometry as any).getAttribute('instanceSpeed')) {
+              const spAttr = (instancedMesh.geometry as any).getAttribute('instanceSpeed');
               sp = spAttr.array[i] || 0;
             }
           } catch (e) {}
@@ -686,6 +462,14 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
 
         if (preResolvedVel && preResolvedVel.includes('#include')) {
           preResolvedVel = null;
+        }
+        if (preResolvedVel) {
+          const requiredUniforms = ['subBass', 'lowMid', 'highMid', 'sparkle'];
+          const missingUniform = requiredUniforms.some((name) => !new RegExp(`uniform\\s+float\\s+${name}\\b`).test(preResolvedVel!));
+          if (missingUniform) {
+            console.warn('[GPU Particles] Resolved velocity shader missing expected audio uniforms; falling back to base shader.');
+            preResolvedVel = null;
+          }
         }
         if (preResolvedPos && preResolvedPos.includes('#include')) {
           preResolvedPos = null;
@@ -868,7 +652,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
         // update instanced shader to sample the latest position texture
         const latestPos = writePos!;
         try {
-          const shaderMat = this.particleInstancedMesh!.material as any;
+          const shaderMat = instancedMesh.material as any;
           shaderMat.uniforms.posTex.value = latestPos.texture;
           shaderMat.uniforms.texSize.value = size;
           shaderMat.needsUpdate = true;
@@ -878,6 +662,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
       } catch (e) {
         // on any failure, disable GPU path to avoid repeated errors
         this.gpuEnabled = false;
+        this.switchToFallbackParticles();
       }
     }
 
@@ -953,93 +738,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
    * Example: registerFeatureVisual('bass', { color: [1,0.5,0.3], sensitivity: 1.2, size: 2.0, lifetime: 3.0, behavior: 'flow' })
    */
   public registerFeatureVisual(featureName: string, cfg: Partial<FeatureVisualConfig>) {
-    const existing = this.featureVisuals.get(featureName);
-    if (existing) {
-      this.featureVisuals.set(featureName, { ...existing, ...cfg });
-    } else {
-      // If the feature doesn't exist, we should probably have some defaults
-      const defaultConfig: FeatureVisualConfig = {
-        color: [1, 1, 1],
-        sensitivity: 1,
-        size: 1,
-        lifetime: 2,
-        behavior: 'burst',
-        ...cfg,
-      };
-      this.featureVisuals.set(featureName, defaultConfig);
-    }
-  }
-
-  private driveAudioReactiveParticles(nowSeconds: number, deltaSeconds: number, cameraPosition: THREE.Vector3, lookAtPosition: THREE.Vector3) {
-    if (this.currentLOD === 'low') return;
-    if (!this.particleInstancedMesh && !this.particleSystem) return;
-
-    this._spawnForward.subVectors(lookAtPosition, cameraPosition);
-    if (this._spawnForward.lengthSq() < 1e-6) return;
-    this._spawnForward.normalize();
-
-    this._spawnRight.copy(this._spawnForward).cross(this._worldUp);
-    if (this._spawnRight.lengthSq() < 1e-6) {
-      this._spawnRight.set(1, 0, 0);
-    } else {
-      this._spawnRight.normalize();
-    }
-
-    this._spawnUp.copy(this._spawnRight).cross(this._spawnForward);
-    if (this._spawnUp.lengthSq() < 1e-6) {
-      this._spawnUp.copy(this._worldUp);
-    } else {
-      this._spawnUp.normalize();
-    }
-
-    this._spawnOrigin.copy(cameraPosition)
-      .addScaledVector(this._spawnForward, 8)
-      .addScaledVector(this._spawnUp, 2);
-
-    type FeatureName = Extract<keyof typeof this.audioFeatures, string>;
-    const triggers: Array<{ feature: FeatureName; threshold: number; cooldown: number; lateral: number; forward: number }> = [
-      { feature: 'bass' as FeatureName, threshold: 0.35, cooldown: 0.16, lateral: -2.8, forward: 0.5 },
-      { feature: 'mid' as FeatureName, threshold: 0.32, cooldown: 0.22, lateral: 2.8, forward: 1.8 },
-      { feature: 'treble' as FeatureName, threshold: 0.28, cooldown: 0.28, lateral: 0.4, forward: 3.8 },
-      { feature: 'sparkle' as FeatureName, threshold: 0.3, cooldown: 0.18, lateral: 0, forward: 0 },
-    ];
-
-    for (const trigger of triggers) {
-      const baseIntensity = this.audioFeatures[trigger.feature] ?? 0;
-      if (baseIntensity <= 0) continue;
-      const visualConfig = this.featureVisuals.get(trigger.feature);
-      if (!visualConfig) continue;
-
-      const sensitivity = visualConfig.sensitivity;
-      const scaled = Math.min(1, baseIntensity * sensitivity * this.segmentIntensityBoost);
-      if (scaled < trigger.threshold) continue;
-      const last = this.featureCooldowns[trigger.feature] ?? 0;
-      if (nowSeconds - last < trigger.cooldown) continue;
-
-      this._spawnWork.copy(this._spawnOrigin)
-        .addScaledVector(this._spawnRight, trigger.lateral + (Math.random() - 0.5) * 1.5)
-        .addScaledVector(this._spawnForward, trigger.forward + (Math.random() - 0.5) * 1.0);
-      this.spawnFeatureBurst(trigger.feature, scaled, this._spawnWork);
-      this.featureCooldowns[trigger.feature] = nowSeconds;
-      if (trigger.feature === 'bass' || trigger.feature === 'subBass') {
-        this.trackPulse = Math.min(1.5, this.trackPulse + scaled * 0.9);
-      } else {
-        this.trackPulse = Math.min(1.5, this.trackPulse + scaled * 0.45);
-      }
-    }
-
-    this.ambientAccumulator += deltaSeconds * (1.1 + this.gpuAudioForce * 0.8);
-    if (this.ambientAccumulator >= 0.45) {
-      const cycles = Math.max(1, Math.floor(this.ambientAccumulator / 0.45));
-      this.ambientAccumulator -= cycles * 0.45;
-      for (let i = 0; i < cycles; i++) {
-        this._spawnWork.copy(this._spawnOrigin)
-          .addScaledVector(this._spawnForward, 1.2 + (Math.random() - 0.5) * 1.5)
-          .addScaledVector(this._spawnRight, (Math.random() - 0.5) * 3.5);
-        this.spawnFeatureBurst('sparkle', 0.45 + Math.random() * 0.4, this._spawnWork);
-        this.trackPulse = Math.min(1.5, this.trackPulse + 0.25);
-      }
-    }
+    this.particles.registerFeatureVisual(featureName, cfg);
   }
 
     // Read back GPU particle positions and apply to instance matrices. This is
@@ -1054,40 +753,6 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     }
 
   // Allocate a free instance index or return -1 if none are available
-  private allocateInstance(): number {
-    if (!this.instanceFreeStack || this.instanceFreeStack.length === 0) return -1;
-    return this.instanceFreeStack.pop() as number;
-  }
-
-  // Free an instance index back to the pool
-  private freeInstance(idx: number) {
-    if (!this.instanceFreeStack) this.instanceFreeStack = [];
-    // mark lifetime as zero so it's considered free
-    if (this.instanceLifetimes) this.instanceLifetimes[idx] = 0;
-    if (this.instanceStartTimes) this.instanceStartTimes[idx] = 0;
-    this.instanceFreeStack.push(idx);
-    // Also clear any per-instance attributes so the shader no longer
-    // renders the freed instance (keep it offscreen / zero scale).
-    try {
-      if (this.particleInstancedMesh) {
-        const geo: any = this.particleInstancedMesh.geometry;
-        const posAttr = geo.getAttribute('instancePosition');
-        const scaleAttr = geo.getAttribute('instanceScale');
-        if (posAttr) {
-          const base = idx * 3;
-          posAttr.array[base + 0] = 0;
-          posAttr.array[base + 1] = -9999;
-          posAttr.array[base + 2] = 0;
-          posAttr.needsUpdate = true;
-        }
-        if (scaleAttr) {
-          scaleAttr.array[idx] = 0;
-          scaleAttr.needsUpdate = true;
-        }
-      }
-    } catch (e) {}
-  }
-
   /**
    * Updates the visual effects based on the current audio frame.
    * This is called from the main render loop in ThreeCanvas.
@@ -1204,7 +869,19 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
 
     this.trackPulse = Math.max(0, this.trackPulse - deltaSeconds * 1.4);
 
-    this.driveAudioReactiveParticles(nowSeconds, deltaSeconds, cameraPosition, lookAtPosition);
+    this.trackPulse = this.particles.driveReactiveParticles(
+      {
+        nowSeconds,
+        deltaSeconds,
+        cameraPosition,
+        lookAtPosition,
+        audioFeatures: this.audioFeatures,
+        segmentIntensityBoost: this.segmentIntensityBoost,
+        currentLOD: this.currentLOD,
+        gpuAudioForce: this.gpuAudioForce,
+      },
+      this.trackPulse
+    );
     // Trigger timeline events from blueprint (if any) based on ride progress/time
     try {
       const durationNum = (this.trackData && this.trackData.audioFeatures && typeof this.trackData.audioFeatures.duration === 'number')
@@ -1253,26 +930,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
       this.scene.fog.color.lerp(bass > 0.5 ? bassColor : defaultColor, 0.1);
     }
 
-    // Reclaim expired instances (simple lifetime model)
-    if (this.particleInstancedMesh && this.instanceStartTimes && this.instanceLifetimes) {
-      const dummy = new THREE.Object3D();
-      const count = this.particleInstancedMesh.count;
-      let reclaimed = 0;
-      for (let i = 0; i < count; i++) {
-        const start = this.instanceStartTimes[i];
-        const life = this.instanceLifetimes[i];
-        if (life > 0 && nowSeconds - start >= life) {
-          // Return to free stack and hide instance
-          this.freeInstance(i);
-          dummy.position.set(0, 0, 0);
-          dummy.scale.setScalar(0);
-          dummy.updateMatrix();
-          this.particleInstancedMesh.setMatrixAt(i, dummy.matrix);
-          reclaimed++;
-        }
-      }
-      if (reclaimed > 0) this.particleInstancedMesh.instanceMatrix.needsUpdate = true;
-    }
+    this.particles.reclaimExpired(nowSeconds);
 
     // Run GPU update pass if enabled
     if (this.gpuEnabled) {
@@ -1293,19 +951,12 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
       }
     } catch (e) {}
 
-    // Smoothly adjust Points fallback size to respond to bass without abrupt pops
-    try {
-      if (this.particleSystem) {
-        const mat = this.particleSystem.material as THREE.PointsMaterial;
-        const targetSize = RIDE_CONFIG.PARTICLE_BASE_SIZE * (1 + (this.audioFeatures.bass || 0) * 1.2);
-        mat.size = THREE.MathUtils.lerp(mat.size || RIDE_CONFIG.PARTICLE_BASE_SIZE, targetSize, 0.06);
-        // Slight hue shift on point material to enhance immersion
-        // (PointsMaterial stores color as Color; we tint toward current segment color)
-        const targetCol = this.segmentColorTarget.clone().lerp(this.baseRailColor, 0.5);
-        (mat.color as THREE.Color).lerp(targetCol, 0.02);
-        mat.needsUpdate = true;
-      }
-    } catch (e) {}
+    this.particles.updatePointsMaterial(
+      this.audioFeatures,
+      this.segmentIntensityBoost,
+      this.segmentColorTarget,
+      this.baseRailColor
+    );
   }
 
   // Allow external audio pipeline to push a force value (alternative to FrameAnalysis propagation)
@@ -1356,8 +1007,9 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
         (this.gpuPosMaterial as any).uniforms[name].value = value;
       }
       // Also apply to instanced particle shader if it uses uniforms
-      if (this.particleInstancedMesh && (this.particleInstancedMesh.material as any).uniforms && (this.particleInstancedMesh.material as any).uniforms[name] !== undefined) {
-        ((this.particleInstancedMesh.material as any).uniforms[name].value) = value;
+      const instancedMesh = this.particles.instancedMesh;
+      if (instancedMesh && (instancedMesh.material as any).uniforms && (instancedMesh.material as any).uniforms[name] !== undefined) {
+        ((instancedMesh.material as any).uniforms[name].value) = value;
       }
       // special case: curl params stored on the VisualEffects instance
       if (name === 'curlStrength' || name === 'noiseScale' || name === 'noiseSpeed') {
@@ -1378,200 +1030,19 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
   private applyLOD(mode: 'low' | 'high') {
     if (mode === this.currentLOD) return;
     this.currentLOD = mode;
-    if (mode === 'low') {
-      if (this.particleInstancedMesh) this.particleInstancedMesh.visible = false;
-      if (this.particleSystem && (this.particleSystem as any).parent !== this.scene) {
-        this.scene.add(this.particleSystem);
-      }
-      if (this.particleSystem) this.particleSystem.visible = true;
-    } else {
-      if (this.particleInstancedMesh) this.particleInstancedMesh.visible = true;
-      if (this.particleSystem && (this.particleSystem as any).parent === this.scene) {
-        this.scene.remove(this.particleSystem);
-      }
-      if (this.particleSystem) this.particleSystem.visible = false;
-    }
+    this.particles.applyLOD(mode);
   }
 
   // Minimal particle spawner to exercise updateRange logic in unit tests
   // spawnParticles: optional 'feature' selects which feature config to apply to spawned particles
   public spawnParticles(count: number, origin: THREE.Vector3, feature?: string) {
-    if (!this.particleSystem) return;
-    const geom = this.particleSystem.geometry as THREE.BufferGeometry;
-    const positions = geom.attributes.position as THREE.BufferAttribute;
-    const velocities = geom.attributes.velocity as THREE.BufferAttribute;
-    const startTimes = geom.attributes.startTime as THREE.BufferAttribute;
-
-    const particleCount = RIDE_CONFIG.PARTICLE_COUNT;
-    const spawnCount = count > 0 ? Math.min(count, RIDE_CONFIG.PARTICLE_SPAWN_COUNT) : RIDE_CONFIG.PARTICLE_SPAWN_COUNT;
-
-    const nowSeconds = performance.now() / 1000;
-
-    // If we're using InstancedMesh, set the instance matrices for spawned particles
-    if (this.particleInstancedMesh) {
-      // Also update the Points-based geometry's updateRange so unit tests that
-      // inspect those attributes remain compatible with the previous API.
-      const geom = this.particleSystem.geometry as THREE.BufferGeometry;
-      const positions = geom.attributes.position as any;
-      const velocities = geom.attributes.velocity as any;
-      const startTimes = geom.attributes.startTime as any;
-      const dummy = new THREE.Object3D();
-      // If we wrap around, mark full update by setting matrix usage to dynamic
-      if (this.particleCursor + spawnCount > particleCount) {
-        // Signal full update for Points geometry (tests expect count -1)
-        positions.updateRange = { offset: 0, count: -1 };
-        velocities.updateRange = { offset: 0, count: -1 };
-        startTimes.updateRange = { offset: 0, count: -1 };
-        // Move cursor and mark that next frame should update all instances
-        this.particleCursor = (this.particleCursor + spawnCount) % particleCount;
-        this.particleInstancedMesh.instanceMatrix.needsUpdate = true;
-        return;
-      }
-      // Allocate instances from free stack so we can reuse them
-      const allocated: number[] = [];
-      for (let i = 0; i < spawnCount; i++) {
-        const idx = this.allocateInstance();
-        if (idx === -1) break; // no free instances
-        allocated.push(idx);
-
-        const visualConfig = feature ? this.featureVisuals.get(feature) : undefined;
-        const featureIntensity = Math.min(1, (feature ? (this.audioFeatures[feature] || 0) : 0) * this.segmentIntensityBoost);
-
-        const jitter = 1.5 + featureIntensity * 2.0;
-        const px = origin.x + (Math.random() - 0.5) * jitter;
-        const py = origin.y + (Math.random() - 0.5) * jitter;
-        const pz = origin.z + (Math.random() - 0.5) * jitter;
-        dummy.position.set(px, py, pz);
-
-        const baseSize = RIDE_CONFIG.PARTICLE_BASE_SIZE * (visualConfig?.size ?? 1.0) * (0.7 + Math.random() * 0.6);
-        dummy.scale.setScalar(baseSize * (1 + featureIntensity * 1.2));
-        dummy.updateMatrix();
-        this.particleInstancedMesh.setMatrixAt(idx, dummy.matrix);
-
-        // mark start time and lifetime
-        if (this.instanceStartTimes && this.instanceLifetimes) {
-          this.instanceStartTimes[idx] = nowSeconds;
-          const baseLifetime = visualConfig?.lifetime ?? 1.5;
-          this.instanceLifetimes[idx] = baseLifetime + (Math.random() - 0.2) * baseLifetime * 0.5; // seconds
-        }
-
-        const pa = idx * 3;
-        positions.array[pa + 0] = px;
-        positions.array[pa + 1] = py;
-        positions.array[pa + 2] = pz;
-        velocities.array[pa + 0] = 0;
-        velocities.array[pa + 1] = 0;
-        velocities.array[pa + 2] = 0;
-        startTimes.array[idx] = nowSeconds;
-        // Set per-instance color and speed if attributes exist
-        try {
-          const geo: any = this.particleInstancedMesh.geometry;
-          const colorAttr = geo.getAttribute('instanceColor');
-          const speedAttr = geo.getAttribute('instanceSpeed');
-          const featAttr = geo.getAttribute('instanceFeature');
-          const posAttr = geo.getAttribute('instancePosition');
-          const scaleAttr = geo.getAttribute('instanceScale');
-          if (colorAttr) {
-            const ci = idx * 3;
-            // color influenced by feature config if provided
-            let col: [number, number, number] = [0.7, 0.7, 0.7];
-            if (visualConfig) {
-              col = visualConfig.color;
-              // modulate by feature intensity
-              const inten = Math.min(1, (feature ? this.audioFeatures[feature] || 0 : 0) * this.segmentIntensityBoost);
-              const brightness = 0.6 + 0.4 * inten;
-              col = [col[0] * brightness, col[1] * brightness, col[2] * brightness];
-            } else {
-              col = [0.6 + Math.random() * 0.4, 0.6 + Math.random() * 0.4, 0.6 + Math.random() * 0.4];
-            }
-            colorAttr.array[ci + 0] = col[0];
-            colorAttr.array[ci + 1] = col[1];
-            colorAttr.array[ci + 2] = col[2];
-            colorAttr.needsUpdate = true;
-          }
-          if (speedAttr) {
-            speedAttr.array[idx] = 0.5 + Math.random() * 2.0;
-            speedAttr.needsUpdate = true;
-          }
-          if (posAttr) {
-            posAttr.array[pa + 0] = px;
-            posAttr.array[pa + 1] = py;
-            posAttr.array[pa + 2] = pz;
-            posAttr.needsUpdate = true;
-          }
-          if (scaleAttr) {
-            // store a scale that the shader will use (sphere geometry is unit-sized)
-            scaleAttr.array[idx] = baseSize;
-            scaleAttr.needsUpdate = true;
-          }
-          if (featAttr) {
-            // choose feature index based on provided feature name
-            const featureIndex = feature === 'subBass' ? 0 : feature === 'bass' ? 1 : feature === 'lowMid' ? 2 : feature === 'mid' ? 3 : feature === 'highMid' ? 4 : feature === 'treble' ? 5 : feature === 'sparkle' ? 6 : 1;
-            featAttr.array[idx] = featureIndex;
-            featAttr.needsUpdate = true;
-          }
-        } catch (e) {
-          // ignore attribute setup failures
-        }
-      }
-      positions.needsUpdate = true;
-      velocities.needsUpdate = true;
-      startTimes.needsUpdate = true;
-      this.particleInstancedMesh.instanceMatrix.needsUpdate = true;
-      // Update Points geometry updateRange for tests (report allocated indices)
-      if (allocated.length > 0) {
-        const minIdx = Math.min(...allocated);
-        const posOffset = minIdx * 3;
-        positions.updateRange = { offset: posOffset, count: allocated.length * 3 };
-        velocities.updateRange = { offset: posOffset, count: allocated.length * 3 };
-        startTimes.updateRange = { offset: minIdx, count: allocated.length };
-      }
-      this.particleCursor = (this.particleCursor + allocated.length) % particleCount;
-      return;
-    }
-
-    // Fallback behavior for Points-based particle system (keeps tests compatible)
-    // If we wrap around, signal full buffer update by setting count to -1 as tests expect
-    if (this.particleCursor + spawnCount > particleCount) {
-      (positions as any).updateRange = { offset: 0, count: -1 };
-      (velocities as any).updateRange = { offset: 0, count: -1 };
-      (startTimes as any).updateRange = { offset: 0, count: -1 };
-      // also mark instancePosition/scale attributes for full update when using instancing
-      try {
-        if (this.particleInstancedMesh) {
-          const geo: any = this.particleInstancedMesh.geometry;
-          const posAttr = geo.getAttribute('instancePosition');
-          const scaleAttr = geo.getAttribute('instanceScale');
-          if (posAttr) posAttr.updateRange = { offset: 0, count: -1 };
-          if (scaleAttr) scaleAttr.updateRange = { offset: 0, count: -1 };
-        }
-      } catch (e) {}
-      this.particleCursor = (this.particleCursor + spawnCount) % particleCount;
-      return;
-    }
-
-    const posOffset = this.particleCursor * 3;
-    for (let i = 0; i < spawnCount; i++) {
-      const idx = this.particleCursor + i;
-      const offset = idx * 3;
-      const featureIntensity = Math.min(1, (feature ? (this.audioFeatures[feature] || 0) : 0) * this.segmentIntensityBoost);
-      const jitter = 1.5 + featureIntensity * 2.0;
-      positions.array[offset + 0] = origin.x + (Math.random() - 0.5) * jitter;
-      positions.array[offset + 1] = origin.y + (Math.random() - 0.5) * jitter;
-      positions.array[offset + 2] = origin.z + (Math.random() - 0.5) * jitter;
-      velocities.array[offset + 0] = 0;
-      velocities.array[offset + 1] = 0;
-      velocities.array[offset + 2] = 0;
-      startTimes.array[idx] = nowSeconds;
-    }
-    (positions as any).updateRange = { offset: posOffset, count: spawnCount * 3 };
-    (velocities as any).updateRange = { offset: posOffset, count: spawnCount * 3 };
-    (startTimes as any).updateRange = { offset: this.particleCursor, count: spawnCount };
-    (positions as any).needsUpdate = true;
-    (velocities as any).needsUpdate = true;
-    (startTimes as any).needsUpdate = true;
-
-    this.particleCursor += spawnCount;
+    this.particles.spawnParticles(count, {
+      origin,
+      feature,
+      audioFeatures: this.audioFeatures,
+      segmentIntensityBoost: this.segmentIntensityBoost,
+      nowSeconds: performance.now() / 1000,
+    });
   }
 
   /**
@@ -1579,9 +1050,14 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
    * intensity (0..1) scales number and size of particles.
    */
   public spawnFeatureBurst(featureName: string, intensity: number, origin: THREE.Vector3) {
-    const scaled = Math.max(0, Math.min(1, intensity));
-    const count = Math.max(1, Math.round(RIDE_CONFIG.PARTICLE_SPAWN_COUNT * (0.5 + scaled * 2.0)));
-    this.spawnParticles(count, origin, featureName);
+    this.particles.spawnFeatureBurst(
+      featureName,
+      intensity,
+      origin,
+      this.audioFeatures,
+      this.segmentIntensityBoost,
+      performance.now() / 1000
+    );
   }
 
   // Trigger timeline events when their timestamp occurs. currentAudioTime is
@@ -1589,6 +1065,15 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
   private handleTimelineEvents(currentAudioTime: number, deltaSeconds: number, cameraPosition: THREE.Vector3, lookAtPosition: THREE.Vector3) {
     if (!this.timelineEvents || !this.timelineEvents.length) return;
     const now = currentAudioTime;
+    const forward = new THREE.Vector3().subVectors(lookAtPosition, cameraPosition);
+    if (forward.lengthSq() < 1e-6) return;
+    forward.normalize();
+    const right = new THREE.Vector3().copy(forward).cross(new THREE.Vector3(0, 1, 0));
+    if (right.lengthSq() < 1e-6) right.set(1, 0, 0);
+    else right.normalize();
+    const up = new THREE.Vector3().copy(right).cross(forward);
+    if (up.lengthSq() < 1e-6) up.set(0, 1, 0);
+    else up.normalize();
     for (let i = 0; i < this.timelineEvents.length; i++) {
       const ev = this.timelineEvents[i];
       if (!ev || typeof ev.timestamp !== 'number') continue;
@@ -1602,7 +1087,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
         try {
           // Compute an origin roughly in front of the camera for visual focus
           // Place event a few units ahead/up from the camera so it feels centered
-          const spawnPos = cameraPosition.clone().addScaledVector(this._spawnForward, 8).addScaledVector(this._spawnUp, 1.5);
+          const spawnPos = cameraPosition.clone().addScaledVector(forward, 8).addScaledVector(up, 1.5);
           this.spawnEvent(ev, intensity, spawnPos);
         } catch (e) {}
         // mark triggered until timestamp + duration + safety buffer
@@ -1807,18 +1292,7 @@ void main() {
   }
 
   private switchToFallbackParticles() {
-    console.warn('[VisualEffects] Switching to fallback particle system (THREE.Points).');
-    if (this.particleInstancedMesh) {
-      this.particleInstancedMesh.visible = false;
-    }
-    if (this.particleSystem) {
-      // Ensure it's in the scene. The constructor logic might have already added it.
-      if (!this.particleSystem.parent) {
-        this.scene.add(this.particleSystem);
-      }
-      this.particleSystem.visible = true;
-    }
-    // Disable GPU path to prevent further errors
+    this.particles.switchToFallback();
     this.gpuEnabled = false;
   }
 
@@ -1846,24 +1320,7 @@ void main() {
       this.ghostRibbonMaterial = null;
     }
 
-    if (this.particleInstancedMesh) {
-      try {
-        this.scene.remove(this.particleInstancedMesh);
-        this.particleInstancedMesh.geometry.dispose();
-        this.particleInstancedMesh.material.dispose();
-      } catch (e) {}
-      this.particleInstancedMesh = null;
-    }
-
-    if (this.particleSystem) {
-      try {
-        this.scene.remove(this.particleSystem);
-        const geom2 = this.particleSystem.geometry as THREE.BufferGeometry;
-        geom2.dispose();
-        (this.particleSystem.material as THREE.Material).dispose();
-      } catch (e) {}
-      this.particleSystem = null;
-    }
+    this.particles.dispose();
 
     // Remove audio-reactive light if it exists
     try {
