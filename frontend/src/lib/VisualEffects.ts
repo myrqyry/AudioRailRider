@@ -3,6 +3,9 @@ import { TrackData, FrameAnalysis, SegmentDetail, TimelineEvent, secondsToNumber
 import { RIDE_CONFIG } from 'shared/constants';
 import { ParticleSystem, FeatureVisualConfig, GPUUpdateParams } from './visual-effects/ParticleSystem';
 
+// --- Helpers ---
+const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+
 // --- Constants ---
 const BASS_GLOW_MIN = 0.3;
 const BASS_GLOW_MAX = 1.8;
@@ -82,16 +85,12 @@ export class VisualEffects {
     this.trackTintA = this.baseRailColor.clone().lerp(this.baseGhostTintA, 0.5);
     this.trackTintB = this.baseEmissiveColor.clone().lerp(this.baseGhostTintB, 0.6);
 
-    let derivedProgress = Array.isArray(trackData.segmentProgress) ? [...trackData.segmentProgress] : [];
-    const n = trackData.segmentDetails?.length || 0;
-    if (!derivedProgress || derivedProgress.length !== n) {
-      if (trackData.segmentDetails && trackData.segmentDetails.length === n && typeof trackData.segmentDetails[0]?.start === 'number' && typeof trackData.segmentDetails[0]?.end === 'number') {
-        derivedProgress = this.buildProgressFromSegmentDetails(trackData.segmentDetails);
-      } else {
-        derivedProgress = this.makeEqualSpacedMidpoints(n);
-      }
-    }
-    this.segmentProgress = derivedProgress;
+    const n = trackData.segmentDetails?.length ?? trackData.segments?.length ?? 0;
+    this.segmentProgress = this.ensureSegmentMidpoints(
+      trackData.segmentProgress,
+      trackData.segmentDetails,
+      n
+    );
 
     try {
       this.timelineEvents = Array.isArray((trackData as any).events) ? (trackData as any).events.slice() : [];
@@ -230,23 +229,41 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
   private makeEqualSpacedMidpoints(n: number): number[] {
     if (n <= 0) return [];
     if (n === 1) return [0.5];
-    const out = new Array(n);
+    const out = new Array<number>(n);
     for (let i = 0; i < n; i++) out[i] = (i + 0.5) / n;
     return out;
   }
 
-  private buildProgressFromSegmentDetails(details: { start: number; end: number }[]): number[] {
-    if (!details || details.length === 0) return [];
-    const n = details.length;
+  private buildMidpointsFromSegmentDetails(details: SegmentDetail[]): number[] {
+    const n = details?.length ?? 0;
+    if (n === 0) return [];
     const t0 = details[0].start;
-    const t1 = details[n - 1].end;
+    const t1 = details[n - 1].end ?? details[n - 1].start;
     const total = Math.max(1e-6, t1 - t0);
-    const out = new Array(n);
+    const out = new Array<number>(n);
     for (let i = 0; i < n; i++) {
-      const mid = 0.5 * (details[i].start + details[i].end);
-      out[i] = Math.min(1, Math.max(0, (mid - t0) / total));
+      const mid = 0.5 * ((details[i].start ?? t0) + (details[i].end ?? details[i].start ?? t0));
+      out[i] = clamp01((mid - t0) / total);
     }
     return out;
+  }
+
+  private ensureSegmentMidpoints(
+    derivedProgress: number[] | undefined,
+    details: SegmentDetail[] | undefined,
+    expectedCount: number
+  ): number[] {
+    const isValid =
+      Array.isArray(derivedProgress) &&
+      derivedProgress.length === expectedCount &&
+      derivedProgress.every((v) => Number.isFinite(v) && v >= 0 && v <= 1);
+
+    if (isValid) return derivedProgress as number[];
+
+    if (details && details.length === expectedCount) {
+      return this.buildMidpointsFromSegmentDetails(details);
+    }
+    return this.makeEqualSpacedMidpoints(expectedCount);
   }
 
   private deriveSegmentColor(detail?: SegmentDetail): THREE.Color {
