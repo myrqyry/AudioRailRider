@@ -30,6 +30,8 @@ export interface SpawnContext {
 }
 
 export class ParticleSystem {
+  private readonly _dummy = new THREE.Object3D();
+  private readonly _tempColor = new THREE.Color();
   private particleSystem: THREE.Points | null = null;
   private particleInstancedMesh: THREE.InstancedMesh | null = null;
   private particleCursor = 0;
@@ -207,7 +209,7 @@ export class ParticleSystem {
 
   public reclaimExpired(nowSeconds: number) {
     if (!this.particleInstancedMesh || !this.instanceStartTimes || !this.instanceLifetimes) return;
-    const dummy = new THREE.Object3D();
+    const dummy = this._dummy;
     const count = this.particleInstancedMesh.count;
     let reclaimed = 0;
     for (let i = 0; i < count; i++) {
@@ -232,7 +234,7 @@ export class ParticleSystem {
       const bass = audioFeatures.bass || 0;
       const targetSize = RIDE_CONFIG.PARTICLE_BASE_SIZE * (1 + bass * 1.2 * segmentIntensityBoost);
       mat.size = THREE.MathUtils.lerp(mat.size || RIDE_CONFIG.PARTICLE_BASE_SIZE, targetSize, 0.06);
-      const targetCol = segmentColorTarget.clone().lerp(baseRailColor, 0.5);
+      const targetCol = this._tempColor.copy(segmentColorTarget).lerp(baseRailColor, 0.5);
       (mat.color as THREE.Color).lerp(targetCol, 0.02);
       mat.needsUpdate = true;
     } catch (e) {
@@ -780,7 +782,7 @@ export class ParticleSystem {
       this.particleInstancedMesh.frustumCulled = false;
       this.particleInstancedMesh.renderOrder = 10;
 
-      const dummy = new THREE.Object3D();
+      const dummy = this._dummy;
       for (let i = 0; i < particleCount; i++) {
         dummy.position.set(0, 0, 0);
         dummy.scale.setScalar(0);
@@ -922,7 +924,7 @@ export class ParticleSystem {
     const positionsAttr = (this.particleSystem!.geometry as THREE.BufferGeometry).attributes.position as any;
     const velocitiesAttr = (this.particleSystem!.geometry as THREE.BufferGeometry).attributes.velocity as any;
     const startTimesAttr = (this.particleSystem!.geometry as THREE.BufferGeometry).attributes.startTime as any;
-    const dummy = new THREE.Object3D();
+    const dummy = this._dummy;
 
     if (this.particleCursor + spawnCount > particleCount) {
       positionsAttr.updateRange = { offset: 0, count: -1 };

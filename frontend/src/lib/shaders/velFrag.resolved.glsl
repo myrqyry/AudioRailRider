@@ -154,5 +154,13 @@ void main(){
     vec3 c = curlNoise(p + v * 0.5);
     v += c * curlStrength * (0.5 + bass);
   v *= 0.995; // damping
+
+  // Time-step safety: clamp velocity to prevent explosions from large dt
+  float vLen = length(v);
+  if (vLen > 1000.0) {
+    v = normalize(v) * 1000.0;
+  }
+  v = clamp(v, vec3(-1000.0), vec3(1000.0));
+
   gl_FragColor = vec4(v, 1.0);
 }
