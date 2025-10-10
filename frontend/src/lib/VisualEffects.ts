@@ -21,6 +21,7 @@ const TRACK_RADIUS = 0.9;
 const GHOST_RIBBON_RADIUS = 1.6;
 
 export class VisualEffects {
+  private static readonly UP_VECTOR = new THREE.Vector3(0, 1, 0);
   private scene: THREE.Scene;
   private camera: THREE.Camera;
   private trackData: TrackData;
@@ -64,6 +65,40 @@ export class VisualEffects {
   private firstUpdateTime: number = 0;
   private lastUpdateSeconds: number = 0;
   private trackPulse: number = 0;
+
+  // --- Object Pools ---
+  private readonly _vec3Pool = Array.from({length: 6}, () => new THREE.Vector3());
+  private readonly _colorPool = Array.from({length: 4}, () => new THREE.Color());
+  private _vec3PoolIndex = 0;
+  private _colorPoolIndex = 0;
+
+  private getTempVector3(): THREE.Vector3 {
+    const vec = this._vec3Pool[this._vec3PoolIndex];
+    this._vec3PoolIndex = (this._vec3PoolIndex + 1) % this._vec3Pool.length;
+    return vec.set(0, 0, 0);
+  }
+
+  private getTempColor(): THREE.Color {
+    const color = this._colorPool[this._colorPoolIndex];
+    this._colorPoolIndex = (this._colorPoolIndex + 1) % this._colorPool.length;
+    return color.setHex(0x000000);
+  }
+
+  private updateUniformSafe(uniform: THREE.IUniform, newValue: number, epsilon = 1e-3): boolean {
+    if (uniform && uniform.value !== undefined && Math.abs(uniform.value - newValue) > epsilon) {
+      uniform.value = newValue;
+      return true;
+    }
+    return false;
+  }
+
+  private updateColorUniformSafe(uniform: THREE.IUniform, newColor: THREE.Color, epsilon = 1e-3): boolean {
+    if (uniform && uniform.value && uniform.value.distanceTo(newColor) > epsilon) {
+      uniform.value.copy(newColor);
+      return true;
+    }
+    return false;
+  }
 
   constructor(scene: THREE.Scene, trackData: TrackData, camera: THREE.Camera) {
     this.scene = scene;
@@ -271,26 +306,23 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     const env = detail.environmentChange;
     if (typeof env === 'string' && env.trim().length > 0 && env.trim().toLowerCase() !== 'none') {
       try {
-        this._colorTmp.set(env);
+        const tempColor = this.getTempColor().set(env);
+        this._colorTmp.copy(tempColor);
         return this._colorTmp;
       } catch (e) {}
     }
     const effect = detail.lightingEffect?.toLowerCase() || '';
     if (effect.includes('warm') || effect.includes('ember') || effect.includes('sun') || effect.includes('fire')) {
-      this._colorTmp.set('#ff8a3d');
-      return this._colorTmp;
+      return this.getTempColor().set('#ff8a3d');
     }
     if (effect.includes('cool') || effect.includes('ice') || effect.includes('aqua') || effect.includes('ocean')) {
-      this._colorTmp.set('#4bb3ff');
-      return this._colorTmp;
+      return this.getTempColor().set('#4bb3ff');
     }
     if (effect.includes('storm') || effect.includes('night') || effect.includes('void') || effect.includes('nebula')) {
-      this._colorTmp.set('#6a5bff');
-      return this._colorTmp;
+      return this.getTempColor().set('#6a5bff');
     }
     if (effect.includes('forest') || effect.includes('nature') || effect.includes('lush') || effect.includes('earth')) {
-      this._colorTmp.set('#4caf50');
-      return this._colorTmp;
+      return this.getTempColor().set('#4caf50');
     }
     return this.baseEmissiveColor;
   }
@@ -412,50 +444,52 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
 
     if (this.trackShaderUniforms) {
       const uniforms = this.trackShaderUniforms;
-      uniforms.trackTime.value = elapsedTime;
-      uniforms.pulseIntensity.value = this.trackPulse;
-      uniforms.segmentBoost.value = this.segmentIntensityBoost;
-      uniforms.audioFlow.value = Math.min(1.2, this.gpuAudioForce * 0.25);
-      uniforms.distortionStrength.value = Math.min(0.6, 0.2 + this.trackPulse * 0.5 + this.segmentIntensityBoost * 0.1);
-      uniforms.bassIntensity.value = this.audioFeatures.bass || 0;
-      uniforms.trebleIntensity.value = this.audioFeatures.treble || 0;
+      this.updateUniformSafe(uniforms.trackTime, elapsedTime, 1e-2);
+      this.updateUniformSafe(uniforms.pulseIntensity, this.trackPulse);
+      this.updateUniformSafe(uniforms.segmentBoost, this.segmentIntensityBoost, 1e-3);
+      this.updateUniformSafe(uniforms.audioFlow, Math.min(1.2, this.gpuAudioForce * 0.25));
+      this.updateUniformSafe(uniforms.distortionStrength, Math.min(0.6, 0.2 + this.trackPulse * 0.5 + this.segmentIntensityBoost * 0.1));
+      this.updateUniformSafe(uniforms.bassIntensity, this.audioFeatures.bass || 0);
+      this.updateUniformSafe(uniforms.trebleIntensity, this.audioFeatures.treble || 0);
     }
 
     if (this.ghostRibbonMaterial) {
       const uniforms = this.ghostRibbonMaterial.uniforms;
-      uniforms.time.value = elapsedTime;
-      uniforms.audioPulse.value = Math.min(1.8, this.trackPulse * 1.1 + this.gpuAudioForce * 0.1);
-      uniforms.colorInner.value.copy(this.trackTintA);
-      uniforms.colorOuter.value.copy(this.trackTintB);
+      this.updateUniformSafe(uniforms.time, elapsedTime, 1e-2);
+      this.updateUniformSafe(uniforms.audioPulse, Math.min(1.8, this.trackPulse * 1.1 + this.gpuAudioForce * 0.1));
+      this.updateColorUniformSafe(uniforms.colorInner, this.trackTintA);
+      this.updateColorUniformSafe(uniforms.colorOuter, this.trackTintB);
     }
 
     const sky = this.scene.getObjectByName('sky');
-    const epsilon = 1e-6;
     if (sky && (sky as any).material?.uniforms) {
       const uniforms = (sky as any).material.uniforms;
       const bass = this.audioFeatures.bass || 0;
-      const newTurbidity = THREE.MathUtils.lerp(uniforms.turbidity.value, 10 + bass * 15, 0.1);
-      const newRayleigh = THREE.MathUtils.lerp(uniforms.rayleigh.value, 2 + bass * 2, 0.1);
-      if (Math.abs(uniforms.turbidity.value - newTurbidity) > epsilon) {
-        uniforms.turbidity.value = newTurbidity;
-      }
-      if (Math.abs(uniforms.rayleigh.value - newRayleigh) > epsilon) {
-        uniforms.rayleigh.value = newRayleigh;
-      }
+
+      const targetTurbidity = 10 + bass * 15;
+      const newTurbidity = THREE.MathUtils.lerp(uniforms.turbidity.value, targetTurbidity, 0.1);
+      this.updateUniformSafe(uniforms.turbidity, newTurbidity, 1e-1);
+
+      const targetRayleigh = 2 + bass * 2;
+      const newRayleigh = THREE.MathUtils.lerp(uniforms.rayleigh.value, targetRayleigh, 0.1);
+      this.updateUniformSafe(uniforms.rayleigh, newRayleigh, 1e-1);
     }
 
     if (this.scene.fog instanceof THREE.FogExp2) {
       const energy = currentFrame?.energy || 0;
-      const bass = this.audioFeatures.bass || 0;
       const targetDensity = 0.0025 + energy * 0.005;
-      const newDensity = THREE.MathUtils.lerp(this.scene.fog.density, targetDensity, 0.1);
-      if (Math.abs(this.scene.fog.density - newDensity) > epsilon) {
-        this.scene.fog.density = newDensity;
+      if (Math.abs(this.scene.fog.density - targetDensity) > 1e-5) {
+        this.scene.fog.density = THREE.MathUtils.lerp(this.scene.fog.density, targetDensity, 0.1);
       }
-      const bassColor = new THREE.Color(0x440000);
-      const defaultColor = new THREE.Color(0x000000);
-      const targetColor = bass > 0.5 ? bassColor : defaultColor;
-      if (!this.scene.fog.color.equals(targetColor)) {
+
+      const bass = this.audioFeatures.bass || 0;
+      const targetColor = this.getTempColor();
+      if (bass > 0.5) {
+        targetColor.setHex(0x440000);
+      } else {
+        targetColor.setHex(0x000000);
+      }
+      if (this.scene.fog.color.distanceTo(targetColor) > 1e-2) {
         this.scene.fog.color.lerp(targetColor, 0.1);
       }
     }
@@ -471,7 +505,9 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
       if (glow) {
         const bass = this.audioFeatures.bass || 0;
         const targetIntensity = 0.12 + (this.gpuAudioForce * 1.6) + (bass * 1.5) * this.segmentIntensityBoost;
-        glow.intensity = THREE.MathUtils.lerp(glow.intensity || 0, Math.max(0, targetIntensity), 0.08);
+        if (Math.abs(glow.intensity - targetIntensity) > 1e-3) {
+          glow.intensity = THREE.MathUtils.lerp(glow.intensity || 0, Math.max(0, targetIntensity), 0.08);
+        }
         glow.color.lerp(this.segmentColorTarget, 0.06);
       }
     } catch (e) {}
@@ -532,7 +568,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     this._forward.subVectors(lookAtPosition, cameraPosition);
     if (this._forward.lengthSq() < 1e-6) return;
     this._forward.normalize();
-    this._right.copy(this._forward).cross(new THREE.Vector3(0, 1, 0));
+    this._right.copy(this._forward).cross(VisualEffects.UP_VECTOR);
     if (this._right.lengthSq() < 1e-6) this._right.set(1, 0, 0);
     else this._right.normalize();
     this._up.copy(this._right).cross(this._forward);
@@ -547,7 +583,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
       if (now + lookahead >= ev.timestamp) {
         const intensity = Math.max(0, Math.min(1, (ev.intensity ?? 0.6) * (this.segmentIntensityBoost || 1)));
         try {
-          const spawnPos = cameraPosition.clone().addScaledVector(this._forward, 8).addScaledVector(this._up, 1.5);
+          const spawnPos = this.getTempVector3().copy(cameraPosition).addScaledVector(this._forward, 8).addScaledVector(this._up, 1.5);
           this.spawnEvent(ev, intensity, spawnPos);
         } catch (e) {}
         const duration = ev.duration ? (typeof ev.duration === 'number' ? ev.duration : Number(ev.duration)) : 2.0;
@@ -563,13 +599,13 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
       case 'fireworks': {
         const bursts = 3 + Math.round(inten * 5);
         for (let i = 0; i < bursts; i++) {
-          const jitter = new THREE.Vector3((Math.random() - 0.5) * 6, 6 + Math.random() * 6, (Math.random() - 0.5) * 6);
-          const pos = origin.clone().add(jitter);
+          const jitter = this.getTempVector3().set((Math.random() - 0.5) * 6, 6 + Math.random() * 6, (Math.random() - 0.5) * 6);
+          const pos = this.getTempVector3().copy(origin).add(jitter);
           this.spawnFeatureBurst('sparkle', inten * (0.8 + Math.random() * 0.6), pos);
         }
         try {
           const flash = new THREE.PointLight(this.segmentColorTarget.clone(), 0.0, 40, 2);
-          flash.position.copy(origin).add(new THREE.Vector3(0, 6, 0));
+          flash.position.copy(origin).add(this.getTempVector3().set(0, 6, 0));
           this.scene.add(flash);
           const start = performance.now() / 1000;
           const fade = () => {
@@ -614,7 +650,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
           }
         } catch (e) {}
         for (let i = 0; i < Math.max(2, Math.round(4 * inten)); i++) {
-          const p = origin.clone().add(new THREE.Vector3((Math.random() - 0.5) * 6, (Math.random() - 0.2) * 2, (Math.random() - 0.5) * 6));
+          const p = this.getTempVector3().copy(origin).add(this.getTempVector3().set((Math.random() - 0.5) * 6, (Math.random() - 0.2) * 2, (Math.random() - 0.5) * 6));
           this.spawnFeatureBurst('sparkle', 0.25 + Math.random() * 0.4, p);
         }
         break;
@@ -622,7 +658,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
       case 'starshow': {
         const total = 30 + Math.round(inten * 80);
         for (let i = 0; i < total; i++) {
-          const p = origin.clone().add(new THREE.Vector3((Math.random() - 0.5) * 40, 8 + Math.random() * 20, (Math.random() - 0.5) * 40));
+          const p = this.getTempVector3().copy(origin).add(this.getTempVector3().set((Math.random() - 0.5) * 40, 8 + Math.random() * 20, (Math.random() - 0.5) * 40));
           this.spawnFeatureBurst('sparkle', 0.25 + Math.random() * inten * 0.6, p);
         }
         break;
@@ -640,15 +676,15 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
         const ringCount = 10 + Math.round(inten * 30);
         for (let r = 0; r < ringCount; r++) {
           const ang = (r / ringCount) * Math.PI * 2;
-          const off = new THREE.Vector3(Math.cos(ang) * (3 + Math.random() * 2), -1 + Math.random() * 3, Math.sin(ang) * (3 + Math.random() * 2));
-          this.spawnFeatureBurst('sparkle', 0.5 * inten, origin.clone().add(off));
+          const off = this.getTempVector3().set(Math.cos(ang) * (3 + Math.random() * 2), -1 + Math.random() * 3, Math.sin(ang) * (3 + Math.random() * 2));
+          this.spawnFeatureBurst('sparkle', 0.5 * inten, this.getTempVector3().copy(origin).add(off));
         }
         break;
       }
       case 'confetti': {
         const confettiCount = 30 + Math.round(inten * 60);
         for (let k = 0; k < confettiCount; k++) {
-          const p = origin.clone().add(new THREE.Vector3((Math.random() - 0.5) * 6, Math.random() * 6, (Math.random() - 0.5) * 6));
+          const p = this.getTempVector3().copy(origin).add(this.getTempVector3().set((Math.random() - 0.5) * 6, Math.random() * 6, (Math.random() - 0.5) * 6));
           this.spawnParticles(2, p, 'sparkle');
         }
         break;
