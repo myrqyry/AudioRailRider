@@ -5,6 +5,18 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AudioRail Rider</title>
+    
+    <!-- DNS prefetch and preconnect for external resources -->
+    <link rel="dns-prefetch" href="https://cdn.jsdelivr.net" />
+    <link rel="dns-prefetch" href="https://lygia.xyz" />
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+    <link rel="preconnect" href="https://lygia.xyz" crossorigin />
+    
+    <!-- Preload critical shader resources -->
+    <link rel="preload" href="/shaders/velFrag.resolved.glsl" as="fetch" crossorigin="anonymous" />
+    <link rel="preload" href="/shaders/posFrag.resolved.glsl" as="fetch" crossorigin="anonymous" />
+    <link rel="preload" href="/lygia/resolve.esm.js" as="script" crossorigin="anonymous" />
+    
     <style>
       @keyframes fade-in {
         from { opacity: 0; transform: translateY(10px); }
@@ -26,8 +38,9 @@
         document.head.appendChild(script);
       });
     </script>
-    <script type="module" crossorigin src="/assets/index-BdO85GN_.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-D4tbuneC.css">
+    <link rel="icon" type="image/png" href="/assets/favicon-zaFLqGht.png" />
+    <script type="module" crossorigin src="/assets/index-CBQzY7sQ.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-cljCepM-.css">
   </head>
   <body class="bg-black text-white font-sans">
     <div id="root"></div>

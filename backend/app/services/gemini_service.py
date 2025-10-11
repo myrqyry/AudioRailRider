@@ -92,6 +92,10 @@ Create a rollercoaster blueprint (12-20 segments) from this audio.
 - palette: 3 hex colors [rail, glow, sky] matching the mood.
 - track: Design a track where intensity mirrors the music's dynamics. Use high-excitement components ('drop', 'loop', 'barrelRoll') for energetic parts.
  - events: Provide a short timeline of small, audio-synchronized visual events (optional). Use events like 'fog', 'fireworks', 'starshow', 'lightBurst', 'sparkRing', or 'confetti'. For each event include: type, timestamp (seconds from start), intensity (0..1), optional duration (for sustained events), audioReactive (true/false), and params for color or scale if relevant. Favor the preferredEventPresets listed in options if provided.
+ - synesthetic: Provide three sub-objects that extend the experience beyond geometry:
+     * geometry: {{ wireframeDensity (0-1), impossiblePhysics (bool), organicBreathing (0-1), breathingDriver ('energy'|'spectralFlux'|'spectralCentroid') }}
+     * particles: {{ connectionDensity (0-1), resonanceThreshold (0-1), lifespanSeconds, persistence (0-1) }}
+     * atmosphere: {{ skyMood string, turbulenceBias number, passionIntensity number, tint hex color }}
 """
 
     SYSTEM_INSTRUCTION = """
@@ -102,6 +106,7 @@ Track components: 'climb', 'drop', 'turn', 'loop', 'barrelRoll'.
 - 'turn': direction ('left'/'right'), radius (80-150), angle (90-180).
 - 'loop': radius (40-80).
 - 'barrelRoll': rotations (1-2), length (100-200).
+Always ensure the JSON response matches the schema: include rideName, moodDescription, palette (3 colors), track array of segments, optional events array, generationOptions (if provided), and a synesthetic object with geometry/particles/atmosphere as described in the user prompt. Use numbers within safe ranges and prefer values between 0 and 1 for fractional knobs.
 """
 
     async def generate_blueprint(self, audio_bytes: bytes, content_type: str, options: dict | None = None):
@@ -248,7 +253,27 @@ Track components: 'climb', 'drop', 'turn', 'loop', 'barrelRoll'.
             "rideName": ride_name,
             "moodDescription": "Procedurally generated fallback based on audio features.",
             "palette": [base1, base2, base3],
-            "track": track
+            "track": track,
+            "synesthetic": {
+                "geometry": {
+                    "wireframeDensity": min(1.0, max(0.1, energy + 0.3)),
+                    "impossiblePhysics": energy > 0.65,
+                    "organicBreathing": min(1.0, 0.4 + energy * 0.6),
+                    "breathingDriver": "energy",
+                },
+                "particles": {
+                    "connectionDensity": min(1.0, 0.3 + energy * 0.7),
+                    "resonanceThreshold": 0.45,
+                    "lifespanSeconds": 4.0,
+                    "persistence": 0.6,
+                },
+                "atmosphere": {
+                    "skyMood": "fallback_dream",
+                    "turbulenceBias": 1.0 + energy * 0.5,
+                    "passionIntensity": 0.8 + energy * 0.6,
+                    "tint": base3,
+                },
+            },
         }
 
         # Generate a simple events timeline heuristically from audio features.

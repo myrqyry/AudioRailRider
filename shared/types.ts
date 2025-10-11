@@ -102,6 +102,45 @@ export interface SegmentMeta {
 // losing discriminated union behavior.
 export type TrackSegmentWithMeta = TrackSegment & Partial<SegmentMeta>;
 
+export interface SynestheticGeometry {
+  /** Relative density of fine-grained wireframe ripples (0-1). */
+  wireframeDensity?: number;
+  /** When true, introduce impossible physics oscillations along the path. */
+  impossiblePhysics?: boolean;
+  /** Strength of breathing modulation driven by audio analysis (0-1). */
+  organicBreathing?: number;
+  /** Selects which feature drives the breathing pulse. */
+  breathingDriver?: 'energy' | 'spectralFlux' | 'spectralCentroid';
+}
+
+export interface SynestheticParticleConsciousness {
+  /** Scales how many neural links are attempted per update (0-1). */
+  connectionDensity?: number;
+  /** Minimum harmonic resonance required before linking particles (0-1). */
+  resonanceThreshold?: number;
+  /** Lifespan in seconds for conscious particles before fading. */
+  lifespanSeconds?: number;
+  /** Persistence factor for links (0-1). Higher values decay more slowly. */
+  persistence?: number;
+}
+
+export interface SynestheticAtmosphere {
+  /** Named mood that can bias the sky palette transitions. */
+  skyMood?: string;
+  /** Baseline turbulence multiplier applied to volumetric elements. */
+  turbulenceBias?: number;
+  /** Multiplier for rail emission when vocals surge (0-2). */
+  passionIntensity?: number;
+  /** Optional explicit sky tint override (hex). */
+  tint?: string;
+}
+
+export interface SynestheticBlueprintLayer {
+  geometry?: SynestheticGeometry | null;
+  particles?: SynestheticParticleConsciousness | null;
+  atmosphere?: SynestheticAtmosphere | null;
+}
+
 export interface RideBlueprint {
   palette: string[];
   track: TrackSegment[];
@@ -111,6 +150,8 @@ export interface RideBlueprint {
   generationOptions?: GenerationOptions;
   // Optional timeline of small visual events (type + timestamp + params)
   events?: TimelineEvent[];
+  // Optional synesthetic metadata that informs advanced visuals
+  synesthetic?: SynestheticBlueprintLayer | null;
 }
 
 // Enumerated presets for track and world generation. These inform the AI
@@ -180,6 +221,7 @@ export interface TrackData {
   audioFeatures: AudioFeatures;
   // Runtime timeline events materialized from the blueprint (optional)
   events?: TimelineEvent[];
+  synesthetic?: SynestheticBlueprintLayer | null;
 }
 
 // Helper to create a Seconds branded value from a plain number. This is a no-op at runtime

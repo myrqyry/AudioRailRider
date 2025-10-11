@@ -1,8 +1,9 @@
 import * as THREE from 'three';
-import { TrackData, FrameAnalysis, SegmentDetail, TimelineEvent, secondsToNumber } from 'shared/types';
+import { TrackData, FrameAnalysis, SegmentDetail, TimelineEvent, secondsToNumber, SynestheticBlueprintLayer } from 'shared/types';
 import { RIDE_CONFIG } from 'shared/constants';
 import { ParticleSystem, FeatureVisualConfig, GPUUpdateParams, ParticleQualityLevel } from './visual-effects/ParticleSystem';
 import { Vector3Pool } from './utils/Vector3Pool';
+import { AtmosphereController } from './environment/AtmosphereController';
 
 // --- Helpers ---
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
@@ -28,6 +29,7 @@ export class VisualEffects {
   private trackData: TrackData;
   private trackMesh: THREE.Mesh;
   private trackMaterial: THREE.MeshStandardMaterial;
+  private pathCurve: THREE.CatmullRomCurve3 | null = null;
   private ghostRibbonMesh: THREE.Mesh | null = null;
   private ghostRibbonMaterial: THREE.ShaderMaterial | null = null;
   private particles: ParticleSystem;
@@ -66,6 +68,9 @@ export class VisualEffects {
   private firstUpdateTime: number = 0;
   private lastUpdateSeconds: number = 0;
   private trackPulse: number = 0;
+  private synesthetic: SynestheticBlueprintLayer | null = null;
+  private atmosphere: AtmosphereController | null = null;
+  private passionGain: number = 1;
 
   // --- Object Pools ---
   private readonly _vectorPool = new Vector3Pool(12);
@@ -134,6 +139,7 @@ export class VisualEffects {
     this.scene = scene;
     this.camera = camera;
     this.trackData = trackData;
+    this.synesthetic = trackData.synesthetic ?? null;
 
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     this.highQualityMode = !isMobile;
@@ -159,6 +165,8 @@ export class VisualEffects {
 
     try {
       this.timelineEvents = Array.isArray((trackData as any).events) ? (trackData as any).events.slice() : [];
+
+      this.atmosphere = new AtmosphereController(this.scene, trackData.skyColor1 || '#0d0a1f', this.synesthetic?.atmosphere ?? null);
       for (const ev of this.timelineEvents) {
         if (ev && ev.timestamp === undefined && ev.params && ev.params.audioSyncPoint) {
           ev.timestamp = ev.params.audioSyncPoint as any;
@@ -239,7 +247,8 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     };
 
     const segments = this.highQualityMode ? this.trackData.path.length * HIGH_QUALITY_SEGMENTS : this.trackData.path.length * LOW_QUALITY_SEGMENTS;
-    const curve = new THREE.CatmullRomCurve3(this.trackData.path.map(p => new THREE.Vector3(p.x, p.y, p.z)));
+  const curve = new THREE.CatmullRomCurve3(this.trackData.path.map(p => new THREE.Vector3(p.x, p.y, p.z)));
+  this.pathCurve = curve;
     const geometry = new THREE.TubeGeometry(curve, segments, TRACK_RADIUS, 8, false);
 
     this.trackMesh = new THREE.Mesh(geometry, this.trackMaterial);
@@ -252,6 +261,8 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     this.particles = new ParticleSystem(this.scene);
     const initialProfile: ParticleQualityLevel = this.highQualityMode ? 'high' : 'medium';
     this.particles.setQualityProfile(initialProfile);
+    this.particles.setConsciousnessSettings(this.synesthetic?.particles ?? null);
+  this.seedAmbientParticles();
 
     try {
       const listenerRig = new THREE.Object3D();
@@ -260,6 +271,14 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
       audioGlow.name = 'audioGlow';
       listenerRig.add(audioGlow);
     } catch (e) {}
+  }
+
+  private seedAmbientParticles(): void {
+    if (!this.pathCurve) return;
+    const sampleCount = Math.min(48, Math.max(18, Math.floor(this.trackData.path.length / 4)));
+    const nowSeconds = performance.now() / 1000;
+    const spread = GHOST_RIBBON_RADIUS * 4.2;
+    this.particles.seedAmbientField(this.pathCurve, sampleCount, spread, nowSeconds, this.audioFeatures, 0.9);
   }
 
   public async initGPU(renderer: THREE.WebGLRenderer) {
@@ -359,11 +378,11 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     return this.baseEmissiveColor;
   }
 
-  private applySegmentMood(progress: number) {
+  private applySegmentMood(progress: number): number {
     if (!this.trackData.segmentDetails.length) {
       this.segmentIntensityBoost = 1;
       this.segmentColorTarget.copy(this.baseEmissiveColor);
-      return;
+      return this.segmentIntensityBoost;
     }
     const clamped = THREE.MathUtils.clamp(progress, 0, 1);
     let idx = this.segmentProgress.findIndex((marker) => clamped <= marker + 1e-6);
@@ -375,6 +394,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     this.segmentIntensityBoost = 1 + Math.max(0, rawIntensity) / 100;
     const moodColor = this.deriveSegmentColor(detail);
     this.segmentColorTarget.copy(moodColor);
+    return this.segmentIntensityBoost;
   }
 
   public registerFeatureVisual(featureName: string, cfg: Partial<FeatureVisualConfig>) {
@@ -389,7 +409,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     this.lastUpdateSeconds = nowSeconds;
 
     const clampedProgress = THREE.MathUtils.clamp(rideProgress ?? 0, 0, 1);
-    this.applySegmentMood(clampedProgress);
+    const baseSegmentBoost = this.applySegmentMood(clampedProgress);
     this.trackMaterial.emissive.lerp(this.segmentColorTarget, 0.05);
     this._colorTmp.copy(this.segmentColorTarget).lerp(this.baseRailColor, 0.4);
     this.trackMaterial.color.lerp(this._colorTmp, 0.05);
@@ -398,6 +418,18 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     const tintB = this._colorTmp3.copy(this.baseGhostTintB).lerp(this.segmentColorTarget, 0.6);
     this.trackTintA.copy(tintA);
     this.trackTintB.copy(tintB);
+
+    const passionBoost = this.atmosphere
+      ? this.atmosphere.update({
+          deltaSeconds,
+          frame: currentFrame,
+          audioFeatures: this.audioFeatures,
+          segmentColor: this.segmentColorTarget,
+          segmentIntensity: baseSegmentBoost,
+        })
+      : 1;
+    this.passionGain = passionBoost;
+    this.segmentIntensityBoost = baseSegmentBoost * passionBoost;
 
     this.frameCount++;
     
@@ -492,39 +524,6 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
       this.updateUniformSafe(uniforms.audioPulse, Math.min(1.8, this.trackPulse * 1.1 + this.gpuAudioForce * 0.1));
       this.updateColorUniformSafe(uniforms.colorInner, this.trackTintA);
       this.updateColorUniformSafe(uniforms.colorOuter, this.trackTintB);
-    }
-
-    const sky = this.scene.getObjectByName('sky');
-    if (sky && (sky as any).material?.uniforms) {
-      const uniforms = (sky as any).material.uniforms;
-      const bass = this.audioFeatures.bass || 0;
-
-      const targetTurbidity = 10 + bass * 15;
-      const newTurbidity = THREE.MathUtils.lerp(uniforms.turbidity.value, targetTurbidity, 0.1);
-      this.updateUniformSafe(uniforms.turbidity, newTurbidity, 1e-1);
-
-      const targetRayleigh = 2 + bass * 2;
-      const newRayleigh = THREE.MathUtils.lerp(uniforms.rayleigh.value, targetRayleigh, 0.1);
-      this.updateUniformSafe(uniforms.rayleigh, newRayleigh, 1e-1);
-    }
-
-    if (this.scene.fog instanceof THREE.FogExp2) {
-      const energy = currentFrame?.energy || 0;
-      const targetDensity = 0.0025 + energy * 0.005;
-      if (Math.abs(this.scene.fog.density - targetDensity) > 1e-5) {
-        this.scene.fog.density = THREE.MathUtils.lerp(this.scene.fog.density, targetDensity, 0.1);
-      }
-
-      const bass = this.audioFeatures.bass || 0;
-      const targetColor = this.getTempColor();
-      if (bass > 0.5) {
-        targetColor.setHex(0x440000);
-      } else {
-        targetColor.setHex(0x000000);
-      }
-      if (this.scene.fog.color.distanceTo(targetColor) > 1e-2) {
-        this.scene.fog.color.lerp(targetColor, 0.1);
-      }
     }
 
     this.particles.reclaimExpired(nowSeconds);
