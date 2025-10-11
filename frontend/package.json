@@ -22,6 +22,7 @@
     "realtime-bpm-analyzer": "^4.0.2",
     "regl": "^2.1.1",
     "three": "^0.178.0",
+    "three-mesh-bvh": "^0.7.0",
     "zustand": "^5.0.7"
   },
   "devDependencies": {

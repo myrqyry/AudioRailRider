@@ -3,6 +3,18 @@ import { TrackData, FrameAnalysis, SegmentDetail, TimelineEvent, secondsToNumber
 import { RIDE_CONFIG } from 'shared/constants';
 import { ParticleSystem, FeatureVisualConfig, GPUUpdateParams, ParticleQualityLevel } from './visual-effects/ParticleSystem';
 import { Vector3Pool } from './utils/Vector3Pool';
+import { MeshBVH, acceleratedRaycast } from 'three-mesh-bvh';
+
+// Augment the THREE namespace to include the acceleratedRaycast
+// This is necessary to make TypeScript aware of the new method on the Mesh prototype
+declare module 'three' {
+    interface Mesh {
+        raycast: typeof acceleratedRaycast;
+    }
+}
+
+// Apply the accelerated raycast method to the THREE.Mesh prototype
+THREE.Mesh.prototype.raycast = acceleratedRaycast;
 
 // --- Helpers ---
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
@@ -241,6 +253,9 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     const segments = this.highQualityMode ? this.trackData.path.length * HIGH_QUALITY_SEGMENTS : this.trackData.path.length * LOW_QUALITY_SEGMENTS;
     const curve = new THREE.CatmullRomCurve3(this.trackData.path.map(p => new THREE.Vector3(p.x, p.y, p.z)));
     const geometry = new THREE.TubeGeometry(curve, segments, TRACK_RADIUS, 8, false);
+
+    // Generate the BVH for the track geometry to accelerate raycasting
+    (geometry as any).boundsTree = new MeshBVH(geometry);
 
     this.trackMesh = new THREE.Mesh(geometry, this.trackMaterial);
     this.trackMesh.frustumCulled = true;
@@ -814,6 +829,7 @@ void main() {
       false
     );
     
+    (newGeometry as any).boundsTree = new MeshBVH(newGeometry);
     this.trackMesh.geometry = newGeometry;
     oldGeometry.dispose();
     this.rebuildGhostRibbon(curve, this.trackData.path.length * LOW_QUALITY_SEGMENTS);
@@ -834,6 +850,7 @@ void main() {
       false
     );
 
+    (newGeometry as any).boundsTree = new MeshBVH(newGeometry);
     this.trackMesh.geometry = newGeometry;
     oldGeometry.dispose();
     this.rebuildGhostRibbon(curve, this.trackData.path.length * HIGH_QUALITY_SEGMENTS);
