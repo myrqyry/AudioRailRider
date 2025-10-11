@@ -32,6 +32,44 @@ export interface FrameAnalysis {
   bass: number;
   mid: number;
   high: number;
+  sampleRate?: number;
+  channelCount?: number;
+  frame?: Float32Array;
+}
+
+export interface EnhancedAudioFeatures {
+  duration: Seconds;
+  tempo: number;
+  /** size of the analysis window in samples */
+  windowSize: number;
+  /** hop size (in samples) between analysis windows */
+  hopSize: number;
+  /** source sample rate used for extraction */
+  sampleRate: number;
+  /** log-scaled energy curve (0..?) aligned with hop sequence */
+  energy: Float32Array;
+  /** spectral centroid per window */
+  spectralCentroid: Float32Array;
+  /** spectral flux per window */
+  spectralFlux: Float32Array;
+  /** perceptual sharpness per window */
+  perceptualSharpness: Float32Array;
+  /** spectral rolloff (Hz) per window */
+  spectralRolloff: Float32Array;
+  /** zero-crossing rate per window */
+  zeroCrossingRate: Float32Array;
+  /** flattened chromagram (frame-major, 12 bins per frame by default) */
+  chroma: Float32Array;
+  /** number of chroma bins stored per frame */
+  chromaBins: number;
+  /** flattened MFCC matrix (frame-major) */
+  mfcc: Float32Array;
+  /** number of MFCC coefficients stored per frame */
+  mfccCoefficients: number;
+  /** detected beat timestamps in seconds */
+  beats: number[];
+  /** detected structural boundary timestamps in seconds */
+  structuralBoundaries: number[];
 }
 
 export interface AudioFeatures {
@@ -41,6 +79,7 @@ export interface AudioFeatures {
   spectralCentroid: number;
   spectralFlux: number;
   frameAnalyses: FrameAnalysis[];
+  enhanced?: EnhancedAudioFeatures | null;
 }
 
 // Discriminated union for track segments so each variant has its own required params

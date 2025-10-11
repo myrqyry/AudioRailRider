@@ -1,11 +1,24 @@
-import { AudioFeatures, FrameAnalysis, seconds } from "shared/types";
-import { runPipeline, FramePlugin } from './audioPipeline';
+import { AudioFeatures, EnhancedAudioFeatures, FrameAnalysis, seconds } from "shared/types";
+import {
+  averageSlice,
+  smoothCurve,
+  detectBeats,
+  detectStructuralBoundaries,
+  createFrameForDispatch,
+} from './audioFeatureUtils';
 import * as audioWorklet from './audioWorklet';
 
 // Fallback values in case analysis fails
-const FALLBACK_ENERGY = 0.5;
+const FALLBACK_ENERGY = 0;
 const FALLBACK_SPECTRAL_CENTROID = 1000;
 const FALLBACK_SPECTRAL_FLUX = 0.1;
+
+const WINDOW_SIZE = 1024;
+const HOP_SIZE = WINDOW_SIZE / 2;
+const DEFAULT_BPM = 120;
+const ENERGY_SMOOTHING_WINDOW = 4;
+const DEFAULT_CHROMA_BINS = 12;
+const DEFAULT_MFCC_BINS = 13;
 
 // Meyda is loaded from CDN and attached to window
 declare global {
@@ -13,20 +26,6 @@ declare global {
     Meyda?: unknown;
   }
 }
-
-/**
- * Simple BPM analysis function.
- * This is a placeholder implementation. For production use, consider using a more robust BPM detection library.
- */
-const analyzeFullBuffer = async (audioBuffer: AudioBuffer): Promise<{ tempo: number }[]> => {
-  const channelData = audioBuffer.getChannelData(0);
-  const sampleRate = audioBuffer.sampleRate;
-  const bufferLength = channelData.length;
-
-  // Simple BPM detection algorithm (placeholder)
-  const bpm = 120; // Placeholder BPM value
-  return [{ tempo: bpm }];
-};
 
 /**
  * Analyzes an audio file to extract features like duration, BPM, and energy.
@@ -105,11 +104,12 @@ export const analyzeAudio = async (audioFile: File): Promise<AudioFeatures> => {
       // Return partial AudioFeatures with valid duration and conservative defaults so downstream logic can proceed.
       return {
         duration: seconds(duration),
-        bpm: 120, // conservative default tempo
+        bpm: DEFAULT_BPM,
         energy: 0,
         spectralCentroid: 0,
         spectralFlux: 0,
         frameAnalyses: [],
+        enhanced: null,
       };
     } catch (fallbackError) {
       console.error("[audioProcessor] Fallback metadata extraction failed:", fallbackError);
@@ -141,73 +141,192 @@ export const analyzeAudio = async (audioFile: File): Promise<AudioFeatures> => {
     throw new Error('Decoded audio buffer was not produced by decodeAudioData.');
   }
 
-  // BPM Analysis
-  const bpmCandidates = await analyzeFullBuffer(audioBuffer);
-  const bpm = bpmCandidates.length > 0 ? bpmCandidates[0].tempo : 120;
+  const meyda = (window.Meyda as any) ?? null;
+  const canExtract = !!(meyda && typeof meyda.extract === 'function');
 
-  // Detailed audio analysis using Meyda
-  const channelData = audioBuffer.getChannelData(0);
-  const MeydaBufferSize = 1024;
-  const frameAnalyses: FrameAnalysis[] = [];
-  let totalEnergy = 0;
-  let totalSpectralCentroid = 0;
-  let totalSpectralFlux = 0;
-
-  // Meyda plugin: returns partial FrameAnalysis for a given frame
-  const meydaPlugin: FramePlugin = (frame, sr) => {
-    if (!window.Meyda || !(window.Meyda as any).extract) return null;
-    try {
-      const features = (window.Meyda as any).extract(['energy', 'spectralCentroid', 'spectralFlux', 'loudness'], frame);
-      const fEnergy = features.energy ?? 0;
-      const fCentroid = features.spectralCentroid ?? 0;
-      const fLoudness = features.loudness?.specific ?? new Float32Array(24).fill(0);
-      const flux = typeof features.spectralFlux === 'number' ? features.spectralFlux : 0;
-
-      return {
-        energy: fEnergy,
-        spectralCentroid: fCentroid,
-        spectralFlux: flux,
-        bass: fLoudness.slice(0, 8).reduce((s, v) => s + v, 0) / 8,
-        mid: fLoudness.slice(8, 16).reduce((s, v) => s + v, 0) / 8,
-        high: fLoudness.slice(16, 24).reduce((s, v) => s + v, 0) / 8,
-      };
-    } catch (err) {
-      console.warn('[audioProcessor] Meyda plugin error', err);
-      return null;
-    }
-  };
-
-  try {
-    const pipelineResults = runPipeline(channelData, audioBuffer.sampleRate, {
-      bufferSize: MeydaBufferSize,
-      plugins: [meydaPlugin],
-    });
-
-    for (const fa of pipelineResults) {
-      frameAnalyses.push(fa);
-      totalEnergy += fa.energy;
-      totalSpectralCentroid += fa.spectralCentroid;
-      totalSpectralFlux += fa.spectralFlux;
-    }
-  } catch (err) {
-    console.warn('[audioProcessor] pipeline run failed, falling back to empty analyses', err);
+  if (!canExtract) {
+    console.warn('[audioProcessor] Meyda.extract unavailable; returning fallback audio features.');
+    await audioContext.close();
+    return {
+      duration: seconds(audioBuffer.duration),
+      bpm: DEFAULT_BPM,
+      energy: FALLBACK_ENERGY,
+      spectralCentroid: FALLBACK_SPECTRAL_CENTROID,
+      spectralFlux: FALLBACK_SPECTRAL_FLUX,
+      frameAnalyses: [],
+      enhanced: null,
+    };
   }
 
-  const frameCount = frameAnalyses.length;
-  const avgEnergy = frameCount > 0 ? totalEnergy / frameCount : 0;
-  const avgSpectralCentroid = frameCount > 0 ? totalSpectralCentroid / frameCount : 0;
-  const avgSpectralFlux = frameCount > 0 ? totalSpectralFlux / frameCount : 0;
-  const normalizedEnergy = Math.min(avgEnergy / 10, 1);
+  // Detailed audio analysis using Meyda with sliding windows
+  const channelData = audioBuffer.getChannelData(0);
+  const totalSamples = channelData.length;
+  const windowSize = WINDOW_SIZE;
+  const hopSize = totalSamples < windowSize ? windowSize : HOP_SIZE;
+  let frameCount = 0;
+  if (totalSamples < windowSize) {
+    frameCount = 1;
+  } else {
+    frameCount = Math.floor((totalSamples - windowSize) / hopSize) + 1;
+  }
+  if (frameCount <= 0) frameCount = 1;
+
+  const hopSeconds = hopSize / audioBuffer.sampleRate;
+  const timestamps = new Float32Array(frameCount);
+  const energyCurve = new Float32Array(frameCount);
+  const spectralCentroidCurve = new Float32Array(frameCount);
+  const spectralFluxCurve = new Float32Array(frameCount);
+  const perceptualSharpnessCurve = new Float32Array(frameCount);
+  const spectralRolloffCurve = new Float32Array(frameCount);
+  const zeroCrossingRateCurve = new Float32Array(frameCount);
+  const bassCurve = new Float32Array(frameCount);
+  const midCurve = new Float32Array(frameCount);
+  const highCurve = new Float32Array(frameCount);
+  const chromaFrames: number[][] = [];
+  const mfccFrames: number[][] = [];
+
+  let energySum = 0;
+  let energyMax = 0;
+  let spectralCentroidSum = 0;
+  let spectralFluxSum = 0;
+
+  for (let frameIndex = 0; frameIndex < frameCount; frameIndex++) {
+  const frameStart = frameIndex * hopSize;
+  const latestSampleIndex = totalSamples > 0 ? totalSamples - 1 : 0;
+  const timestampSeconds = Math.min(frameStart, latestSampleIndex) / audioBuffer.sampleRate;
+    timestamps[frameIndex] = timestampSeconds;
+
+    let frameSlice: Float32Array;
+    if (totalSamples < windowSize) {
+      frameSlice = new Float32Array(windowSize);
+      frameSlice.set(channelData, 0);
+    } else if (frameStart + windowSize <= totalSamples) {
+      frameSlice = channelData.subarray(frameStart, frameStart + windowSize);
+    } else {
+      frameSlice = new Float32Array(windowSize);
+      frameSlice.set(channelData.subarray(frameStart));
+    }
+
+    let features: any = null;
+    try {
+      features = meyda.extract(
+        ['energy', 'rms', 'spectralCentroid', 'spectralFlux', 'loudness', 'perceptualSharpness', 'spectralRolloff', 'zcr', 'chroma', 'mfcc'],
+        frameSlice,
+        { sampleRate: audioBuffer.sampleRate, bufferSize: windowSize }
+      );
+    } catch (err) {
+      console.warn('[audioProcessor] Meyda extract failed for frame', frameIndex, err);
+    }
+
+    const rawEnergy = features && typeof features.energy === 'number'
+      ? features.energy
+      : features && typeof features.rms === 'number'
+        ? features.rms
+        : 0;
+    const logEnergy = Math.log10(1 + Math.max(rawEnergy, 0));
+    energyCurve[frameIndex] = logEnergy;
+    energySum += logEnergy;
+    if (logEnergy > energyMax) energyMax = logEnergy;
+
+    const centroid = features && typeof features.spectralCentroid === 'number' ? features.spectralCentroid : FALLBACK_SPECTRAL_CENTROID;
+    spectralCentroidCurve[frameIndex] = centroid;
+    spectralCentroidSum += centroid;
+
+    const flux = features && typeof features.spectralFlux === 'number' ? features.spectralFlux : FALLBACK_SPECTRAL_FLUX;
+    spectralFluxCurve[frameIndex] = flux;
+    spectralFluxSum += flux;
+
+    const sharpness = features && typeof features.perceptualSharpness === 'number' ? features.perceptualSharpness : 0;
+    perceptualSharpnessCurve[frameIndex] = sharpness;
+
+    const rolloff = features && typeof features.spectralRolloff === 'number' ? features.spectralRolloff : 0;
+    spectralRolloffCurve[frameIndex] = rolloff;
+
+    const zcr = features && typeof features.zcr === 'number' ? features.zcr : 0;
+    zeroCrossingRateCurve[frameIndex] = zcr;
+
+    const loudnessSpecific: number[] | undefined = features?.loudness?.specific;
+    if (Array.isArray(loudnessSpecific) && loudnessSpecific.length >= 24) {
+      bassCurve[frameIndex] = averageSlice(loudnessSpecific, 0, 8);
+      midCurve[frameIndex] = averageSlice(loudnessSpecific, 8, 16);
+      highCurve[frameIndex] = averageSlice(loudnessSpecific, 16, 24);
+    } else {
+      bassCurve[frameIndex] = 0;
+      midCurve[frameIndex] = 0;
+      highCurve[frameIndex] = 0;
+    }
+
+    const chromaVals: number[] | undefined = features?.chroma;
+    if (Array.isArray(chromaVals)) {
+      chromaFrames.push(chromaVals.slice());
+    } else {
+      chromaFrames.push(new Array(DEFAULT_CHROMA_BINS).fill(0));
+    }
+
+    const mfccVals: number[] | undefined = features?.mfcc;
+    if (Array.isArray(mfccVals)) {
+      mfccFrames.push(mfccVals.slice());
+    } else {
+      mfccFrames.push(new Array(DEFAULT_MFCC_BINS).fill(0));
+    }
+  }
+
+  const frameAnalyses: FrameAnalysis[] = [];
+  const energyNormalizer = energyMax > 0 ? 1 / energyMax : 1;
+  for (let i = 0; i < frameCount; i++) {
+    frameAnalyses.push({
+      timestamp: seconds(timestamps[i] ?? 0),
+      energy: Math.min(Math.max(energyCurve[i] * energyNormalizer, 0), 1),
+      spectralCentroid: spectralCentroidCurve[i] ?? 0,
+      spectralFlux: spectralFluxCurve[i] ?? 0,
+      bass: bassCurve[i] ?? 0,
+      mid: midCurve[i] ?? 0,
+      high: highCurve[i] ?? 0,
+    });
+  }
+
+  const avgEnergy = frameCount > 0 ? energySum / frameCount : 0;
+  const avgSpectralCentroid = frameCount > 0 ? spectralCentroidSum / frameCount : FALLBACK_SPECTRAL_CENTROID;
+  const avgSpectralFlux = frameCount > 0 ? spectralFluxSum / frameCount : FALLBACK_SPECTRAL_FLUX;
+  const normalizedEnergy = energyMax > 0 ? Math.min(avgEnergy / energyMax, 1) : 0;
+
+  const smoothedEnergy = smoothCurve(energyCurve, ENERGY_SMOOTHING_WINDOW);
+  const { beats, tempo } = detectBeats(smoothedEnergy, spectralCentroidCurve, perceptualSharpnessCurve, hopSeconds);
+  const structuralBoundaries = detectStructuralBoundaries(energyCurve, spectralRolloffCurve, zeroCrossingRateCurve, hopSeconds);
+
+  const chromaMatrix = flattenFrameMatrix(chromaFrames, DEFAULT_CHROMA_BINS);
+  const mfccMatrix = flattenFrameMatrix(mfccFrames, DEFAULT_MFCC_BINS);
+
+  const enhanced: EnhancedAudioFeatures = {
+    duration: seconds(audioBuffer.duration),
+    tempo,
+    windowSize,
+    hopSize,
+    sampleRate: audioBuffer.sampleRate,
+    energy: energyCurve,
+    spectralCentroid: spectralCentroidCurve,
+    spectralFlux: spectralFluxCurve,
+    perceptualSharpness: perceptualSharpnessCurve,
+    spectralRolloff: spectralRolloffCurve,
+    zeroCrossingRate: zeroCrossingRateCurve,
+    chroma: chromaMatrix.flatArray,
+    chromaBins: chromaMatrix.binCount,
+    mfcc: mfccMatrix.flatArray,
+    mfccCoefficients: mfccMatrix.binCount,
+    beats,
+    structuralBoundaries,
+  };
 
   await audioContext.close();
 
   return {
     duration: seconds(audioBuffer.duration),
-    bpm: bpm,
+    bpm: Math.round(tempo || DEFAULT_BPM),
     energy: normalizedEnergy,
     spectralCentroid: avgSpectralCentroid,
     spectralFlux: avgSpectralFlux,
-    frameAnalyses: frameAnalyses,
+    frameAnalyses,
+    enhanced,
   };
 };
 
@@ -221,20 +340,35 @@ export const createWorkletAnalyzerForContext = async (
   try {
     await audioWorklet.registerWorklet(audioContext);
     const node = audioWorklet.createAnalyzerNode(audioContext, (a) => {
-      // Convert to FrameAnalysis shape; timestamp is in seconds already
-      onFrame({
-        timestamp: seconds(a.timestamp),
+      const frame = createFrameForDispatch(a.timestamp, {
         energy: a.energy,
         spectralCentroid: a.spectralCentroid,
         spectralFlux: a.spectralFlux,
         bass: a.bass,
         mid: a.mid,
         high: a.high,
+        sampleRate: a.sampleRate,
+        channelCount: a.channelCount,
+        frame: a.frame,
       });
+      onFrame(frame);
     });
     return node;
   } catch (e) {
     console.warn('[audioProcessor] createWorkletAnalyzerForContext failed', e);
     return null;
   }
+};
+
+const flattenFrameMatrix = (frames: number[][], defaultBins: number): { flatArray: Float32Array; binCount: number } => {
+  const binCount = frames.length > 0 && frames[0]?.length ? frames[0].length : defaultBins;
+  const flat = new Float32Array(frames.length * binCount);
+  for (let frameIndex = 0; frameIndex < frames.length; frameIndex++) {
+    const frame = frames[frameIndex] || [];
+    for (let bin = 0; bin < binCount; bin++) {
+      const value = frame[bin];
+      flat[frameIndex * binCount + bin] = typeof value === 'number' ? value : 0;
+    }
+  }
+  return { flatArray: flat, binCount };
 };

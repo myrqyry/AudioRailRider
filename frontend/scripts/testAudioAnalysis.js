@@ -29,6 +29,14 @@ async function testAudioAnalysis() {
     console.log(`Energy: ${audioFeatures.energy}`);
     console.log(`Spectral Centroid: ${audioFeatures.spectralCentroid}`);
     console.log(`Spectral Flux: ${audioFeatures.spectralFlux}`);
+    if (audioFeatures.enhanced) {
+      console.log(`Enhanced Tempo: ${audioFeatures.enhanced.tempo.toFixed(2)} BPM`);
+      console.log(`Detected Beats: ${audioFeatures.enhanced.beats.length}`);
+      console.log(`Structural Boundaries: ${audioFeatures.enhanced.structuralBoundaries.length}`);
+      console.log(`Energy Frames: ${audioFeatures.enhanced.energy.length}`);
+    } else {
+      console.log('Enhanced feature set unavailable (Meyda not loaded).');
+    }
   } catch (error) {
     console.error('Error analyzing audio:', error);
   }

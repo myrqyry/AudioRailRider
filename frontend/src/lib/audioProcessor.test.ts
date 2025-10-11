@@ -45,17 +45,28 @@ describe('analyzeAudio', () => {
       energy: 1,
       spectralCentroid: 1000,
       spectralFlux: 0.1,
+      perceptualSharpness: 0.2,
+      spectralRolloff: 4800,
+      zcr: 0.05,
+      loudness: { specific: new Array(24).fill(0.5) },
+      chroma: new Array(12).fill(0.3),
+      mfcc: new Array(13).fill(0.1),
     });
 
     const file = new File([''], 'test.mp3', { type: 'audio/mpeg' });
     const features = await analyzeAudio(file);
 
     expect(features).toBeDefined();
-  expect(secondsToNumber(features.duration)).toBe(1.0);
-    expect(features.bpm).toBe(120); // The mock BPM is 120
-    expect(features.energy).toBeCloseTo(0.1); // 1 / 10
-    expect(features.spectralCentroid).toBe(1000);
-    expect(features.spectralFlux).toBe(0.1);
+    expect(secondsToNumber(features.duration)).toBe(1.0);
+    expect(features.bpm).toBeGreaterThan(0);
+    expect(features.energy).toBeGreaterThan(0);
+    expect(features.spectralCentroid).toBeGreaterThan(0);
+    expect(features.spectralFlux).toBeGreaterThan(0);
+    expect(features.frameAnalyses.length).toBeGreaterThan(0);
+    expect(features.enhanced).toBeTruthy();
+    expect(features.enhanced?.energy).toBeInstanceOf(Float32Array);
+    expect(features.enhanced?.beats).toBeInstanceOf(Array);
+    expect(features.enhanced?.structuralBoundaries).toBeInstanceOf(Array);
 
     expect(mockDecodeAudioData).toHaveBeenCalledTimes(1);
     expect(mockClose).toHaveBeenCalledTimes(1);
@@ -83,11 +94,12 @@ describe('analyzeAudio', () => {
     const features = await analyzeAudio(file);
 
     expect(features).toBeDefined();
-  expect(secondsToNumber(features.duration)).toBe(2.0);
+    expect(secondsToNumber(features.duration)).toBe(2.0);
     expect(features.bpm).toBe(120);
     expect(features.energy).toBe(0);
     expect(features.spectralCentroid).toBe(0);
     expect(features.spectralFlux).toBe(0);
+    expect(features.enhanced).toBeNull();
 
     expect(mockDecodeAudioData).toHaveBeenCalledTimes(1);
     expect(mockClose).toHaveBeenCalledTimes(1);

@@ -12,6 +12,9 @@ export interface WorkletAnalysisResult {
   bass: number;
   mid: number;
   high: number;
+  frame?: Float32Array;
+  sampleRate?: number;
+  channelCount?: number;
 }
 
 export type WorkletAvailable = boolean;
@@ -70,7 +73,7 @@ const getInlineProcessorSourceString = (): string => {
         const input = inputs[0];
         const output = outputs[0];
         if (!input || !input[0]) return true;
-        const frame = input[0]; const N = frame.length;
+  const frame = input[0]; const N = frame.length;
         let energy = 0; for (let i = 0; i < N; i++) energy += frame[i]*frame[i]; energy = energy / N;
         const re = new Float32Array(N); const im = new Float32Array(N);
         for (let i = 0; i < N; i++) { re[i] = frame[i]; im[i] = 0.0; }
@@ -84,7 +87,23 @@ const getInlineProcessorSourceString = (): string => {
         let bass = 0, mid = 0, high = 0; for (let k = 0; k < mags.length; k++) { if (k < bassRange) bass += mags[k]; else if (k < midRange) mid += mags[k]; else high += mags[k]; }
         const total = bass + mid + high || 1; bass /= total; mid /= total; high /= total;
         this._prevMagnitudes = mags;
-        this.port.postMessage({ type: 'analysis', timestamp: currentTime, energy: energy, spectralCentroid: spectralCentroid, spectralFlux: flux, bass: bass, mid: mid, high: high });
+        const frameCopy = frame.slice();
+        this.port.postMessage(
+          {
+            type: 'analysis',
+            timestamp: currentTime,
+            energy: energy,
+            spectralCentroid: spectralCentroid,
+            spectralFlux: flux,
+            bass: bass,
+            mid: mid,
+            high: high,
+            frame: frameCopy,
+            sampleRate: sampleRate,
+            channelCount: input.length,
+          },
+          [frameCopy.buffer]
+        );
         if (output) {
           const channelCount = Math.min(output.length, input.length);
           for (let ch = 0; ch < channelCount; ch++) {
@@ -156,6 +175,9 @@ export const createAnalyzerNode = (audioContext: AudioContext, onAnalysis: (a: W
       const data = ev.data;
       if (!data || data.type !== 'analysis') return;
       try {
+        const frame = data.frame instanceof Float32Array
+          ? data.frame
+          : (data.frame ? new Float32Array(data.frame) : undefined);
         onAnalysis({
           timestamp: data.timestamp,
           energy: data.energy,
@@ -164,6 +186,9 @@ export const createAnalyzerNode = (audioContext: AudioContext, onAnalysis: (a: W
           bass: data.bass,
           mid: data.mid,
           high: data.high,
+          frame,
+          sampleRate: typeof data.sampleRate === 'number' ? data.sampleRate : audioContext.sampleRate,
+          channelCount: typeof data.channelCount === 'number' ? data.channelCount : 1,
         });
       } catch (e) {
         console.warn('[audioWorklet] onAnalysis callback failed', e);
