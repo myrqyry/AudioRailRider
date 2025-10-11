@@ -39,6 +39,32 @@ export interface GPUUpdateParams {
   noiseSpeed: number;
 }
 
+export type ParticleQualityLevel = 'low' | 'medium' | 'high';
+
+interface QualityProfile {
+  particleBudget: number;
+  spawnBatch: number;
+  gpuUpdateInterval: number;
+}
+
+const QUALITY_PROFILES: Record<ParticleQualityLevel, QualityProfile> = {
+  low: {
+    particleBudget: Math.floor(RIDE_CONFIG.PARTICLE_COUNT * 0.45),
+    spawnBatch: Math.max(20, Math.floor(RIDE_CONFIG.PARTICLE_SPAWN_COUNT * 0.55)),
+    gpuUpdateInterval: 1 / 35,
+  },
+  medium: {
+    particleBudget: Math.floor(RIDE_CONFIG.PARTICLE_COUNT * 0.7),
+    spawnBatch: Math.max(40, Math.floor(RIDE_CONFIG.PARTICLE_SPAWN_COUNT * 0.8)),
+    gpuUpdateInterval: 1 / 50,
+  },
+  high: {
+    particleBudget: RIDE_CONFIG.PARTICLE_COUNT,
+    spawnBatch: RIDE_CONFIG.PARTICLE_SPAWN_COUNT,
+    gpuUpdateInterval: 0,
+  },
+};
+
 export class ParticleSystem {
   private readonly _dummy = new THREE.Object3D();
   private readonly _tempColor = new THREE.Color();
@@ -73,6 +99,12 @@ export class ParticleSystem {
   private gpuPosQuad: THREE.Mesh | null = null;
   private gpuSwap = false;
   private rendererInfo: { ok: boolean; renderer: string; vendor: string } | null = null;
+  private qualityLevel: ParticleQualityLevel = 'high';
+  private particleBudget: number = QUALITY_PROFILES.high.particleBudget;
+  private spawnBatchSize: number = QUALITY_PROFILES.high.spawnBatch;
+  private gpuUpdateInterval: number = QUALITY_PROFILES.high.gpuUpdateInterval;
+  private gpuUpdateAccumulator = 0;
+  private readonly pendingUniforms = new Map<string, unknown>();
 
   constructor(private readonly scene: THREE.Scene) {
     this.texSize = Math.ceil(Math.sqrt(RIDE_CONFIG.PARTICLE_COUNT));
@@ -87,6 +119,7 @@ export class ParticleSystem {
     ]);
 
     this.buildParticleMeshes();
+    this.setQualityProfile(this.qualityLevel);
   }
 
   public get instancedMesh(): THREE.InstancedMesh | null {
@@ -114,14 +147,152 @@ export class ParticleSystem {
     this.featureVisuals.set(featureName, defaultConfig);
   }
 
+  private updateScalarUniform(uniform: { value: unknown } | undefined, next: number, epsilon = 1e-3): void {
+    if (!uniform) return;
+    const current = typeof uniform.value === 'number' ? uniform.value : Number(uniform.value);
+    if (!Number.isFinite(current) || Math.abs((current as number) - next) > epsilon) {
+      (uniform as THREE.IUniform).value = next;
+    }
+  }
+
+  public setQualityProfile(level: ParticleQualityLevel): void {
+    const profile = QUALITY_PROFILES[level];
+    if (!profile) return;
+
+    const nextBudget = Math.max(1, Math.min(profile.particleBudget, RIDE_CONFIG.PARTICLE_COUNT));
+    const nextSpawnBatch = Math.max(1, Math.min(profile.spawnBatch, nextBudget));
+    const nextUpdateInterval = Math.max(0, profile.gpuUpdateInterval);
+
+    const unchanged =
+      this.qualityLevel === level &&
+      this.particleBudget === nextBudget &&
+      this.spawnBatchSize === nextSpawnBatch &&
+      Math.abs(this.gpuUpdateInterval - nextUpdateInterval) < 1e-6;
+    if (unchanged) return;
+
+    this.qualityLevel = level;
+    this.particleBudget = nextBudget;
+    this.spawnBatchSize = nextSpawnBatch;
+    this.gpuUpdateInterval = nextUpdateInterval;
+    this.gpuUpdateAccumulator = 0;
+
+    if (this.particleCursor >= this.particleBudget) {
+      this.particleCursor = this.particleBudget > 0 ? this.particleCursor % this.particleBudget : 0;
+    }
+
+    if (this.particleInstancedMesh) {
+      this.particleInstancedMesh.count = this.particleBudget;
+      this.particleInstancedMesh.instanceMatrix.needsUpdate = true;
+      this.hideInstancesBeyondBudget();
+    }
+
+    this.rebuildFreeStackForBudget();
+    this.enforceBudgetOnPointsGeometry();
+  }
+
   public applyShaderUniform(name: string, value: unknown) {
+    this.pendingUniforms.set(name, value);
     if (!this.gpuEnabled) return;
 
     const materials = [this.gpuVelMaterial, this.gpuPosMaterial];
     for (const material of materials) {
       const uniform = material?.uniforms?.[name];
-      if (uniform) {
-        uniform.value = value as never;
+      if (!uniform) continue;
+      if (typeof value === 'number') {
+        this.updateScalarUniform(uniform, value);
+      } else {
+        (uniform as THREE.IUniform).value = value as never;
+      }
+    }
+  }
+
+  private rebuildFreeStackForBudget(): void {
+    if (!this.instanceLifetimes || !this.instanceStartTimes) {
+      this.instanceFreeStack = [];
+      return;
+    }
+
+    const total = this.instanceLifetimes.length;
+    for (let i = this.particleBudget; i < total; i++) {
+      this.instanceLifetimes[i] = 0;
+      this.instanceStartTimes[i] = 0;
+    }
+
+    const newStack: number[] = [];
+    const cap = Math.min(this.particleBudget, total);
+    for (let i = cap - 1; i >= 0; i--) {
+      if (this.instanceLifetimes[i] <= 0) {
+        newStack.push(i);
+      }
+    }
+    this.instanceFreeStack = newStack;
+  }
+
+  private hideInstancesBeyondBudget(): void {
+    if (!this.particleInstancedMesh) return;
+    if (this.particleBudget >= RIDE_CONFIG.PARTICLE_COUNT) return;
+
+    const dummy = this._dummy;
+    for (let i = this.particleBudget; i < RIDE_CONFIG.PARTICLE_COUNT; i++) {
+      dummy.position.set(0, -9999, 0);
+      dummy.scale.setScalar(0);
+      dummy.updateMatrix();
+      this.particleInstancedMesh.setMatrixAt(i, dummy.matrix);
+    }
+    this.particleInstancedMesh.instanceMatrix.needsUpdate = true;
+  }
+
+  private enforceBudgetOnPointsGeometry(): void {
+    if (!this.particleSystem) return;
+    const geom = this.particleSystem.geometry as THREE.BufferGeometry;
+    const positions = geom.getAttribute('position') as THREE.BufferAttribute | undefined;
+    const velocities = geom.getAttribute('velocity') as THREE.BufferAttribute | undefined;
+    const startTimes = geom.getAttribute('startTime') as THREE.BufferAttribute | undefined;
+    if (!positions) return;
+
+    const limit = Math.min(this.particleBudget, positions.count);
+    if (limit < positions.count) {
+      for (let i = limit; i < positions.count; i++) {
+        const base = i * 3;
+        positions.array[base + 0] = 0;
+        positions.array[base + 1] = -9999;
+        positions.array[base + 2] = 0;
+        if (velocities) {
+          velocities.array[base + 0] = 0;
+          velocities.array[base + 1] = 0;
+          velocities.array[base + 2] = 0;
+        }
+        if (startTimes) {
+          startTimes.array[i] = 0;
+        }
+      }
+      (positions as any).updateRange = { offset: limit * 3, count: (positions.count - limit) * 3 };
+      positions.needsUpdate = true;
+      if (velocities) {
+        (velocities as any).updateRange = { offset: limit * 3, count: (velocities.count - limit) * 3 };
+        velocities.needsUpdate = true;
+      }
+      if (startTimes) {
+        (startTimes as any).updateRange = { offset: limit, count: startTimes.count - limit };
+        startTimes.needsUpdate = true;
+      }
+    }
+  }
+
+  private applyPendingUniforms(): void {
+    if (!this.gpuEnabled) return;
+    if (!this.pendingUniforms.size) return;
+
+    const materials = [this.gpuVelMaterial, this.gpuPosMaterial];
+    for (const [name, value] of this.pendingUniforms.entries()) {
+      for (const material of materials) {
+        const uniform = material?.uniforms?.[name];
+        if (!uniform) continue;
+        if (typeof value === 'number') {
+          this.updateScalarUniform(uniform, value);
+        } else {
+          (uniform as THREE.IUniform).value = value as never;
+        }
       }
     }
   }
@@ -205,9 +376,10 @@ export class ParticleSystem {
     if (!this.particleSystem) return;
 
     const { origin, feature, audioFeatures, segmentIntensityBoost, nowSeconds } = context;
+    const baseBatch = this.spawnBatchSize;
     const spawnCount = count > 0
-      ? Math.min(count, RIDE_CONFIG.PARTICLE_SPAWN_COUNT)
-      : RIDE_CONFIG.PARTICLE_SPAWN_COUNT;
+      ? Math.min(count, baseBatch)
+      : baseBatch;
 
     if (this.particleInstancedMesh) {
       this.spawnInstanceBatch(spawnCount, context, nowSeconds);
@@ -219,7 +391,8 @@ export class ParticleSystem {
 
   public spawnFeatureBurst(featureName: string, intensity: number, origin: THREE.Vector3, audioFeatures: Record<string, number>, segmentIntensityBoost: number, nowSeconds: number) {
     const scaled = Math.max(0, Math.min(1, intensity));
-    const count = Math.max(1, Math.round(RIDE_CONFIG.PARTICLE_SPAWN_COUNT * (0.5 + scaled * 2.0)));
+    const baseBatch = this.spawnBatchSize;
+    const count = Math.max(1, Math.round(baseBatch * (0.5 + scaled * 2.0)));
     this.spawnParticles(count, {
       origin,
       feature: featureName,
@@ -710,8 +883,9 @@ export class ParticleSystem {
       renderer.render(this.gpuQuadScene, this.gpuQuadCamera);
       renderer.setRenderTarget(null);
 
-      this.gpuSwap = false;
-      this.gpuEnabled = true;
+  this.gpuSwap = false;
+  this.gpuEnabled = true;
+  this.applyPendingUniforms();
     } catch (e) {
       const ri = this.detectRenderer();
       console.error(`[GPU Particles] Failed to initialize GPU particle system. renderer=${ri.renderer}, vendor=${ri.vendor}`, e);
@@ -722,16 +896,25 @@ export class ParticleSystem {
 
   public updateGPU(deltaSeconds: number, params: GPUUpdateParams) {
     if (!this.gpuEnabled || !this.gpuRenderer || !this.gpuQuadScene || !this.gpuQuadCamera) return;
-    const instancedMesh = this.particleInstancedMesh;
-    if (!instancedMesh) return;
+    if (!this.particleInstancedMesh) return;
 
-    // Quick sanity check (development builds only)
+    if (this.gpuUpdateInterval > 0) {
+      this.gpuUpdateAccumulator += deltaSeconds;
+      if (this.gpuUpdateAccumulator < this.gpuUpdateInterval) {
+        return;
+      }
+      this.gpuUpdateAccumulator = 0;
+    }
+
     if (process.env.NODE_ENV === 'development') {
       const maxSafeId = this.texSize * this.texSize - 1;
       if (this.particleInstancedMesh.count > maxSafeId + 1) {
         console.warn(`[ParticleSystem] Particle count ${this.particleInstancedMesh.count} exceeds texture capacity ${maxSafeId + 1}`);
       }
     }
+
+    this.applyPendingUniforms();
+
     try {
       const size = (this.gpuPosRTA as THREE.WebGLRenderTarget).width;
       const readPos = this.gpuSwap ? this.gpuPosRTB : this.gpuPosRTA;
@@ -741,24 +924,25 @@ export class ParticleSystem {
 
       try {
         const velMat = this.gpuVelMaterial as any;
-        velMat.uniforms.time.value = performance.now() / 1000;
-        velMat.uniforms.dt.value = deltaSeconds;
-        velMat.uniforms.texSize.value = size;
+        this.updateScalarUniform(velMat.uniforms.time, performance.now() / 1000, 5e-3);
+        this.updateScalarUniform(velMat.uniforms.dt, deltaSeconds, 1e-4);
+        this.updateScalarUniform(velMat.uniforms.texSize, size, 0);
         velMat.uniforms.prevVel.value = readVel!.texture;
         velMat.uniforms.prevPos.value = readPos!.texture;
         const boost = params.segmentIntensityBoost;
-        velMat.uniforms.subBass.value = (params.audioFeatures.subBass || 0.0) * boost;
-        velMat.uniforms.bass.value = (params.audioFeatures.bass || 0.0) * boost;
-        velMat.uniforms.lowMid.value = (params.audioFeatures.lowMid || 0.0) * boost;
-        velMat.uniforms.mid.value = (params.audioFeatures.mid || 0.0) * boost;
-        velMat.uniforms.highMid.value = (params.audioFeatures.highMid || 0.0) * boost;
-        velMat.uniforms.treble.value = (params.audioFeatures.treble || 0.0) * boost;
-        velMat.uniforms.sparkle.value = (params.audioFeatures.sparkle || 0.0) * boost;
-        velMat.uniforms.audioForce.value = params.gpuAudioForce || 0.0;
-        velMat.uniforms.curlStrength.value = params.curlStrength;
-        velMat.uniforms.noiseScale.value = params.noiseScale;
-        velMat.uniforms.noiseSpeed.value = params.noiseSpeed;
+        this.updateScalarUniform(velMat.uniforms.subBass, (params.audioFeatures.subBass || 0) * boost);
+        this.updateScalarUniform(velMat.uniforms.bass, (params.audioFeatures.bass || 0) * boost);
+        this.updateScalarUniform(velMat.uniforms.lowMid, (params.audioFeatures.lowMid || 0) * boost);
+        this.updateScalarUniform(velMat.uniforms.mid, (params.audioFeatures.mid || 0) * boost);
+        this.updateScalarUniform(velMat.uniforms.highMid, (params.audioFeatures.highMid || 0) * boost);
+        this.updateScalarUniform(velMat.uniforms.treble, (params.audioFeatures.treble || 0) * boost);
+        this.updateScalarUniform(velMat.uniforms.sparkle, (params.audioFeatures.sparkle || 0) * boost);
+        this.updateScalarUniform(velMat.uniforms.audioForce, params.gpuAudioForce || 0);
+        this.updateScalarUniform(velMat.uniforms.curlStrength, params.curlStrength, 1e-3);
+        this.updateScalarUniform(velMat.uniforms.noiseScale, params.noiseScale, 1e-3);
+        this.updateScalarUniform(velMat.uniforms.noiseSpeed, params.noiseSpeed, 1e-3);
       } catch (e) {}
+
       this.gpuVelQuad!.visible = true;
       this.gpuRenderer!.setRenderTarget(writeVel!);
       this.gpuRenderer!.render(this.gpuQuadScene!, this.gpuQuadCamera!);
@@ -766,7 +950,7 @@ export class ParticleSystem {
 
       try {
         const posMat = this.gpuPosMaterial as any;
-        posMat.uniforms.dt.value = deltaSeconds;
+        this.updateScalarUniform(posMat.uniforms.dt, deltaSeconds, 1e-4);
         posMat.uniforms.prevPos.value = readPos!.texture;
         posMat.uniforms.velTex.value = writeVel!.texture;
       } catch (e) {}
@@ -778,11 +962,10 @@ export class ParticleSystem {
 
       this.gpuRenderer!.setRenderTarget(null);
 
-      const latestPos = writePos!;
       try {
-        const shaderMat = instancedMesh.material as any;
-        shaderMat.uniforms.posTex.value = latestPos.texture;
-        shaderMat.uniforms.texSize.value = size;
+        const shaderMat = this.particleInstancedMesh.material as any;
+        shaderMat.uniforms.posTex.value = writePos!.texture;
+        this.updateScalarUniform(shaderMat.uniforms.texSize, size, 0);
         shaderMat.needsUpdate = true;
       } catch (e) {}
 
@@ -897,6 +1080,7 @@ export class ParticleSystem {
       this.particleInstancedMesh.material = shaderMat as any;
       this.particleInstancedMesh.matrixAutoUpdate = false;
       this.particleInstancedMesh.matrix.identity();
+      this.particleInstancedMesh.count = this.particleBudget;
       this.scene.add(this.particleInstancedMesh);
       this.validateParticleLayout();
     } catch (e) {
@@ -942,7 +1126,8 @@ export class ParticleSystem {
 
   private spawnInstanceBatch(spawnCount: number, context: SpawnContext, nowSeconds: number) {
     if (!this.particleInstancedMesh) return;
-    const particleCount = RIDE_CONFIG.PARTICLE_COUNT;
+    const particleCount = this.particleBudget;
+    if (particleCount <= 0) return;
     const positionsAttr = (this.particleSystem!.geometry as THREE.BufferGeometry).attributes.position as any;
     const velocitiesAttr = (this.particleSystem!.geometry as THREE.BufferGeometry).attributes.velocity as any;
     const startTimesAttr = (this.particleSystem!.geometry as THREE.BufferGeometry).attributes.startTime as any;
@@ -1066,7 +1251,8 @@ export class ParticleSystem {
     const positions = geom.attributes.position as THREE.BufferAttribute;
     const velocities = geom.attributes.velocity as THREE.BufferAttribute;
     const startTimes = geom.attributes.startTime as THREE.BufferAttribute;
-    const particleCount = RIDE_CONFIG.PARTICLE_COUNT;
+  const particleCount = this.particleBudget;
+  if (particleCount <= 0) return;
 
     if (this.particleCursor + spawnCount > particleCount) {
       (positions as any).updateRange = { offset: 0, count: -1 };
@@ -1103,14 +1289,22 @@ export class ParticleSystem {
 
   private allocateInstance(): number {
     if (!this.instanceFreeStack || this.instanceFreeStack.length === 0) return -1;
-    return this.instanceFreeStack.pop() as number;
+    while (this.instanceFreeStack.length > 0) {
+      const idx = this.instanceFreeStack.pop() as number;
+      if (idx < this.particleBudget) {
+        return idx;
+      }
+    }
+    return -1;
   }
 
   private freeInstance(idx: number) {
     if (!this.instanceFreeStack) this.instanceFreeStack = [];
     if (this.instanceLifetimes) this.instanceLifetimes[idx] = 0;
     if (this.instanceStartTimes) this.instanceStartTimes[idx] = 0;
-    this.instanceFreeStack.push(idx);
+    if (idx < this.particleBudget) {
+      this.instanceFreeStack.push(idx);
+    }
     try {
       if (this.particleInstancedMesh) {
         const geo: any = this.particleInstancedMesh.geometry;

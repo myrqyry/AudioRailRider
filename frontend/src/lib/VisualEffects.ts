@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { TrackData, FrameAnalysis, SegmentDetail, TimelineEvent, secondsToNumber } from 'shared/types';
 import { RIDE_CONFIG } from 'shared/constants';
-import { ParticleSystem, FeatureVisualConfig, GPUUpdateParams } from './visual-effects/ParticleSystem';
+import { ParticleSystem, FeatureVisualConfig, GPUUpdateParams, ParticleQualityLevel } from './visual-effects/ParticleSystem';
+import { Vector3Pool } from './utils/Vector3Pool';
 
 // --- Helpers ---
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
@@ -67,15 +68,22 @@ export class VisualEffects {
   private trackPulse: number = 0;
 
   // --- Object Pools ---
-  private readonly _vec3Pool = Array.from({length: 6}, () => new THREE.Vector3());
+  private readonly _vectorPool = new Vector3Pool(12);
+  private readonly _scopedVectors: THREE.Vector3[] = [];
   private readonly _colorPool = Array.from({length: 4}, () => new THREE.Color());
-  private _vec3PoolIndex = 0;
   private _colorPoolIndex = 0;
 
   private getTempVector3(): THREE.Vector3 {
-    const vec = this._vec3Pool[this._vec3PoolIndex];
-    this._vec3PoolIndex = (this._vec3PoolIndex + 1) % this._vec3Pool.length;
-    return vec.set(0, 0, 0);
+    const vector = this._vectorPool.acquire();
+    this._scopedVectors.push(vector);
+    return vector.set(0, 0, 0);
+  }
+
+  private releaseTempVectors(): void {
+    while (this._scopedVectors.length > 0) {
+      const vector = this._scopedVectors.pop()!;
+      this._vectorPool.release(vector);
+    }
   }
 
   private getTempColor(): THREE.Color {
@@ -97,7 +105,7 @@ export class VisualEffects {
       return false;
     }
 
-  const value = uniform.value as THREE.Color | THREE.Vector3 | undefined;
+    const value = uniform.value as THREE.Color | THREE.Vector3 | undefined;
 
     if (value instanceof THREE.Color) {
       if (!value.equals(newColor)) {
@@ -142,7 +150,7 @@ export class VisualEffects {
     this.trackTintA = this.baseRailColor.clone().lerp(this.baseGhostTintA, 0.5);
     this.trackTintB = this.baseEmissiveColor.clone().lerp(this.baseGhostTintB, 0.6);
 
-  const n = trackData.segmentDetails?.length ?? 0;
+    const n = trackData.segmentDetails?.length ?? 0;
     this.segmentProgress = this.ensureSegmentMidpoints(
       trackData.segmentProgress,
       trackData.segmentDetails,
@@ -242,6 +250,8 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     this.rebuildGhostRibbon(curve, segments);
 
     this.particles = new ParticleSystem(this.scene);
+    const initialProfile: ParticleQualityLevel = this.highQualityMode ? 'high' : 'medium';
+    this.particles.setQualityProfile(initialProfile);
 
     try {
       const listenerRig = new THREE.Object3D();
@@ -372,6 +382,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
   }
 
   public update(elapsedTime: number, currentFrame: FrameAnalysis | null, cameraPosition: THREE.Vector3, lookAtPosition: THREE.Vector3, rideProgress: number) {
+    try {
     const now = performance.now();
     const nowSeconds = now / 1000;
     const deltaSeconds = this.lastUpdateSeconds === 0 ? 1 / 60 : Math.min(0.25, Math.max(1/240, nowSeconds - this.lastUpdateSeconds));
@@ -535,6 +546,9 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     } catch (e) {}
 
     this.particles.updatePointsMaterial(this.audioFeatures, this.segmentIntensityBoost, this.segmentColorTarget, this.baseRailColor);
+    } finally {
+      this.releaseTempVectors();
+    }
   }
 
   public setAudioForce(value: number) {
@@ -787,7 +801,8 @@ void main() {
 
   private switchToLowQuality() {
     if (!this.highQualityMode) return;
-    this.highQualityMode = false;
+  this.highQualityMode = false;
+  this.particles.setQualityProfile('low');
     
     const oldGeometry = this.trackMesh.geometry;
     const curve = new THREE.CatmullRomCurve3(this.trackData.path.map(p => new THREE.Vector3(p.x, p.y, p.z)));
@@ -806,7 +821,8 @@ void main() {
 
   public switchToHighQuality() {
     if (this.highQualityMode) return;
-    this.highQualityMode = true;
+  this.highQualityMode = true;
+  this.particles.setQualityProfile('high');
 
     const oldGeometry = this.trackMesh.geometry;
     const curve = new THREE.CatmullRomCurve3(this.trackData.path.map(p => new THREE.Vector3(p.x, p.y, p.z)));
