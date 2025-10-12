@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { MeshBVH } from 'three-mesh-bvh';
 import { TrackData, FrameAnalysis, SegmentDetail, TimelineEvent, secondsToNumber, SynestheticBlueprintLayer } from 'shared/types';
 import { RIDE_CONFIG } from 'shared/constants';
 import { ParticleSystem, FeatureVisualConfig, GPUUpdateParams, ParticleQualityLevel } from './visual-effects/ParticleSystem';
@@ -407,149 +408,151 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
 
   public update(elapsedTime: number, currentFrame: FrameAnalysis | null, cameraPosition: THREE.Vector3, lookAtPosition: THREE.Vector3, rideProgress: number) {
     try {
-    const now = performance.now();
-    const nowSeconds = now / 1000;
-    const deltaSeconds = this.lastUpdateSeconds === 0 ? 1 / 60 : Math.min(0.25, Math.max(1/240, nowSeconds - this.lastUpdateSeconds));
-    this.lastUpdateSeconds = nowSeconds;
+      const now = performance.now();
+      const nowSeconds = now / 1000;
+      const deltaSeconds = this.lastUpdateSeconds === 0 ? 1 / 60 : Math.min(0.25, Math.max(1 / 240, nowSeconds - this.lastUpdateSeconds));
+      this.lastUpdateSeconds = nowSeconds;
 
-    const clampedProgress = THREE.MathUtils.clamp(rideProgress ?? 0, 0, 1);
-  const baseSegmentBoost = this.applySegmentMood(clampedProgress);
-    const baseSegmentBoost = this.applySegmentMood(clampedProgress);
-    this.trackMaterial.emissive.lerp(this.segmentColorTarget, 0.05);
-    this._colorTmp.copy(this.segmentColorTarget).lerp(this.baseRailColor, 0.4);
-    this.trackMaterial.color.lerp(this._colorTmp, 0.05);
+      const clampedProgress = THREE.MathUtils.clamp(rideProgress ?? 0, 0, 1);
+      const baseSegmentBoost = this.applySegmentMood(clampedProgress);
+      this.trackMaterial.emissive.lerp(this.segmentColorTarget, 0.05);
+      this._colorTmp.copy(this.segmentColorTarget).lerp(this.baseRailColor, 0.4);
+      this.trackMaterial.color.lerp(this._colorTmp, 0.05);
 
-    const tintA = this._colorTmp2.copy(this.baseGhostTintA).lerp(this.segmentColorTarget, 0.3);
-    const tintB = this._colorTmp3.copy(this.baseGhostTintB).lerp(this.segmentColorTarget, 0.6);
-    this.trackTintA.copy(tintA);
-    this.trackTintB.copy(tintB);
+      const tintA = this._colorTmp2.copy(this.baseGhostTintA).lerp(this.segmentColorTarget, 0.3);
+      const tintB = this._colorTmp3.copy(this.baseGhostTintB).lerp(this.segmentColorTarget, 0.6);
+      this.trackTintA.copy(tintA);
+      this.trackTintB.copy(tintB);
 
-    const passionBoost = this.atmosphere
-      ? this.atmosphere.update({
-          deltaSeconds,
-          frame: currentFrame,
-          audioFeatures: this.audioFeatures,
-          segmentColor: this.segmentColorTarget,
-          segmentIntensity: baseSegmentBoost,
-        })
-      : 1;
-    this.passionGain = passionBoost;
-    this.segmentIntensityBoost = baseSegmentBoost * passionBoost;
+      const passionBoost = this.atmosphere
+        ? this.atmosphere.update({
+            deltaSeconds,
+            frame: currentFrame,
+            audioFeatures: this.audioFeatures,
+            segmentColor: this.segmentColorTarget,
+            segmentIntensity: baseSegmentBoost,
+          })
+        : 1;
+      this.passionGain = passionBoost;
+      this.segmentIntensityBoost = baseSegmentBoost * passionBoost;
 
-    this.frameCount++;
-    
-    if (this.firstUpdateTime === 0) {
-      this.firstUpdateTime = now;
-      this.lastPerformanceCheck = now;
-    }
-    
-    const WARMUP_PERIOD = 5000;
-    if (!this.isWarmedUp && now - this.firstUpdateTime > WARMUP_PERIOD) {
-      this.isWarmedUp = true;
-      this.lastPerformanceCheck = now;
-      this.frameCount = 0;
-    }
-    
-    if (this.isWarmedUp && now - this.lastPerformanceCheck > PERFORMANCE_CHECK_INTERVAL) {
-      const fps = (this.frameCount * 1000) / (now - this.lastPerformanceCheck);
-      this.lastPerformanceCheck = now;
-      this.frameCount = 0;
-      
-      if (fps < TARGET_FPS && this.highQualityMode) {
-        if (this.lowQualitySince === null) {
-          this.lowQualitySince = now;
-          console.log(`[VisualEffects] Low perf detected: ${fps.toFixed(1)} FPS`);
-        }
-        if (this.lowQualitySince !== null && now - this.lowQualitySince >= LOW_QUALITY_DEBOUNCE_MS) {
-          console.log(`[VisualEffects] Performance: ${fps.toFixed(1)} FPS - Switching to low quality mode`);
-          this.switchToLowQuality();
+      this.frameCount++;
+
+      if (this.firstUpdateTime === 0) {
+        this.firstUpdateTime = now;
+        this.lastPerformanceCheck = now;
+      }
+
+      const WARMUP_PERIOD = 5000;
+      if (!this.isWarmedUp && now - this.firstUpdateTime > WARMUP_PERIOD) {
+        this.isWarmedUp = true;
+        this.lastPerformanceCheck = now;
+        this.frameCount = 0;
+      }
+
+      if (this.isWarmedUp && now - this.lastPerformanceCheck > PERFORMANCE_CHECK_INTERVAL) {
+        const fps = (this.frameCount * 1000) / (now - this.lastPerformanceCheck);
+        this.lastPerformanceCheck = now;
+        this.frameCount = 0;
+
+        if (fps < TARGET_FPS && this.highQualityMode) {
+          if (this.lowQualitySince === null) {
+            this.lowQualitySince = now;
+            console.log(`[VisualEffects] Low perf detected: ${fps.toFixed(1)} FPS`);
+          }
+          if (this.lowQualitySince !== null && now - this.lowQualitySince >= LOW_QUALITY_DEBOUNCE_MS) {
+            console.log(`[VisualEffects] Performance: ${fps.toFixed(1)} FPS - Switching to low quality mode`);
+            this.switchToLowQuality();
+            this.lowQualitySince = null;
+          }
+        } else {
           this.lowQualitySince = null;
         }
+      }
+
+      const baseMinGlow = BASS_GLOW_MIN * this.segmentIntensityBoost;
+      const baseMaxGlow = BASS_GLOW_MAX * this.segmentIntensityBoost;
+      const glowCeiling = BASS_GLOW_MAX * Math.max(1, this.segmentIntensityBoost);
+      const fallbackBass = this.audioFeatures.bass || 0;
+
+      if (currentFrame) {
+        const bassValue = THREE.MathUtils.clamp(currentFrame.bass, 0, 1);
+        this.targetGlowIntensity = THREE.MathUtils.clamp(baseMinGlow + bassValue * (baseMaxGlow - baseMinGlow), BASS_GLOW_MIN, glowCeiling);
       } else {
-        this.lowQualitySince = null;
+        this.targetGlowIntensity = THREE.MathUtils.clamp(baseMinGlow + fallbackBass * (baseMaxGlow - baseMinGlow), BASS_GLOW_MIN, glowCeiling);
       }
-    }
 
-    const baseMinGlow = BASS_GLOW_MIN * this.segmentIntensityBoost;
-    const baseMaxGlow = BASS_GLOW_MAX * this.segmentIntensityBoost;
-    const glowCeiling = BASS_GLOW_MAX * Math.max(1, this.segmentIntensityBoost);
-    const fallbackBass = this.audioFeatures.bass || 0;
+      const baseForce = currentFrame ? currentFrame.energy * 2.0 + currentFrame.spectralFlux * 1.5 : this.rawAudioForce;
+      this.gpuAudioForce = Math.max(0, baseForce) * this.segmentIntensityBoost;
 
-    if (currentFrame) {
-      const bassValue = THREE.MathUtils.clamp(currentFrame.bass, 0, 1);
-      this.targetGlowIntensity = THREE.MathUtils.clamp(baseMinGlow + bassValue * (baseMaxGlow - baseMinGlow), BASS_GLOW_MIN, glowCeiling);
-    } else {
-      this.targetGlowIntensity = THREE.MathUtils.clamp(baseMinGlow + fallbackBass * (baseMaxGlow - baseMinGlow), BASS_GLOW_MIN, glowCeiling);
-    }
+      this.trackMaterial.emissiveIntensity = THREE.MathUtils.lerp(this.trackMaterial.emissiveIntensity, this.targetGlowIntensity, LERP_FACTOR);
 
-    const baseForce = currentFrame ? (currentFrame.energy * 2.0 + currentFrame.spectralFlux * 1.5) : this.rawAudioForce;
-    this.gpuAudioForce = Math.max(0, baseForce) * this.segmentIntensityBoost;
+      try {
+        const lodHint = (this.scene as any).userData?.lodHint as string | undefined;
+        this.applyLOD(lodHint === 'low' ? 'low' : 'high');
+      } catch (e) {}
 
-    this.trackMaterial.emissiveIntensity = THREE.MathUtils.lerp(this.trackMaterial.emissiveIntensity, this.targetGlowIntensity, LERP_FACTOR);
+      this.trackPulse = Math.max(0, this.trackPulse - deltaSeconds * 1.4);
 
-    try {
-      const lodHint = (this.scene as any).userData?.lodHint as string | undefined;
-      this.applyLOD(lodHint === 'low' ? 'low' : 'high');
-    } catch (e) {}
+      this.trackPulse = this.particles.driveReactiveParticles(
+        {
+          nowSeconds,
+          deltaSeconds,
+          cameraPosition,
+          lookAtPosition,
+          audioFeatures: this.audioFeatures,
+          segmentIntensityBoost: this.segmentIntensityBoost,
+          currentLOD: this.highQualityMode ? 'high' : 'low',
+          gpuAudioForce: this.gpuAudioForce,
+        },
+        this.trackPulse
+      );
 
-    this.trackPulse = Math.max(0, this.trackPulse - deltaSeconds * 1.4);
+      try {
+        const durationNum = this.trackData && this.trackData.audioFeatures && typeof this.trackData.audioFeatures.duration === 'number' ? secondsToNumber(this.trackData.audioFeatures.duration) : 0;
+        const currentAudioTime = durationNum > 0 ? clampedProgress * durationNum : 0;
+        this.handleTimelineEvents(currentAudioTime, deltaSeconds, cameraPosition, lookAtPosition);
+        this.lastAudioTimeSeconds = currentAudioTime;
+      } catch (e) {}
 
-    this.trackPulse = this.particles.driveReactiveParticles({
-      nowSeconds,
-      deltaSeconds,
-      cameraPosition,
-      lookAtPosition,
-      audioFeatures: this.audioFeatures,
-      segmentIntensityBoost: this.segmentIntensityBoost,
-      currentLOD: this.highQualityMode ? 'high' : 'low',
-      gpuAudioForce: this.gpuAudioForce,
-    }, this.trackPulse);
+      if (this.trackShaderUniforms) {
+        const uniforms = this.trackShaderUniforms;
+        this.updateUniformSafe(uniforms.trackTime, elapsedTime, 1e-2);
+        this.updateUniformSafe(uniforms.pulseIntensity, this.trackPulse);
+        this.updateUniformSafe(uniforms.segmentBoost, this.segmentIntensityBoost, 1e-3);
+        this.updateUniformSafe(uniforms.audioFlow, Math.min(1.2, this.gpuAudioForce * 0.25));
+        this.updateUniformSafe(uniforms.distortionStrength, Math.min(0.6, 0.2 + this.trackPulse * 0.5 + this.segmentIntensityBoost * 0.1));
+        this.updateUniformSafe(uniforms.bassIntensity, this.audioFeatures.bass || 0);
+        this.updateUniformSafe(uniforms.trebleIntensity, this.audioFeatures.treble || 0);
+      }
 
-    try {
-      const durationNum = (this.trackData && this.trackData.audioFeatures && typeof this.trackData.audioFeatures.duration === 'number') ? secondsToNumber(this.trackData.audioFeatures.duration) : 0;
-      const currentAudioTime = durationNum > 0 ? (clampedProgress * durationNum) : 0;
-      this.handleTimelineEvents(currentAudioTime, deltaSeconds, cameraPosition, lookAtPosition);
-      this.lastAudioTimeSeconds = currentAudioTime;
-    } catch (e) {}
+      if (this.ghostRibbonMaterial) {
+        const uniforms = this.ghostRibbonMaterial.uniforms;
+        this.updateUniformSafe(uniforms.time, elapsedTime, 1e-2);
+        this.updateUniformSafe(uniforms.audioPulse, Math.min(1.8, this.trackPulse * 1.1 + this.gpuAudioForce * 0.1));
+        this.updateColorUniformSafe(uniforms.colorInner, this.trackTintA);
+        this.updateColorUniformSafe(uniforms.colorOuter, this.trackTintB);
+      }
 
-    if (this.trackShaderUniforms) {
-      const uniforms = this.trackShaderUniforms;
-      this.updateUniformSafe(uniforms.trackTime, elapsedTime, 1e-2);
-      this.updateUniformSafe(uniforms.pulseIntensity, this.trackPulse);
-      this.updateUniformSafe(uniforms.segmentBoost, this.segmentIntensityBoost, 1e-3);
-      this.updateUniformSafe(uniforms.audioFlow, Math.min(1.2, this.gpuAudioForce * 0.25));
-      this.updateUniformSafe(uniforms.distortionStrength, Math.min(0.6, 0.2 + this.trackPulse * 0.5 + this.segmentIntensityBoost * 0.1));
-      this.updateUniformSafe(uniforms.bassIntensity, this.audioFeatures.bass || 0);
-      this.updateUniformSafe(uniforms.trebleIntensity, this.audioFeatures.treble || 0);
-    }
+      this.particles.reclaimExpired(nowSeconds);
 
-    if (this.ghostRibbonMaterial) {
-      const uniforms = this.ghostRibbonMaterial.uniforms;
-      this.updateUniformSafe(uniforms.time, elapsedTime, 1e-2);
-      this.updateUniformSafe(uniforms.audioPulse, Math.min(1.8, this.trackPulse * 1.1 + this.gpuAudioForce * 0.1));
-      this.updateColorUniformSafe(uniforms.colorInner, this.trackTintA);
-      this.updateColorUniformSafe(uniforms.colorOuter, this.trackTintB);
-    }
+      if (this.particles.isGPUEnabled()) {
+        this.updateGPU(deltaSeconds);
+      }
 
-    this.particles.reclaimExpired(nowSeconds);
-
-    if (this.particles.isGPUEnabled()) {
-      this.updateGPU(deltaSeconds);
-    }
-
-    try {
-      const glow = this.camera.getObjectByName('audioGlow') as THREE.PointLight | undefined;
-      if (glow) {
-        const bass = this.audioFeatures.bass || 0;
-        const targetIntensity = 0.12 + (this.gpuAudioForce * 1.6) + (bass * 1.5) * this.segmentIntensityBoost;
-        if (Math.abs(glow.intensity - targetIntensity) > 1e-3) {
-          glow.intensity = THREE.MathUtils.lerp(glow.intensity || 0, Math.max(0, targetIntensity), 0.08);
+      try {
+        const glow = this.camera.getObjectByName('audioGlow') as THREE.PointLight | undefined;
+        if (glow) {
+          const bass = this.audioFeatures.bass || 0;
+          const targetIntensity = 0.12 + this.gpuAudioForce * 1.6 + bass * 1.5 * this.segmentIntensityBoost;
+          if (Math.abs(glow.intensity - targetIntensity) > 1e-3) {
+            glow.intensity = THREE.MathUtils.lerp(glow.intensity || 0, Math.max(0, targetIntensity), 0.08);
+          }
+          glow.color.lerp(this.segmentColorTarget, 0.06);
         }
-        glow.color.lerp(this.segmentColorTarget, 0.06);
-      }
-    } catch (e) {}
+      } catch (e) {}
 
-    this.particles.updatePointsMaterial(this.audioFeatures, this.segmentIntensityBoost, this.segmentColorTarget, this.baseRailColor);
+      this.particles.updatePointsMaterial(this.audioFeatures, this.segmentIntensityBoost, this.segmentColorTarget, this.baseRailColor);
     } finally {
       this.releaseTempVectors();
     }

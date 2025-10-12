@@ -98,12 +98,28 @@ const sanitizeSynestheticLayer = (raw: unknown): SynestheticBlueprintLayer | nul
     };
 };
 
+const computePolylineLength = (pts: THREE.Vector3[]): number => {
+    if (pts.length < 2) return 0;
+    let total = 0;
+    for (let i = 1; i < pts.length; i++) {
+        total += pts[i].distanceTo(pts[i - 1]);
+    }
+    return total;
+};
+
 export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFeatures): TrackData => {
     const SPEED_MULTIPLIER = 1.25;
     const points: THREE.Vector3[] = [];
     const upVectors: THREE.Vector3[] = [];
     const segmentDetails: TrackData['segmentDetails'] = [];
     const segmentSpans: Array<{ start: number; end: number }> = [];
+    const segmentMetrics: Array<{
+        index: number;
+        component: string;
+        computedLength: number;
+        sampleCount: number;
+        source: Record<string, number | string | undefined>;
+    }> = [];
     const synesthetic = sanitizeSynestheticLayer((blueprint as unknown as { synesthetic?: SynestheticBlueprintLayer }).synesthetic);
     const geometrySettings = synesthetic?.geometry ?? null;
 
@@ -139,6 +155,16 @@ export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFe
     }
     const initialSpan = addSegment(initialSegmentPoints, initialSegmentUps);
     if (initialSpan) segmentSpans.push(initialSpan);
+    segmentMetrics.push({
+        index: -1,
+        component: 'initial',
+        computedLength: computePolylineLength(initialSegmentPoints),
+        sampleCount: initialSegmentPoints.length,
+        source: {
+            spacing,
+            samples: length,
+        },
+    });
     segmentDetails.push({
         intensity: 0,
         lightingEffect: 'none',
@@ -153,6 +179,7 @@ export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFe
 
         const rawComponent = (segment as any).component ?? (segment as any).type;
         const normalizedComponent = normalizeSegmentComponent(rawComponent as TrackSegment['component']);
+    const metricsSource: Record<string, number | string | undefined> = {};
 
         switch (normalizedComponent) {
             case 'climb':
@@ -160,6 +187,8 @@ export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFe
                 const typed = segment as Extract<TrackSegment, { component: 'climb' }> | Extract<TrackSegment, { component: 'drop' }>;
                 const angleValue = typed.angle ?? (normalizedComponent === 'climb' ? 15 : -40);
                 const angle = THREE.MathUtils.degToRad(THREE.MathUtils.clamp(angleValue, -90, 90));
+        metricsSource.length = typed.length;
+        metricsSource.angle = angleValue;
 
                 const lengthValue = typed.length ?? 150;
                 const length = Math.max(10, lengthValue) * SPEED_MULTIPLIER;
@@ -186,6 +215,10 @@ export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFe
 
                 const angleValue = typed.angle ?? 90;
                 const angle = THREE.MathUtils.degToRad(THREE.MathUtils.clamp(angleValue, -360, 360));
+                metricsSource.radius = typed.radius;
+                metricsSource.angle = angleValue;
+                metricsSource.direction = typed.direction;
+                metricsSource.length = (segment as { length?: number }).length;
 
                 const direction = typed.direction === 'left' ? 1 : -1;
 
@@ -207,6 +240,8 @@ export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFe
                 const radiusValue = typed.radius ?? 50;
                 const radius = Math.max(10, radiusValue) * SPEED_MULTIPLIER;
                 const forwardStretch = Math.max(radius * 1.5, (typed as any).length ? Math.max(20, Number((typed as any).length)) * SPEED_MULTIPLIER : radius * Math.PI * 0.75);
+                metricsSource.radius = typed.radius;
+                metricsSource.length = (typed as { length?: number }).length;
 
                 const center = currentPos.clone().add(currentDir.clone().multiplyScalar(radius));
 
@@ -225,6 +260,8 @@ export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFe
                 const typed = segment as Extract<TrackSegment, { component: 'barrelRoll' }>;
                 const rotationsValue = typed.rotations ?? 1;
                 const rotations = Math.max(1, Math.round(rotationsValue));
+                metricsSource.length = typed.length;
+                metricsSource.rotations = rotationsValue;
 
                 const lengthValue = typed.length ?? 150;
                 const length = Math.max(10, lengthValue) * SPEED_MULTIPLIER;
@@ -244,6 +281,7 @@ export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFe
                     component: rawComponent
                 });
                 const fallbackLength = Math.max(10, (segment as { length?: number }).length ?? 80) * SPEED_MULTIPLIER;
+                metricsSource.length = (segment as { length?: number }).length;
                 for (let i = 1; i <= resolution; i++) {
                     const alpha = i / resolution;
                     segmentPoints.push(currentPos.clone().add(currentDir.clone().multiplyScalar(alpha * fallbackLength)));
@@ -252,6 +290,7 @@ export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFe
                 break;
             }
         }
+        const computedLength = computePolylineLength(segmentPoints);
         const span = addSegment(segmentPoints, segmentUps);
         if (span) {
             segmentSpans.push(span);
@@ -260,6 +299,13 @@ export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFe
         } else {
             segmentSpans.push({ start: 0, end: points.length > 0 ? points.length - 1 : 0 });
         }
+        segmentMetrics.push({
+            index,
+            component: normalizedComponent,
+            computedLength,
+            sampleCount: segmentPoints.length,
+            source: metricsSource,
+        });
         segmentDetails.push({
             intensity: segment.intensity ?? 0,
             lightingEffect: segment.lightingEffect,
@@ -278,10 +324,44 @@ export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFe
         return Number.isFinite(progress) ? THREE.MathUtils.clamp(progress, 0, 1) : 0;
     });
 
+    let totalLength = 0;
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let minZ = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    let maxZ = Number.NEGATIVE_INFINITY;
+    for (let i = 0; i < points.length; i++) {
+        const p = points[i];
+        if (i > 0) {
+            totalLength += p.distanceTo(points[i - 1]);
+        }
+        if (p.x < minX) minX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.z < minZ) minZ = p.z;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y > maxY) maxY = p.y;
+        if (p.z > maxZ) maxZ = p.z;
+    }
+
     console.log('[TrackBuilder] Generated track geometry', {
         pointCount: points.length,
         segmentCount: blueprint.track.length,
         segmentProgress,
+        metrics: {
+            totalApproxLength: Number(totalLength.toFixed(1)),
+            bounds: {
+                x: [Number(minX.toFixed(2)), Number(maxX.toFixed(2))],
+                y: [Number(minY.toFixed(2)), Number(maxY.toFixed(2))],
+                z: [Number(minZ.toFixed(2)), Number(maxZ.toFixed(2))],
+                span: {
+                    x: Number((maxX - minX).toFixed(2)),
+                    y: Number((maxY - minY).toFixed(2)),
+                    z: Number((maxZ - minZ).toFixed(2)),
+                },
+            },
+            perSegment: segmentMetrics,
+        },
     });
 
     return {
