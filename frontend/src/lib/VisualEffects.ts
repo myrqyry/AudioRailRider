@@ -4,18 +4,6 @@ import { RIDE_CONFIG } from 'shared/constants';
 import { ParticleSystem, FeatureVisualConfig, GPUUpdateParams, ParticleQualityLevel } from './visual-effects/ParticleSystem';
 import { Vector3Pool } from './utils/Vector3Pool';
 import { AtmosphereController } from './environment/AtmosphereController';
-import { MeshBVH, acceleratedRaycast } from 'three-mesh-bvh';
-
-// Augment the THREE namespace to include the acceleratedRaycast
-// This is necessary to make TypeScript aware of the new method on the Mesh prototype
-declare module 'three' {
-    interface Mesh {
-        raycast: typeof acceleratedRaycast;
-    }
-}
-
-// Apply the accelerated raycast method to the THREE.Mesh prototype
-THREE.Mesh.prototype.raycast = acceleratedRaycast;
 
 // --- Helpers ---
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
@@ -177,6 +165,7 @@ export class VisualEffects {
 
     try {
       this.timelineEvents = Array.isArray((trackData as any).events) ? (trackData as any).events.slice() : [];
+
       this.atmosphere = new AtmosphereController(this.scene, trackData.skyColor1 || '#0d0a1f', this.synesthetic?.atmosphere ?? null);
       for (const ev of this.timelineEvents) {
         if (ev && ev.timestamp === undefined && ev.params && ev.params.audioSyncPoint) {
@@ -277,6 +266,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     this.particles.setQualityProfile(initialProfile);
     this.particles.setConsciousnessSettings(this.synesthetic?.particles ?? null);
     this.seedAmbientParticles();
+  this.seedAmbientParticles();
 
     try {
       const listenerRig = new THREE.Object3D();
@@ -424,6 +414,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
 
     const clampedProgress = THREE.MathUtils.clamp(rideProgress ?? 0, 0, 1);
   const baseSegmentBoost = this.applySegmentMood(clampedProgress);
+    const baseSegmentBoost = this.applySegmentMood(clampedProgress);
     this.trackMaterial.emissive.lerp(this.segmentColorTarget, 0.05);
     this._colorTmp.copy(this.segmentColorTarget).lerp(this.baseRailColor, 0.4);
     this.trackMaterial.color.lerp(this._colorTmp, 0.05);
@@ -538,39 +529,6 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
       this.updateUniformSafe(uniforms.audioPulse, Math.min(1.8, this.trackPulse * 1.1 + this.gpuAudioForce * 0.1));
       this.updateColorUniformSafe(uniforms.colorInner, this.trackTintA);
       this.updateColorUniformSafe(uniforms.colorOuter, this.trackTintB);
-    }
-
-    const sky = this.scene.getObjectByName('sky');
-    if (sky && (sky as any).material?.uniforms) {
-      const uniforms = (sky as any).material.uniforms;
-      const bass = this.audioFeatures.bass || 0;
-
-      const targetTurbidity = 10 + bass * 15;
-      const newTurbidity = THREE.MathUtils.lerp(uniforms.turbidity.value, targetTurbidity, 0.1);
-      this.updateUniformSafe(uniforms.turbidity, newTurbidity, 1e-1);
-
-      const targetRayleigh = 2 + bass * 2;
-      const newRayleigh = THREE.MathUtils.lerp(uniforms.rayleigh.value, targetRayleigh, 0.1);
-      this.updateUniformSafe(uniforms.rayleigh, newRayleigh, 1e-1);
-    }
-
-    if (this.scene.fog instanceof THREE.FogExp2) {
-      const energy = currentFrame?.energy || 0;
-      const targetDensity = 0.0025 + energy * 0.005;
-      if (Math.abs(this.scene.fog.density - targetDensity) > 1e-5) {
-        this.scene.fog.density = THREE.MathUtils.lerp(this.scene.fog.density, targetDensity, 0.1);
-      }
-
-      const bass = this.audioFeatures.bass || 0;
-      const targetColor = this.getTempColor();
-      if (bass > 0.5) {
-        targetColor.setHex(0x440000);
-      } else {
-        targetColor.setHex(0x000000);
-      }
-      if (this.scene.fog.color.distanceTo(targetColor) > 1e-2) {
-        this.scene.fog.color.lerp(targetColor, 0.1);
-      }
     }
 
     this.particles.reclaimExpired(nowSeconds);

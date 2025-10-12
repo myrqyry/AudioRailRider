@@ -33,6 +33,8 @@ export class AtmosphereController {
     this.synesthetic = synesthetic;
   }
 
+  private synesthetic: SynestheticAtmosphere | null = null;
+
   public setSynesthetic(atmosphere: SynestheticAtmosphere | null): void {
     this.synesthetic = atmosphere;
   }
@@ -60,6 +62,7 @@ export class AtmosphereController {
 
     const uniforms = material.uniforms;
     const { deltaSeconds, bass, energy, segmentColor, segmentIntensity, turbulenceBias } = args;
+
     const targetTurbidity = (10 + bass * 16) * turbulenceBias;
     const targetRayleigh = 2 + bass * 2.5;
     const lerpFactor = THREE.MathUtils.clamp(deltaSeconds * 1.5, 0.02, 0.16);
@@ -86,6 +89,7 @@ export class AtmosphereController {
     const { deltaSeconds, bass, energy } = args;
     const targetDensity = 0.0025 + energy * 0.005;
     this.fog.density = THREE.MathUtils.lerp(this.fog.density, targetDensity, THREE.MathUtils.clamp(deltaSeconds * 1.8, 0.04, 0.2));
+
     const targetColor = this.workingColor.copy(this.baseSkyTint).lerp(this.tintOverride ?? this.baseSkyTint, 0.4 + bass * 0.3);
     this.fog.color.lerp(targetColor, THREE.MathUtils.clamp(deltaSeconds * 1.2, 0.04, 0.18));
   }

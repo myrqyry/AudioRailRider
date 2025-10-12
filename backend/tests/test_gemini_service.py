@@ -21,7 +21,17 @@ def test_generate_blueprint_inline(monkeypatch):
 
     # Mock client.aio.models.generate_content to return parsed blueprint
     async def fake_generate_content(model, contents, config):
-        parsed = {'rideName': 'Unit Test Ride', 'moodDescription': 'Test', 'palette': ['#000','#111','#222'], 'track': []}
+        parsed = {
+            'rideName': 'Unit Test Ride',
+            'moodDescription': 'Test',
+            'palette': ['#000', '#111', '#222'],
+            'track': [],
+            'synesthetic': {
+                'geometry': {'wireframeDensity': 0.5, 'impossiblePhysics': False, 'organicBreathing': 0.4, 'breathingDriver': 'energy'},
+                'particles': {'connectionDensity': 0.4, 'resonanceThreshold': 0.3, 'lifespanSeconds': 3.0, 'persistence': 0.5},
+                'atmosphere': {'skyMood': 'test', 'turbulenceBias': 1.0, 'passionIntensity': 1.2, 'tint': '#333333'}
+            }
+        }
         return DummyResponse(text='{}', parsed=parsed)
 
     svc.client = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=fake_generate_content), files=SimpleNamespace(upload=lambda *a, **k: None)))

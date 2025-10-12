@@ -35,7 +35,7 @@ export class RideCamera {
     this.curve.getPointAt(u, this._pos);
 
         // Adaptive look-ahead; avoid zero-length look vector at u === 1
-        const LOOKAHEAD_U = 0.01;
+    const LOOKAHEAD_U = 0.025;
         const du = Math.min(LOOKAHEAD_U, 1 - u);
         if (du > 0) {
             this.curve.getPointAt(u + du, this._lookAtPos);
@@ -79,9 +79,9 @@ export class RideCamera {
         }
 
         const rollFactor = THREE.MathUtils.clamp(1 - Math.abs(this._smoothedUp.dot(RideCamera.WORLD_UP)), 0, 1);
-        const seatHeight = THREE.MathUtils.lerp(3.0, 3.6, rollFactor);
-        const lateralOffset = THREE.MathUtils.lerp(5.0, 3.2, rollFactor);
-        const backwardOffset = THREE.MathUtils.lerp(4.0, 4.8, rollFactor * 0.6);
+    const seatHeight = THREE.MathUtils.lerp(2.7, 3.4, rollFactor);
+    const lateralOffset = THREE.MathUtils.lerp(4.2, 3.0, rollFactor);
+    const backwardOffset = THREE.MathUtils.lerp(3.2, 4.4, rollFactor * 0.65);
 
         this._offsetTmp.set(0, 0, 0)
             .addScaledVector(RideCamera.WORLD_UP, seatHeight)
@@ -100,9 +100,10 @@ export class RideCamera {
 
         // Geometric step magnitude over du (proxy for motion; replace with time-based speed if needed)
         const speed = du > 0 ? this._lookAtPos.distanceTo(this._pos) / du : 0;
+        const speedBoost = THREE.MathUtils.clamp(speed * 1.35, 0, 160);
         this.camera.fov =
             RIDE_CONFIG.CAMERA_BASE_FOV +
-            Math.min(RIDE_CONFIG.CAMERA_MAX_FOV_BOOST, speed * RIDE_CONFIG.CAMERA_SPEED_FOV_FACTOR);
+            Math.min(RIDE_CONFIG.CAMERA_MAX_FOV_BOOST, speedBoost * RIDE_CONFIG.CAMERA_SPEED_FOV_FACTOR);
         this.camera.updateProjectionMatrix();
     }
 }

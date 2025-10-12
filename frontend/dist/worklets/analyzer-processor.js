@@ -55,9 +55,10 @@ class SimpleAnalyzerProcessor extends AudioWorkletProcessor {
     }
   }
 
-  process(inputs) {
+  process(inputs, outputs) {
     try {
       const input = inputs[0];
+      const output = outputs[0];
       if (!input || !input[0]) return true;
       const frame = input[0];
       const N = frame.length;
@@ -121,6 +122,12 @@ class SimpleAnalyzerProcessor extends AudioWorkletProcessor {
         mid: mid,
         high: high
       });
+      if (output) {
+        const channelCount = Math.min(output.length, input.length);
+        for (let ch = 0; ch < channelCount; ch++) {
+          output[ch].set(input[ch]);
+        }
+      }
     } catch (e) {
       // Keep audio thread stable
     }

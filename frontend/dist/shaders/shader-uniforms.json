@@ -1,0 +1,48 @@
+{
+  "posFrag.resolved.glsl": [
+    {
+      "name": "prevPos",
+      "type": "sampler2D",
+      "control": "text"
+    }
+  ],
+  "velFrag.resolved.glsl": [
+    {
+      "name": "prevVel",
+      "type": "sampler2D",
+      "control": "text"
+    },
+    {
+      "name": "audioForce",
+      "type": "float",
+      "control": "range",
+      "min": 0,
+      "max": 1,
+      "step": 0.01
+    },
+    {
+      "name": "noiseScale",
+      "type": "float",
+      "control": "range",
+      "min": 0,
+      "max": 4,
+      "step": 0.01
+    },
+    {
+      "name": "noiseSpeed",
+      "type": "float",
+      "control": "range",
+      "min": 0,
+      "max": 4,
+      "step": 0.01
+    },
+    {
+      "name": "curlStrength",
+      "type": "float",
+      "control": "range",
+      "min": 0,
+      "max": 4,
+      "step": 0.01
+    }
+  ]
+}
