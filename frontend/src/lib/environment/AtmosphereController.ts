@@ -22,6 +22,8 @@ export class AtmosphereController {
   private readonly targetSkyColor = new THREE.Color();
   private readonly tintOverride: THREE.Color | null;
 
+  private synesthetic: SynestheticAtmosphere | null = null;
+
   constructor(scene: THREE.Scene, baseSkyColor: string, synesthetic: SynestheticAtmosphere | null) {
     this.scene = scene;
     this.sky = scene.getObjectByName('sky') || null;

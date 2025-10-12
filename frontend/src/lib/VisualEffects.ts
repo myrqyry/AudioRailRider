@@ -251,6 +251,9 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
   this.pathCurve = curve;
     const geometry = new THREE.TubeGeometry(curve, segments, TRACK_RADIUS, 8, false);
 
+    // Generate the BVH for the track geometry to accelerate raycasting
+    (geometry as any).boundsTree = new MeshBVH(geometry);
+
     this.trackMesh = new THREE.Mesh(geometry, this.trackMaterial);
     this.trackMesh.frustumCulled = true;
     this.scene.add(this.trackMesh);
@@ -262,6 +265,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     const initialProfile: ParticleQualityLevel = this.highQualityMode ? 'high' : 'medium';
     this.particles.setQualityProfile(initialProfile);
     this.particles.setConsciousnessSettings(this.synesthetic?.particles ?? null);
+    this.seedAmbientParticles();
   this.seedAmbientParticles();
 
     try {
@@ -409,6 +413,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     this.lastUpdateSeconds = nowSeconds;
 
     const clampedProgress = THREE.MathUtils.clamp(rideProgress ?? 0, 0, 1);
+  const baseSegmentBoost = this.applySegmentMood(clampedProgress);
     const baseSegmentBoost = this.applySegmentMood(clampedProgress);
     this.trackMaterial.emissive.lerp(this.segmentColorTarget, 0.05);
     this._colorTmp.copy(this.segmentColorTarget).lerp(this.baseRailColor, 0.4);
@@ -813,6 +818,7 @@ void main() {
       false
     );
     
+    (newGeometry as any).boundsTree = new MeshBVH(newGeometry);
     this.trackMesh.geometry = newGeometry;
     oldGeometry.dispose();
     this.rebuildGhostRibbon(curve, this.trackData.path.length * LOW_QUALITY_SEGMENTS);
@@ -833,6 +839,7 @@ void main() {
       false
     );
 
+    (newGeometry as any).boundsTree = new MeshBVH(newGeometry);
     this.trackMesh.geometry = newGeometry;
     oldGeometry.dispose();
     this.rebuildGhostRibbon(curve, this.trackData.path.length * HIGH_QUALITY_SEGMENTS);
