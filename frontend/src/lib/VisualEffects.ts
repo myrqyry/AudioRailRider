@@ -1,8 +1,9 @@
 import * as THREE from 'three';
-import { TrackData, FrameAnalysis, SegmentDetail, TimelineEvent, secondsToNumber } from 'shared/types';
+import { TrackData, FrameAnalysis, SegmentDetail, TimelineEvent, secondsToNumber, SynestheticBlueprintLayer } from 'shared/types';
 import { RIDE_CONFIG } from 'shared/constants';
 import { ParticleSystem, FeatureVisualConfig, GPUUpdateParams, ParticleQualityLevel } from './visual-effects/ParticleSystem';
 import { Vector3Pool } from './utils/Vector3Pool';
+import { AtmosphereController } from './environment/AtmosphereController';
 import { MeshBVH, acceleratedRaycast } from 'three-mesh-bvh';
 
 // Augment the THREE namespace to include the acceleratedRaycast
@@ -40,6 +41,7 @@ export class VisualEffects {
   private trackData: TrackData;
   private trackMesh: THREE.Mesh;
   private trackMaterial: THREE.MeshStandardMaterial;
+  private pathCurve: THREE.CatmullRomCurve3 | null = null;
   private ghostRibbonMesh: THREE.Mesh | null = null;
   private ghostRibbonMaterial: THREE.ShaderMaterial | null = null;
   private particles: ParticleSystem;
@@ -78,6 +80,9 @@ export class VisualEffects {
   private firstUpdateTime: number = 0;
   private lastUpdateSeconds: number = 0;
   private trackPulse: number = 0;
+  private synesthetic: SynestheticBlueprintLayer | null = null;
+  private atmosphere: AtmosphereController | null = null;
+  private passionGain: number = 1;
 
   // --- Object Pools ---
   private readonly _vectorPool = new Vector3Pool(12);
@@ -146,6 +151,7 @@ export class VisualEffects {
     this.scene = scene;
     this.camera = camera;
     this.trackData = trackData;
+    this.synesthetic = trackData.synesthetic ?? null;
 
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     this.highQualityMode = !isMobile;
@@ -171,6 +177,7 @@ export class VisualEffects {
 
     try {
       this.timelineEvents = Array.isArray((trackData as any).events) ? (trackData as any).events.slice() : [];
+      this.atmosphere = new AtmosphereController(this.scene, trackData.skyColor1 || '#0d0a1f', this.synesthetic?.atmosphere ?? null);
       for (const ev of this.timelineEvents) {
         if (ev && ev.timestamp === undefined && ev.params && ev.params.audioSyncPoint) {
           ev.timestamp = ev.params.audioSyncPoint as any;
@@ -251,7 +258,8 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     };
 
     const segments = this.highQualityMode ? this.trackData.path.length * HIGH_QUALITY_SEGMENTS : this.trackData.path.length * LOW_QUALITY_SEGMENTS;
-    const curve = new THREE.CatmullRomCurve3(this.trackData.path.map(p => new THREE.Vector3(p.x, p.y, p.z)));
+  const curve = new THREE.CatmullRomCurve3(this.trackData.path.map(p => new THREE.Vector3(p.x, p.y, p.z)));
+  this.pathCurve = curve;
     const geometry = new THREE.TubeGeometry(curve, segments, TRACK_RADIUS, 8, false);
 
     // Generate the BVH for the track geometry to accelerate raycasting
@@ -267,6 +275,8 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     this.particles = new ParticleSystem(this.scene);
     const initialProfile: ParticleQualityLevel = this.highQualityMode ? 'high' : 'medium';
     this.particles.setQualityProfile(initialProfile);
+    this.particles.setConsciousnessSettings(this.synesthetic?.particles ?? null);
+    this.seedAmbientParticles();
 
     try {
       const listenerRig = new THREE.Object3D();
@@ -275,6 +285,14 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
       audioGlow.name = 'audioGlow';
       listenerRig.add(audioGlow);
     } catch (e) {}
+  }
+
+  private seedAmbientParticles(): void {
+    if (!this.pathCurve) return;
+    const sampleCount = Math.min(48, Math.max(18, Math.floor(this.trackData.path.length / 4)));
+    const nowSeconds = performance.now() / 1000;
+    const spread = GHOST_RIBBON_RADIUS * 4.2;
+    this.particles.seedAmbientField(this.pathCurve, sampleCount, spread, nowSeconds, this.audioFeatures, 0.9);
   }
 
   public async initGPU(renderer: THREE.WebGLRenderer) {
@@ -374,11 +392,11 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     return this.baseEmissiveColor;
   }
 
-  private applySegmentMood(progress: number) {
+  private applySegmentMood(progress: number): number {
     if (!this.trackData.segmentDetails.length) {
       this.segmentIntensityBoost = 1;
       this.segmentColorTarget.copy(this.baseEmissiveColor);
-      return;
+      return this.segmentIntensityBoost;
     }
     const clamped = THREE.MathUtils.clamp(progress, 0, 1);
     let idx = this.segmentProgress.findIndex((marker) => clamped <= marker + 1e-6);
@@ -390,6 +408,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     this.segmentIntensityBoost = 1 + Math.max(0, rawIntensity) / 100;
     const moodColor = this.deriveSegmentColor(detail);
     this.segmentColorTarget.copy(moodColor);
+    return this.segmentIntensityBoost;
   }
 
   public registerFeatureVisual(featureName: string, cfg: Partial<FeatureVisualConfig>) {
@@ -404,7 +423,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     this.lastUpdateSeconds = nowSeconds;
 
     const clampedProgress = THREE.MathUtils.clamp(rideProgress ?? 0, 0, 1);
-    this.applySegmentMood(clampedProgress);
+  const baseSegmentBoost = this.applySegmentMood(clampedProgress);
     this.trackMaterial.emissive.lerp(this.segmentColorTarget, 0.05);
     this._colorTmp.copy(this.segmentColorTarget).lerp(this.baseRailColor, 0.4);
     this.trackMaterial.color.lerp(this._colorTmp, 0.05);
@@ -413,6 +432,18 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     const tintB = this._colorTmp3.copy(this.baseGhostTintB).lerp(this.segmentColorTarget, 0.6);
     this.trackTintA.copy(tintA);
     this.trackTintB.copy(tintB);
+
+    const passionBoost = this.atmosphere
+      ? this.atmosphere.update({
+          deltaSeconds,
+          frame: currentFrame,
+          audioFeatures: this.audioFeatures,
+          segmentColor: this.segmentColorTarget,
+          segmentIntensity: baseSegmentBoost,
+        })
+      : 1;
+    this.passionGain = passionBoost;
+    this.segmentIntensityBoost = baseSegmentBoost * passionBoost;
 
     this.frameCount++;
     

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { RIDE_CONFIG } from 'shared/constants';
+import { SynestheticParticleConsciousness } from 'shared/types';
 import { getCachedShader, getCachedLygiaResolver } from '../preloader';
 
 export interface FeatureVisualConfig {
@@ -47,6 +48,16 @@ interface QualityProfile {
   gpuUpdateInterval: number;
 }
 
+interface ConsciousParticle {
+  id: number;
+  featureKey: string;
+  position: THREE.Vector3;
+  velocity: THREE.Vector3;
+  resonance: number;
+  createdAt: number;
+  lifespan: number;
+}
+
 const QUALITY_PROFILES: Record<ParticleQualityLevel, QualityProfile> = {
   low: {
     particleBudget: Math.floor(RIDE_CONFIG.PARTICLE_COUNT * 0.45),
@@ -84,6 +95,22 @@ export class ParticleSystem {
   private readonly worldUp = new THREE.Vector3(0, 1, 0);
   private readonly spawnWork = new THREE.Vector3();
   public readonly texSize: number;
+  private synestheticSettings: SynestheticParticleConsciousness | null = null;
+  private consciousParticles: ConsciousParticle[] = [];
+  private consciousIdCounter = 0;
+  private synapticGeometry: THREE.BufferGeometry | null = null;
+  private synapticMaterial: THREE.LineBasicMaterial | null = null;
+  private synapticLines: THREE.LineSegments | null = null;
+  private readonly maxSynapticLinks = 128;
+  private readonly synapticColorA = new THREE.Color('#7adfff');
+  private readonly synapticColorB = new THREE.Color('#ff9efc');
+  private readonly synapticTemp = new THREE.Vector3();
+  private synestheticUniforms: { neuralGain: number; resonanceFloor: number; persistence: number } = {
+    neuralGain: 0.65,
+    resonanceFloor: 0.35,
+    persistence: 0.6,
+  };
+  private consciousnessIntensity = 0.9;
 
   private gpuEnabled: boolean = false;
   private gpuRenderer: THREE.WebGLRenderer | null = null;
@@ -120,6 +147,8 @@ export class ParticleSystem {
 
     this.buildParticleMeshes();
     this.setQualityProfile(this.qualityLevel);
+    this.applyConsciousUniforms();
+    this.setConsciousnessIntensity(this.consciousnessIntensity);
   }
 
   public get instancedMesh(): THREE.InstancedMesh | null {
@@ -145,6 +174,31 @@ export class ParticleSystem {
       ...cfg,
     };
     this.featureVisuals.set(featureName, defaultConfig);
+  }
+
+  private applyConsciousUniforms(): void {
+    this.applyShaderUniform('neuralGain', this.synestheticUniforms.neuralGain);
+    this.applyShaderUniform('resonanceFloor', this.synestheticUniforms.resonanceFloor);
+    this.applyShaderUniform('consciousnessPersistence', this.synestheticUniforms.persistence);
+  }
+
+  private syncInstancedConsciousUniform(overrideValue?: number): void {
+    if (!this.particleInstancedMesh) return;
+    const mat = this.particleInstancedMesh.material as THREE.ShaderMaterial | undefined;
+    if (!mat || !mat.uniforms) return;
+    const value = overrideValue ?? this.consciousnessIntensity;
+    this.updateScalarUniform(mat.uniforms.consciousnessIntensity, value, 1e-3);
+  }
+
+  private setConsciousnessIntensity(next: number): void {
+    const clamped = THREE.MathUtils.clamp(next, 0.2, 3.0);
+    if (Math.abs(clamped - this.consciousnessIntensity) > 1e-3) {
+      this.consciousnessIntensity = clamped;
+    } else {
+      this.consciousnessIntensity = clamped;
+    }
+    this.applyShaderUniform('consciousnessDrive', this.consciousnessIntensity);
+    this.syncInstancedConsciousUniform();
   }
 
   private updateScalarUniform(uniform: { value: unknown } | undefined, next: number, epsilon = 1e-3): void {
@@ -188,6 +242,47 @@ export class ParticleSystem {
 
     this.rebuildFreeStackForBudget();
     this.enforceBudgetOnPointsGeometry();
+  }
+
+  public setConsciousnessSettings(settings: SynestheticParticleConsciousness | null | undefined): void {
+    if (!settings) {
+      this.synestheticSettings = null;
+      this.consciousParticles = [];
+      this.fadeSynapticNetwork(true);
+      this.synestheticUniforms = {
+        neuralGain: 0.6,
+        resonanceFloor: 0.3,
+        persistence: 0.55,
+      };
+      this.applyConsciousUniforms();
+      this.setConsciousnessIntensity(0.8);
+      return;
+    }
+
+    const clamp = (value: number | undefined, fallback: number, min = 0, max = 1) => {
+      if (!Number.isFinite(value as number)) return THREE.MathUtils.clamp(fallback, min, max);
+      return THREE.MathUtils.clamp(value as number, min, max);
+    };
+
+    const connectionDensity = clamp(settings.connectionDensity ?? 0.45, 0.45);
+    const resonanceThreshold = clamp(settings.resonanceThreshold ?? 0.4, 0.2);
+    const persistence = clamp(settings.persistence ?? 0.55, 0, 1);
+
+    this.synestheticSettings = {
+      connectionDensity,
+      resonanceThreshold,
+      lifespanSeconds: Math.max(0.5, settings.lifespanSeconds ?? 4.0),
+      persistence,
+    };
+
+    this.synestheticUniforms = {
+      neuralGain: THREE.MathUtils.clamp(0.55 + connectionDensity * 0.85, 0.4, 1.6),
+      resonanceFloor: THREE.MathUtils.clamp(resonanceThreshold, 0.05, 0.95),
+      persistence,
+    };
+
+    this.applyConsciousUniforms();
+    this.setConsciousnessIntensity(0.95 + connectionDensity * 0.4);
   }
 
   public applyShaderUniform(name: string, value: unknown) {
@@ -297,9 +392,164 @@ export class ParticleSystem {
     }
   }
 
+  public updateConsciousness(params: { nowSeconds: number; audioFeatures: Record<string, number>; segmentIntensityBoost: number }): void {
+    if (!this.synestheticSettings) {
+      this.fadeSynapticNetwork(false);
+      this.setConsciousnessIntensity(THREE.MathUtils.lerp(this.consciousnessIntensity, 0.75, 0.12));
+      return;
+    }
+
+    this.ensureSynapticNetwork();
+    if (!this.synapticGeometry || !this.synapticMaterial) return;
+
+    const settings = this.synestheticSettings;
+    const maxLifetime = Math.max(0.5, settings.lifespanSeconds ?? 4.0);
+    const persistence = THREE.MathUtils.clamp(settings.persistence ?? 0.55, 0, 1);
+
+    // Remove expired particles while updating resonance and gentle drift.
+    const surviving: ConsciousParticle[] = [];
+    let resonanceSum = 0;
+    for (const particle of this.consciousParticles) {
+      const age = params.nowSeconds - particle.createdAt;
+      if (age > particle.lifespan || age > maxLifetime) {
+        continue;
+      }
+      const target = Math.max(0, Math.min(1, (params.audioFeatures[particle.featureKey] || 0) * params.segmentIntensityBoost));
+      particle.resonance = THREE.MathUtils.lerp(particle.resonance, target, 0.18);
+      resonanceSum += particle.resonance;
+
+      particle.velocity.multiplyScalar(0.92);
+      particle.velocity.addScaledVector(this.worldUp, (target - 0.45) * 0.05);
+      this.synapticTemp.set((Math.random() - 0.5) * 0.025, 0, (Math.random() - 0.5) * 0.025);
+      particle.velocity.add(this.synapticTemp);
+      particle.position.add(particle.velocity);
+      surviving.push(particle);
+    }
+    this.consciousParticles = surviving;
+
+    const geometry = this.synapticGeometry;
+    const positions = geometry.getAttribute('position') as THREE.BufferAttribute | undefined;
+    const colors = geometry.getAttribute('color') as THREE.BufferAttribute | undefined;
+    if (!positions || !colors) return;
+
+    const connectionDensity = THREE.MathUtils.clamp(settings.connectionDensity ?? 0.45, 0, 1);
+    const resonanceThreshold = THREE.MathUtils.clamp(settings.resonanceThreshold ?? 0.4, 0, 1);
+    const maxLinks = Math.max(0, Math.min(this.maxSynapticLinks, Math.round(this.maxSynapticLinks * connectionDensity)));
+    const count = this.consciousParticles.length;
+    let linkCount = 0;
+
+    const rA = this.synapticColorA.r;
+    const gA = this.synapticColorA.g;
+    const bA = this.synapticColorA.b;
+    const rB = this.synapticColorB.r;
+    const gB = this.synapticColorB.g;
+    const bB = this.synapticColorB.b;
+
+    if (maxLinks > 0 && count >= 2) {
+      for (let i = 0; i < count && linkCount < maxLinks; i++) {
+        const a = this.consciousParticles[i];
+        for (let j = i + 1; j < count && linkCount < maxLinks; j++) {
+          const b = this.consciousParticles[j];
+          const resonance = (a.resonance + b.resonance) * 0.5;
+          if (resonance < resonanceThreshold) continue;
+          const dist = a.position.distanceTo(b.position);
+          if (dist > 28) continue;
+
+          const base = linkCount * 6;
+          positions.array[base + 0] = a.position.x;
+          positions.array[base + 1] = a.position.y;
+          positions.array[base + 2] = a.position.z;
+          positions.array[base + 3] = b.position.x;
+          positions.array[base + 4] = b.position.y;
+          positions.array[base + 5] = b.position.z;
+
+          const r = THREE.MathUtils.lerp(rA, rB, resonance);
+          const g = THREE.MathUtils.lerp(gA, gB, resonance);
+          const bl = THREE.MathUtils.lerp(bA, bB, resonance);
+          colors.array[base + 0] = r;
+          colors.array[base + 1] = g;
+          colors.array[base + 2] = bl;
+          colors.array[base + 3] = r;
+          colors.array[base + 4] = g;
+          colors.array[base + 5] = bl;
+
+          linkCount++;
+        }
+      }
+    }
+
+    geometry.setDrawRange(0, linkCount * 2);
+    positions.needsUpdate = linkCount > 0;
+    colors.needsUpdate = linkCount > 0;
+
+    if (this.synapticMaterial && this.synapticLines) {
+      const baseOpacity = linkCount > 0 ? Math.min(1, 0.25 + (linkCount / Math.max(1, maxLinks)) * 0.75) : 0;
+      this.synapticMaterial.opacity = THREE.MathUtils.lerp(this.synapticMaterial.opacity, baseOpacity, linkCount > 0 ? 0.18 : (1 - persistence) * 0.12 + 0.02);
+      this.synapticLines.visible = this.synapticMaterial.opacity > 0.02;
+    }
+
+    const avgResonance = count > 0 ? resonanceSum / count : 0;
+    const linkRatio = maxLinks > 0 ? linkCount / maxLinks : 0;
+    const densityBias = connectionDensity;
+    const intensityTarget = THREE.MathUtils.clamp(0.45 + avgResonance * 1.2 + linkRatio * 0.9 + densityBias * 0.6, 0.3, 2.5);
+    const eased = THREE.MathUtils.lerp(this.consciousnessIntensity, intensityTarget, linkCount > 0 ? 0.25 : 0.12 * (1 - persistence));
+    this.setConsciousnessIntensity(eased);
+  }
+
+  private ensureSynapticNetwork(): void {
+    if (this.synapticLines && this.synapticGeometry && this.synapticMaterial) return;
+
+    const geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(this.maxSynapticLinks * 2 * 3);
+    const colors = new Float32Array(this.maxSynapticLinks * 2 * 3);
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.setDrawRange(0, 0);
+
+    const material = new THREE.LineBasicMaterial({
+      transparent: true,
+      opacity: 0,
+      vertexColors: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+
+    const lines = new THREE.LineSegments(geometry, material);
+    lines.frustumCulled = false;
+    lines.renderOrder = 11;
+    this.scene.add(lines);
+
+    this.synapticGeometry = geometry;
+    this.synapticMaterial = material;
+    this.synapticLines = lines;
+  }
+
+  private fadeSynapticNetwork(forceClear: boolean): void {
+    if (!this.synapticMaterial || !this.synapticGeometry || !this.synapticLines) return;
+
+    if (forceClear) {
+      this.synapticMaterial.opacity = 0;
+      this.synapticLines.visible = false;
+      this.synapticGeometry.setDrawRange(0, 0);
+      return;
+    }
+
+    this.synapticMaterial.opacity = THREE.MathUtils.lerp(this.synapticMaterial.opacity, 0, 0.12);
+    if (this.synapticMaterial.opacity < 0.02) {
+      this.synapticLines.visible = false;
+      this.synapticGeometry.setDrawRange(0, 0);
+    }
+  }
+
   public driveReactiveParticles(params: DriveReactiveParticlesParams, trackPulse: number): number {
-    if (params.currentLOD === 'low') return trackPulse;
-    if (!this.particleInstancedMesh && !this.particleSystem) return trackPulse;
+    if (params.currentLOD === 'low' || (!this.particleInstancedMesh && !this.particleSystem)) {
+      this.updateConsciousness({
+        nowSeconds: params.nowSeconds,
+        audioFeatures: params.audioFeatures,
+        segmentIntensityBoost: params.segmentIntensityBoost,
+      });
+      return trackPulse;
+    }
 
     const { nowSeconds, deltaSeconds, cameraPosition, lookAtPosition, audioFeatures, segmentIntensityBoost } = params;
 
@@ -369,6 +619,12 @@ export class ParticleSystem {
       }
     }
 
+    this.updateConsciousness({
+      nowSeconds,
+      audioFeatures,
+      segmentIntensityBoost,
+    });
+
     return trackPulse;
   }
 
@@ -400,6 +656,39 @@ export class ParticleSystem {
       segmentIntensityBoost,
       nowSeconds,
     });
+    this.registerConsciousParticle(featureName, origin, scaled, segmentIntensityBoost, nowSeconds);
+  }
+
+  public seedAmbientField(curve: THREE.Curve<THREE.Vector3>, sampleCount: number, spread: number, nowSeconds: number, audioFeatures: Record<string, number>, segmentIntensityBoost: number) {
+    if (!curve || sampleCount <= 0 || spread <= 0) return;
+    const total = Math.max(1, sampleCount);
+    const featureKeys = ['sparkle', 'highMid', 'mid', 'lowMid', 'treble'];
+    const tangent = this.spawnForward;
+    const lateral = this.spawnRight;
+    const vertical = this.spawnUp;
+    const work = this.spawnWork;
+
+    for (let i = 0; i < total; i++) {
+      const u = (i + Math.random() * 0.35) / total;
+      curve.getPointAt(u % 1, work);
+      curve.getTangentAt(u % 1, tangent);
+      if (tangent.lengthSq() < 1e-6) tangent.set(0, 0, 1);
+      lateral.copy(this.worldUp).cross(tangent).normalize();
+      if (lateral.lengthSq() < 1e-6) lateral.set(1, 0, 0);
+      vertical.copy(tangent).cross(lateral).normalize();
+
+      const radius = spread * (0.4 + Math.random() * 0.8);
+      const sway = (Math.random() - 0.5) * radius;
+      const lift = (Math.random() - 0.5) * radius * 0.6;
+      const drift = (Math.random() - 0.5) * radius * 0.45;
+      work.addScaledVector(lateral, sway);
+      work.addScaledVector(vertical, lift);
+      work.addScaledVector(tangent, drift);
+
+      const feature = featureKeys[i % featureKeys.length];
+      const intensity = 0.45 + Math.random() * 0.55;
+      this.spawnFeatureBurst(feature, intensity, work, audioFeatures, segmentIntensityBoost, nowSeconds - Math.random() * 2.5);
+    }
   }
 
   public reclaimExpired(nowSeconds: number) {
@@ -427,9 +716,14 @@ export class ParticleSystem {
     try {
       const mat = this.particleSystem.material as THREE.PointsMaterial;
       const bass = audioFeatures.bass || 0;
-      const targetSize = RIDE_CONFIG.PARTICLE_BASE_SIZE * (1 + bass * 1.2 * segmentIntensityBoost);
+      const consciousnessLift = 0.7 + this.consciousnessIntensity * 0.25 + segmentIntensityBoost * 0.12;
+      const targetSize = RIDE_CONFIG.PARTICLE_BASE_SIZE * (1 + bass * 1.2 * segmentIntensityBoost) * consciousnessLift;
       mat.size = THREE.MathUtils.lerp(mat.size || RIDE_CONFIG.PARTICLE_BASE_SIZE, targetSize, 0.06);
-      const targetCol = this._tempColor.copy(segmentColorTarget).lerp(baseRailColor, 0.5);
+      const targetCol = this._tempColor.copy(segmentColorTarget).lerp(baseRailColor, 0.45);
+      const neuralBlend = Math.min(0.65, this.consciousnessIntensity * 0.28);
+      if (neuralBlend > 1e-3) {
+        targetCol.lerp(this.synapticColorB, neuralBlend);
+      }
       (mat.color as THREE.Color).lerp(targetCol, 0.02);
       mat.needsUpdate = true;
     } catch (e) {
@@ -484,6 +778,18 @@ export class ParticleSystem {
         (this.particleSystem.material as THREE.Material).dispose();
       } catch (e) {}
       this.particleSystem = null;
+    }
+    if (this.synapticLines) {
+      try {
+        this.scene.remove(this.synapticLines);
+        this.synapticLines.geometry.dispose();
+      } catch (e) {}
+      if (this.synapticMaterial) {
+        try { this.synapticMaterial.dispose(); } catch (e) {}
+      }
+      this.synapticGeometry = null;
+      this.synapticMaterial = null;
+      this.synapticLines = null;
     }
     this.disposeGPU();
   }
@@ -710,10 +1016,11 @@ export class ParticleSystem {
       this.gpuQuadScene = new THREE.Scene();
       this.gpuQuadCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
-      const baseVelInline = `
-              precision highp float; varying vec2 vUv;
-              uniform sampler2D prevVel; uniform sampler2D prevPos; uniform float dt; uniform float time;
-        uniform float audioForce; uniform float subBass; uniform float bass; uniform float lowMid; uniform float mid; uniform float highMid; uniform float treble; uniform float sparkle;
+  const baseVelInline = `
+      precision highp float; varying vec2 vUv;
+      uniform sampler2D prevVel; uniform sampler2D prevPos; uniform float dt; uniform float time;
+    uniform float audioForce; uniform float subBass; uniform float bass; uniform float lowMid; uniform float mid; uniform float highMid; uniform float treble; uniform float sparkle;
+    uniform float neuralGain; uniform float resonanceFloor; uniform float consciousnessPersistence; uniform float consciousnessDrive;
               vec3 hash3(vec2 p) {
                 vec3 q = vec3( dot(p,vec2(127.1,311.7)), dot(p,vec2(269.5,183.3)), dot(p,vec2(419.2,371.9)) );
                 return fract(sin(q) * 43758.5453);
@@ -751,9 +1058,16 @@ export class ParticleSystem {
                   audio += treble * 0.8;
                   audio += sparkle * 0.6;
                   v.y += audio * 2.5;
-                  vec3 c = curlNoise(p + v * 0.5);
-                  v += c * curlStrength * (0.5 + bass);
-                v *= 0.995;
+                  float harmonicEnergy = max(resonanceFloor, subBass * 0.6 + bass * 0.8 + mid * 0.5 + sparkle * 0.35);
+                  float neural = neuralGain * (audioForce * 0.12 + harmonicEnergy);
+                  float drive = clamp(consciousnessDrive, 0.0, 3.0);
+                  neural *= (0.6 + drive * 0.4);
+                  vec3 c = curlNoise(p + v * 0.35 + vec3(time * 0.1, 0.0, 0.0));
+                  v += c * curlStrength * (0.5 + harmonicEnergy * 0.6);
+                  v.y += neural * 1.8;
+                  v += normalize(c + vec3(0.0, harmonicEnergy * 0.4, 0.0)) * neural * 0.35;
+                float damping = mix(0.982, 0.998, clamp(consciousnessPersistence, 0.0, 1.0));
+                v *= damping;
                 gl_FragColor = vec4(v, 1.0);
               }
             `;
@@ -806,6 +1120,10 @@ export class ParticleSystem {
           highMid: { value: 0.0 },
           treble: { value: 0.0 },
           sparkle: { value: 0.0 },
+          neuralGain: { value: this.synestheticUniforms.neuralGain },
+          resonanceFloor: { value: this.synestheticUniforms.resonanceFloor },
+          consciousnessPersistence: { value: this.synestheticUniforms.persistence },
+          consciousnessDrive: { value: this.consciousnessIntensity },
           time: { value: 0 },
           dt: { value: 1/60 },
           texSize: { value: size },
@@ -941,6 +1259,13 @@ export class ParticleSystem {
         this.updateScalarUniform(velMat.uniforms.curlStrength, params.curlStrength, 1e-3);
         this.updateScalarUniform(velMat.uniforms.noiseScale, params.noiseScale, 1e-3);
         this.updateScalarUniform(velMat.uniforms.noiseSpeed, params.noiseSpeed, 1e-3);
+        this.updateScalarUniform(velMat.uniforms.neuralGain, this.synestheticUniforms.neuralGain, 1e-3);
+        this.updateScalarUniform(velMat.uniforms.resonanceFloor, this.synestheticUniforms.resonanceFloor, 1e-3);
+        this.updateScalarUniform(velMat.uniforms.consciousnessPersistence, this.synestheticUniforms.persistence, 1e-3);
+        const harmonic = (params.audioFeatures.bass || 0) * 0.6 + (params.audioFeatures.mid || 0) * 0.4 + (params.audioFeatures.sparkle || 0) * 0.3;
+        const drive = Math.min(2.6, this.consciousnessIntensity * (0.7 + params.segmentIntensityBoost * 0.45) + harmonic * 0.6);
+        this.updateScalarUniform(velMat.uniforms.consciousnessDrive, drive, 1e-3);
+        this.syncInstancedConsciousUniform(drive);
       } catch (e) {}
 
       this.gpuVelQuad!.visible = true;
@@ -1024,8 +1349,10 @@ export class ParticleSystem {
           attribute float instanceFeature;
           uniform sampler2D posTex;
           uniform float texSize;
+          uniform float consciousnessIntensity;
           varying vec3 vColor;
           varying float vFeature;
+          varying float vConscious;
           varying vec3 vNormal;
 
           vec3 sampleTexturePosition(float id, float dimension) {
@@ -1038,8 +1365,11 @@ export class ParticleSystem {
           void main() {
             float fi = instanceFeature;
             vFeature = fi;
+            vConscious = consciousnessIntensity;
             float tint = 0.15 * (fi - 3.0);
-            vColor = instanceColor + vec3(tint, -tint * 0.2, tint * 0.1);
+            float neuralMix = clamp(consciousnessIntensity * 0.35, 0.0, 0.9);
+            vec3 neuralAura = mix(instanceColor, vec3(0.78, 0.55, 1.0), neuralMix);
+            vColor = neuralAura + vec3(tint, -tint * 0.2, tint * 0.1);
 
             float id = float(gl_InstanceID);
             vec3 center = instancePosition;
@@ -1057,19 +1387,22 @@ export class ParticleSystem {
       const frag = `
           varying vec3 vColor;
           varying float vFeature;
+          varying float vConscious;
           varying vec3 vNormal;
           void main() {
             vec3 n = normalize(vNormal);
             float rim = pow(1.0 - max(0.0, dot(n, vec3(0.0, 0.0, 1.0))), 2.0);
             float brightness = 0.75 + rim * 0.8;
-            vec3 color = vColor * brightness;
+            float neuralGlow = 0.65 + clamp(vConscious, 0.0, 2.5) * 0.35;
+            vec3 color = vColor * brightness * neuralGlow;
             float desat = 1.0 - clamp((vFeature - 2.0) * 0.06, 0.0, 0.35);
             color = mix(vec3(dot(color, vec3(0.333))), color, desat);
+            color = mix(color, vec3(0.82, 0.45, 1.0), clamp(vConscious * 0.25, 0.0, 0.5));
             gl_FragColor = vec4(color, 1.0);
           }
         `;
       const shaderMat = new THREE.ShaderMaterial({
-        uniforms: { posTex: { value: null }, texSize: { value: 0 } },
+        uniforms: { posTex: { value: null }, texSize: { value: 0 }, consciousnessIntensity: { value: this.consciousnessIntensity } },
         vertexShader: vert,
         fragmentShader: frag,
         transparent: true,
@@ -1296,6 +1629,28 @@ export class ParticleSystem {
       }
     }
     return -1;
+  }
+
+  private registerConsciousParticle(featureName: string | undefined, origin: THREE.Vector3, intensity: number, segmentIntensityBoost: number, nowSeconds: number): void {
+    if (!this.synestheticSettings) return;
+
+    const featureKey = featureName || 'sparkle';
+    const resonance = Math.max(0, Math.min(1, intensity * segmentIntensityBoost));
+    const lifespanBase = this.synestheticSettings?.lifespanSeconds ?? 4.0;
+    const particle: ConsciousParticle = {
+      id: this.consciousIdCounter++,
+      featureKey,
+      position: origin.clone(),
+      velocity: new THREE.Vector3((Math.random() - 0.5) * 0.35, 0.05 + Math.random() * 0.12, (Math.random() - 0.5) * 0.35),
+      resonance,
+      createdAt: nowSeconds,
+      lifespan: Math.max(0.5, lifespanBase * (0.75 + Math.random() * 0.5)),
+    };
+
+    this.consciousParticles.push(particle);
+    if (this.consciousParticles.length > 256) {
+      this.consciousParticles.splice(0, this.consciousParticles.length - 256);
+    }
   }
 
   private freeInstance(idx: number) {

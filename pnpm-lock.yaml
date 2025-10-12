@@ -42,7 +42,7 @@ importers:
         specifier: ^0.178.0
         version: 0.178.0
       three-mesh-bvh:
-        specifier: ^0.7.0
+        specifier: ^0.7.8
         version: 0.7.8(three@0.178.0)
       zustand:
         specifier: ^5.0.7
