@@ -72,6 +72,25 @@ export class VisualEffects {
   private synesthetic: SynestheticBlueprintLayer | null = null;
   private atmosphere: AtmosphereController | null = null;
   private passionGain: number = 1;
+  private motionParticlePool: THREE.Vector3[] = [];
+  private speedStreakGeometry: THREE.BufferGeometry | null = null;
+  private speedStreakMaterial: THREE.ShaderMaterial | null = null;
+  private speedStreakMesh: THREE.Points | null = null;
+  private speedStreakAges: Float32Array | null = null;
+  private speedStreakLifetimes: Float32Array | null = null;
+  private speedStreakVelocities: Float32Array | null = null;
+  private speedStreakCursor: number = 0;
+  private speedStreakBufferSize: number = 0;
+  private tunnelRushMaterial: THREE.ShaderMaterial | null = null;
+  private tunnelRushMesh: THREE.Mesh | null = null;
+  private lastMotionPosition: THREE.Vector3 = new THREE.Vector3();
+  private hasMotionHistory: boolean = false;
+  private previousTrackModelViewMatrix: THREE.Matrix4 = new THREE.Matrix4();
+  private rideSpeedSmoothed: number = 0;
+  private hasPreviousModelViewMatrix: boolean = false;
+  private motionEffectsInitialized: boolean = false;
+  private motionUniformsBound: boolean = false;
+  private readonly _tmpMatrix = new THREE.Matrix4();
 
   // --- Object Pools ---
   private readonly _vectorPool = new Vector3Pool(12);
@@ -96,6 +115,14 @@ export class VisualEffects {
     const color = this._colorPool[this._colorPoolIndex];
     this._colorPoolIndex = (this._colorPoolIndex + 1) % this._colorPool.length;
     return color.setHex(0x000000);
+  }
+
+  private acquireMotionVector(): THREE.Vector3 {
+    return this.motionParticlePool.pop() ?? new THREE.Vector3();
+  }
+
+  private releaseMotionVector(vec: THREE.Vector3): void {
+    this.motionParticlePool.push(vec);
   }
 
   private updateUniformSafe(uniform: THREE.IUniform, newValue: number, epsilon = 1e-3): boolean {
@@ -188,7 +215,6 @@ export class VisualEffects {
       opacity: 0.92,
       side: THREE.DoubleSide,
     });
-
     this.trackMaterial.onBeforeCompile = (shader) => {
       shader.uniforms.trackTime = { value: 0 };
       shader.uniforms.pulseIntensity = { value: 0 };
@@ -199,57 +225,123 @@ export class VisualEffects {
       shader.uniforms.distortionStrength = { value: 0 };
       shader.uniforms.bassIntensity = { value: 0 };
       shader.uniforms.trebleIntensity = { value: 0 };
+      shader.uniforms.rideSpeed = { value: 0 };
+      shader.uniforms.motionBlur = { value: 0 };
+      shader.uniforms.cameraDirection = { value: new THREE.Vector3() };
+      shader.uniforms.previousModelViewMatrix = { value: new THREE.Matrix4() };
+
       shader.fragmentShader = shader.fragmentShader
         .replace(
           '#include <common>',
           `#include <common>
 varying vec2 vUv;
+varying vec3 vWorldPosition;
+varying vec3 vVelocity;
 uniform float trackTime;
 uniform float pulseIntensity;
 uniform float segmentBoost;
 uniform float audioFlow;
 uniform vec3 ghostTintA;
 uniform vec3 ghostTintB;
+uniform float rideSpeed;
+uniform float motionBlur;
+uniform vec3 cameraDirection;
 `
         )
         .replace(
           'vec3 totalEmissiveRadiance = emissive;',
           `float pathV = clamp(vUv.y, 0.0, 1.0);
+float railCenterLine = abs(vUv.x - 0.5) * 2.0;
+float railShine = smoothstep(0.35, 0.85, 1.0 - railCenterLine);
 float loopWave = sin(pathV * 24.0 - trackTime * 5.5);
 float traveler = smoothstep(0.05, 0.95, fract(pathV - trackTime * 0.35));
 float spirit = pulseIntensity + audioFlow * 0.35 + segmentBoost * 0.2;
-vec3 dreamTint = mix(ghostTintA, ghostTintB, pathV) * (0.35 + 0.25 * traveler + 0.2 * max(loopWave, 0.0));
-vec3 totalEmissiveRadiance = emissive + dreamTint * spirit;`
+float speedTrailBase = rideSpeed * smoothstep(0.1, 0.9, railShine);
+vec3 energyColorBase = mix(ghostTintA, ghostTintB, clamp(pathV + sin(trackTime * 3.0) * 0.08, 0.0, 1.0));
+
+float speedLines = 0.0;
+for (int i = 0; i < 5; i++) {
+  float lineOffset = float(i) * 0.2;
+  float speedLine = sin((pathV + lineOffset) * 50.0 - trackTime * rideSpeed * 2.0);
+  speedLines += smoothstep(0.8, 1.0, speedLine) * (1.0 - lineOffset);
+}
+speedLines *= rideSpeed * 0.3;
+
+float velocityMag = length(vVelocity);
+vec3 velocityDir = velocityMag > 1e-6 ? vVelocity / velocityMag : vec3(0.0);
+float camDirMag = length(cameraDirection);
+vec3 camDir = camDirMag > 1e-6 ? cameraDirection / camDirMag : vec3(0.0, 0.0, -1.0);
+float velocityDot = dot(velocityDir, camDir);
+vec3 dopplerShift = velocityDot > 0.0 ? vec3(0.0, 0.0, 0.3) * velocityDot : vec3(0.3, 0.0, 0.0) * abs(velocityDot);
+
+vec2 motionVector = vUv - vec2(0.5, pathV - trackTime * 0.1);
+float motionTrail = exp(-length(motionVector * 10.0)) * motionBlur;
+
+float energyFlow = sin(pathV * 20.0 - trackTime * 8.0) * 0.5 + 0.5;
+energyFlow = pow(energyFlow, 3.0);
+float flowIntensity = audioFlow + rideSpeed * 0.1;
+
+float perspectiveBlur = smoothstep(0.0, 1.0, abs(vUv.x - 0.5) * 2.0);
+perspectiveBlur *= rideSpeed * 0.2;
+
+vec3 motionColor = mix(ghostTintA, ghostTintB, clamp(pathV + sin(trackTime * 4.0) * 0.1, 0.0, 1.0));
+vec3 speedGlowDynamic = motionColor * (speedLines + energyFlow * flowIntensity);
+vec3 trailGlow = motionColor * motionTrail * 0.8;
+vec3 blurGlow = motionColor * perspectiveBlur;
+vec3 dreamTint = energyColorBase * (0.35 + 0.25 * traveler + 0.2 * max(loopWave, 0.0));
+vec3 speedGlowBase = energyColorBase * speedTrailBase * 0.5;
+
+vec3 totalEmissiveRadiance = emissive + dreamTint * spirit + speedGlowBase + speedGlowDynamic + trailGlow + blurGlow + dopplerShift;
+`
         );
+
       shader.vertexShader = shader.vertexShader
         .replace(
           '#include <common>',
           `#include <common>
 varying vec2 vUv;
+varying vec3 vWorldPosition;
+varying vec3 vVelocity;
 uniform float trackTime;
 uniform float distortionStrength;
 uniform float bassIntensity;
 uniform float trebleIntensity;
+uniform float rideSpeed;
+uniform mat4 previousModelViewMatrix;
 `
         )
         .replace(
           '#include <begin_vertex>',
           `#include <begin_vertex>
 vUv = uv;
+vec4 currentPosition = modelViewMatrix * vec4(position, 1.0);
+vec4 previousPosition = previousModelViewMatrix * vec4(position, 1.0);
+vVelocity = (currentPosition - previousPosition).xyz;
 float vPath = clamp(uv.y, 0.0, 1.0);
-transformed += normal * bassIntensity * 1.5;
-float trebleWarp = sin(vPath * 60.0 - trackTime * 4.0) * trebleIntensity * 0.4;
+float speedWarp = sin(vPath * 30.0 - trackTime * rideSpeed) * rideSpeed * 0.05;
+transformed += normal * speedWarp;
+transformed += normal * bassIntensity * (1.5 + rideSpeed * 0.1);
+float trebleWarp = sin(vPath * 60.0 - trackTime * 4.0) * trebleIntensity * (0.4 + rideSpeed * 0.02);
 transformed += normal * trebleWarp;
-float ribbon = sin(vPath * 18.0 + trackTime * 2.0);
-transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
+float motionRibbon = sin(vPath * 18.0 + trackTime * (2.0 + rideSpeed * 0.5));
+float ribbonIntensity = distortionStrength * (0.2 + 0.3 * motionRibbon);
+transformed += normal * ribbonIntensity;
+float speedVibration = sin(vPath * 100.0 + trackTime * 20.0) * rideSpeed * 0.02;
+transformed += normal * speedVibration;
+vWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;
 `
         );
+
       this.trackShaderUniforms = shader.uniforms as Record<string, THREE.IUniform>;
+      this.motionUniformsBound = false;
+      this.configureMotionUniforms();
+      this.initializeMotionEffects();
+      this.hasPreviousModelViewMatrix = false;
     };
 
     const segments = this.highQualityMode ? this.trackData.path.length * HIGH_QUALITY_SEGMENTS : this.trackData.path.length * LOW_QUALITY_SEGMENTS;
-  const curve = new THREE.CatmullRomCurve3(this.trackData.path.map(p => new THREE.Vector3(p.x, p.y, p.z)));
-  this.pathCurve = curve;
+    const curve = new THREE.CatmullRomCurve3(this.trackData.path.map(p => new THREE.Vector3(p.x, p.y, p.z)));
+    this.pathCurve = curve;
     const geometry = new THREE.TubeGeometry(curve, segments, TRACK_RADIUS, 8, false);
 
     // Generate the BVH for the track geometry to accelerate raycasting
@@ -267,7 +359,8 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     this.particles.setQualityProfile(initialProfile);
     this.particles.setConsciousnessSettings(this.synesthetic?.particles ?? null);
     this.seedAmbientParticles();
-  this.seedAmbientParticles();
+
+    this.initializeMotionEffects();
 
     try {
       const listenerRig = new THREE.Object3D();
@@ -276,6 +369,13 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
       audioGlow.name = 'audioGlow';
       listenerRig.add(audioGlow);
     } catch (e) {}
+
+    this.createTunnelRushEffect();
+
+    if (this.pathCurve) {
+      this.lastMotionPosition.copy(this.pathCurve.getPointAt(0));
+      this.hasMotionHistory = true;
+    }
   }
 
   private seedAmbientParticles(): void {
@@ -357,6 +457,417 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
     return this.makeEqualSpacedMidpoints(expectedCount);
   }
 
+  private configureMotionUniforms(): void {
+    if (!this.trackShaderUniforms || this.motionUniformsBound) {
+      return;
+    }
+
+    const uniforms = this.trackShaderUniforms;
+
+    if (!uniforms.cameraDirection) {
+      uniforms.cameraDirection = { value: new THREE.Vector3(0, 0, -1) };
+    } else if (!(uniforms.cameraDirection.value instanceof THREE.Vector3)) {
+      const raw = uniforms.cameraDirection.value as THREE.Vector3 | { x?: number; y?: number; z?: number } | undefined;
+      const next = new THREE.Vector3();
+      if (raw && typeof raw === 'object') {
+        next.set(raw.x ?? 0, raw.y ?? 0, raw.z ?? -1);
+      } else {
+        next.set(0, 0, -1);
+      }
+      uniforms.cameraDirection.value = next;
+    }
+
+    if (!uniforms.previousModelViewMatrix) {
+      uniforms.previousModelViewMatrix = { value: this.previousTrackModelViewMatrix.clone() };
+    } else if (!(uniforms.previousModelViewMatrix.value instanceof THREE.Matrix4)) {
+      uniforms.previousModelViewMatrix.value = this.previousTrackModelViewMatrix.clone();
+    }
+
+    const prevMatrix = uniforms.previousModelViewMatrix.value as THREE.Matrix4;
+    prevMatrix.copy(this.previousTrackModelViewMatrix);
+
+    this.motionUniformsBound = true;
+  }
+
+  private initializeMotionEffects(): void {
+    if (this.motionEffectsInitialized || !this.particles) {
+      this.configureMotionUniforms();
+      return;
+    }
+
+    this.configureMotionUniforms();
+
+    this.particles.registerFeatureVisual('speed', {
+      color: [0.65, 0.9, 1.0],
+      sensitivity: 0.8,
+      size: this.highQualityMode ? 1.4 : 1.0,
+      lifetime: 1.8,
+      behavior: 'trail',
+    });
+
+    this.createSpeedStreakSystem();
+
+    this.motionEffectsInitialized = true;
+  }
+
+  private getTargetSpeedStreakCount(): number {
+    return this.highQualityMode ? 640 : 220;
+  }
+
+  private teardownSpeedStreakSystem(): void {
+    if (this.speedStreakMesh) {
+      try { this.scene.remove(this.speedStreakMesh); } catch (e) {}
+      this.speedStreakMesh = null;
+    }
+    if (this.speedStreakMaterial) {
+      try { this.speedStreakMaterial.dispose(); } catch (e) {}
+      this.speedStreakMaterial = null;
+    }
+    if (this.speedStreakGeometry) {
+      try { this.speedStreakGeometry.dispose(); } catch (e) {}
+      this.speedStreakGeometry = null;
+    }
+    this.speedStreakAges = null;
+    this.speedStreakLifetimes = null;
+    this.speedStreakVelocities = null;
+    this.speedStreakCursor = 0;
+    this.speedStreakBufferSize = 0;
+  }
+
+  private createSpeedStreakSystem(targetCount?: number): void {
+    const streakCount = Math.max(32, targetCount ?? this.getTargetSpeedStreakCount());
+    if (this.speedStreakGeometry && this.speedStreakBufferSize === streakCount) {
+      return;
+    }
+
+    this.teardownSpeedStreakSystem();
+
+    const geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(streakCount * 3);
+    const velocities = new Float32Array(streakCount * 3);
+    const ages = new Float32Array(streakCount);
+    const lifetimes = new Float32Array(streakCount);
+    lifetimes.fill(0.6);
+
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3).setUsage(THREE.DynamicDrawUsage));
+    geometry.setAttribute('velocity', new THREE.BufferAttribute(velocities, 3).setUsage(THREE.DynamicDrawUsage));
+    geometry.setAttribute('age', new THREE.BufferAttribute(ages, 1).setUsage(THREE.DynamicDrawUsage));
+    geometry.setAttribute('lifetime', new THREE.BufferAttribute(lifetimes, 1).setUsage(THREE.DynamicDrawUsage));
+
+  geometry.setDrawRange(0, streakCount);
+  geometry.computeBoundingSphere();
+
+  const material = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      depthTest: true,
+      blending: THREE.AdditiveBlending,
+      uniforms: {
+        time: { value: 0 },
+        rideSpeed: { value: 0 },
+        streakIntensity: { value: 0 },
+        cameraDir: { value: new THREE.Vector3(0, 0, -1) },
+        colorA: { value: this.trackTintA.clone() },
+        colorB: { value: this.trackTintB.clone() },
+      },
+      vertexShader: `
+attribute float age;
+attribute float lifetime;
+attribute vec3 velocity;
+varying float vLife;
+varying float vProgress;
+uniform float rideSpeed;
+uniform float streakIntensity;
+uniform vec3 cameraDir;
+void main() {
+  float life = max(lifetime, 1e-4);
+  float progress = clamp(age / life, 0.0, 1.0);
+  vec3 forward = normalize(velocity + cameraDir * 0.35);
+  float stretch = mix(0.55, 1.65, clamp(rideSpeed * 0.08, 0.0, 1.0));
+  vec3 displaced = position - forward * progress * stretch;
+  vec4 mvPosition = modelViewMatrix * vec4(displaced, 1.0);
+  float baseSize = mix(6.0, 18.0, clamp(rideSpeed * 0.1, 0.0, 1.0));
+  baseSize *= streakIntensity;
+  gl_Position = projectionMatrix * mvPosition;
+  gl_PointSize = baseSize * (1.0 - progress) * clamp(1.0 / max(-mvPosition.z, 0.1), 0.0, 2.0);
+  vLife = 1.0 - progress;
+  vProgress = progress;
+}
+      `,
+      fragmentShader: `
+varying float vLife;
+varying float vProgress;
+uniform float rideSpeed;
+uniform float streakIntensity;
+uniform vec3 colorA;
+uniform vec3 colorB;
+void main() {
+  vec2 uv = gl_PointCoord - vec2(0.5);
+  float dist = length(uv * vec2(1.0, 2.6));
+  float alpha = smoothstep(0.6, 0.0, dist);
+  vec3 color = mix(colorA, colorB, clamp(vProgress + rideSpeed * 0.05, 0.0, 1.0));
+  color += vec3(0.1, 0.02, 0.15) * rideSpeed * 0.08;
+  alpha *= vLife * streakIntensity;
+  if (alpha < 0.01) discard;
+  gl_FragColor = vec4(color, alpha);
+}
+      `,
+    });
+
+    const points = new THREE.Points(geometry, material);
+    points.frustumCulled = false;
+    points.renderOrder = 2;
+    this.scene.add(points);
+
+    this.speedStreakGeometry = geometry;
+    this.speedStreakMaterial = material;
+    this.speedStreakMesh = points;
+    this.speedStreakAges = ages;
+    this.speedStreakLifetimes = lifetimes;
+    this.speedStreakVelocities = velocities;
+    this.speedStreakCursor = 0;
+    this.speedStreakBufferSize = streakCount;
+  }
+
+  private spawnMotionParticles(origin: THREE.Vector3, direction: THREE.Vector3, rideSpeed: number): void {
+    if (!this.speedStreakGeometry || !this.speedStreakAges || !this.speedStreakLifetimes || !this.speedStreakVelocities) {
+      return;
+    }
+
+    const count = this.speedStreakAges.length;
+    if (count === 0) return;
+
+    if (rideSpeed < 4.5) {
+      return;
+    }
+
+    const qualitySpawnBias = this.highQualityMode ? 6 : 3;
+    const spawnFactor = this.highQualityMode ? 0.65 : 0.35;
+    const spawnBudget = Math.min(count, qualitySpawnBias + Math.floor(rideSpeed * spawnFactor));
+    const right = this._right;
+    const up = this._up;
+    const positions = this.speedStreakGeometry.getAttribute('position') as THREE.BufferAttribute;
+    const velocitiesAttr = this.speedStreakGeometry.getAttribute('velocity') as THREE.BufferAttribute;
+    const agesAttr = this.speedStreakGeometry.getAttribute('age') as THREE.BufferAttribute;
+    const lifetimeAttr = this.speedStreakGeometry.getAttribute('lifetime') as THREE.BufferAttribute;
+
+    for (let i = 0; i < spawnBudget; i++) {
+      const index = this.speedStreakCursor++ % count;
+      const jitterForward = (Math.random() - 0.5) * 4.0;
+      const jitterRight = (Math.random() - 0.5) * 1.2;
+      const jitterUp = (Math.random() - 0.5) * 1.0;
+      const spawnPosX = origin.x + direction.x * jitterForward + right.x * jitterRight + up.x * jitterUp;
+      const spawnPosY = origin.y + direction.y * jitterForward + right.y * jitterRight + up.y * jitterUp;
+      const spawnPosZ = origin.z + direction.z * jitterForward + right.z * jitterRight + up.z * jitterUp;
+
+      positions.setXYZ(index, spawnPosX, spawnPosY, spawnPosZ);
+      const streakVelocity = this.acquireMotionVector()
+        .copy(direction)
+        .addScaledVector(right, (Math.random() - 0.5) * 0.6)
+        .addScaledVector(up, (Math.random() - 0.5) * 0.6)
+        .multiplyScalar(Math.max(4.5, rideSpeed * 1.6));
+
+      velocitiesAttr.setXYZ(index, streakVelocity.x, streakVelocity.y, streakVelocity.z);
+      this.releaseMotionVector(streakVelocity);
+      const lifetime = THREE.MathUtils.lerp(0.45, 1.1, Math.random());
+      this.speedStreakAges[index] = 0;
+      this.speedStreakLifetimes[index] = lifetime;
+      agesAttr.setX(index, 0);
+      lifetimeAttr.setX(index, lifetime);
+    }
+
+    positions.needsUpdate = true;
+    velocitiesAttr.needsUpdate = true;
+    agesAttr.needsUpdate = true;
+    lifetimeAttr.needsUpdate = true;
+  }
+
+  private updateMotionEffects(deltaSeconds: number, cameraPosition: THREE.Vector3, lookAtPosition: THREE.Vector3, rideProgress: number): number {
+    if (deltaSeconds <= 0) {
+      return this.rideSpeedSmoothed;
+    }
+
+    if (!this.trackShaderUniforms) {
+      this.configureMotionUniforms();
+    }
+
+    this._forward.subVectors(lookAtPosition, cameraPosition);
+    if (this._forward.lengthSq() < 1e-6) {
+      this._forward.set(0, 0, -1);
+    } else {
+      this._forward.normalize();
+    }
+
+    this._right.copy(this._forward).cross(VisualEffects.UP_VECTOR);
+    if (this._right.lengthSq() < 1e-6) {
+      this._right.set(1, 0, 0);
+    } else {
+      this._right.normalize();
+    }
+
+    this._up.copy(this._right).cross(this._forward);
+    if (this._up.lengthSq() < 1e-6) {
+      this._up.set(0, 1, 0);
+    } else {
+      this._up.normalize();
+    }
+
+    let rideSpeed = this.rideSpeedSmoothed;
+    if (this.pathCurve) {
+      const targetPoint = this.getTempVector3();
+      this.pathCurve.getPointAt(THREE.MathUtils.clamp(rideProgress, 0, 1), targetPoint);
+      if (this.hasMotionHistory) {
+  const deltaVector = this.getTempVector3().subVectors(targetPoint, this.lastMotionPosition);
+  rideSpeed = THREE.MathUtils.clamp(deltaVector.length() / Math.max(deltaSeconds, 1e-4), 0, 160);
+      } else {
+        rideSpeed = 0;
+        this.hasMotionHistory = true;
+      }
+      this.lastMotionPosition.copy(targetPoint);
+    }
+
+    this.rideSpeedSmoothed = THREE.MathUtils.lerp(this.rideSpeedSmoothed, rideSpeed, 0.18);
+
+    this.configureMotionUniforms();
+    if (this.trackShaderUniforms?.cameraDirection?.value instanceof THREE.Vector3) {
+      (this.trackShaderUniforms.cameraDirection.value as THREE.Vector3).copy(this._forward);
+    }
+
+    if (!this.speedStreakGeometry) {
+      this.createSpeedStreakSystem();
+    }
+
+    if (this.speedStreakGeometry && this.speedStreakAges && this.speedStreakLifetimes && this.speedStreakVelocities) {
+      const positions = this.speedStreakGeometry.getAttribute('position') as THREE.BufferAttribute;
+      const velocitiesAttr = this.speedStreakGeometry.getAttribute('velocity') as THREE.BufferAttribute;
+      const agesAttr = this.speedStreakGeometry.getAttribute('age') as THREE.BufferAttribute;
+      const lifetimeAttr = this.speedStreakGeometry.getAttribute('lifetime') as THREE.BufferAttribute;
+      const count = this.speedStreakAges.length;
+      const velArray = this.speedStreakVelocities;
+      const delta = deltaSeconds;
+      const posArray = positions.array as Float32Array;
+      for (let i = 0; i < count; i++) {
+        const lifetime = this.speedStreakLifetimes[i];
+        if (lifetime <= 0) continue;
+        const age = Math.min(lifetime, this.speedStreakAges[i] + delta);
+        this.speedStreakAges[i] = age;
+        agesAttr.setX(i, age);
+        if (age < lifetime) {
+          const offset = i * 3;
+          posArray[offset] += velArray[offset] * delta;
+          posArray[offset + 1] += velArray[offset + 1] * delta;
+          posArray[offset + 2] += velArray[offset + 2] * delta;
+        }
+      }
+      positions.needsUpdate = true;
+      agesAttr.needsUpdate = true;
+    }
+
+    const motionOrigin = this.getTempVector3().copy(cameraPosition).addScaledVector(this._forward, 6.0);
+    if (this.rideSpeedSmoothed > 6.0) {
+      this.spawnMotionParticles(motionOrigin, this._forward, this.rideSpeedSmoothed);
+    }
+
+    if (this.speedStreakMaterial) {
+      const uniforms = this.speedStreakMaterial.uniforms;
+      uniforms.time.value += deltaSeconds;
+      uniforms.rideSpeed.value = THREE.MathUtils.lerp(uniforms.rideSpeed.value, this.rideSpeedSmoothed, 0.12);
+      uniforms.streakIntensity.value = THREE.MathUtils.lerp(uniforms.streakIntensity.value, Math.min(1.0, this.rideSpeedSmoothed * 0.12), 0.18);
+      (uniforms.colorA.value as THREE.Color).copy(this.trackTintA);
+      (uniforms.colorB.value as THREE.Color).copy(this.trackTintB);
+      (uniforms.cameraDir.value as THREE.Vector3).copy(this._forward);
+    }
+
+    if (this.tunnelRushMaterial) {
+      const uniforms = this.tunnelRushMaterial.uniforms;
+      uniforms.time.value += deltaSeconds;
+      uniforms.speedFactor.value = THREE.MathUtils.lerp(uniforms.speedFactor.value, Math.min(1.2, this.rideSpeedSmoothed * 0.08), 0.12);
+      uniforms.intensity.value = THREE.MathUtils.lerp(uniforms.intensity.value, Math.min(1.0, this.gpuAudioForce * 0.12 + this.rideSpeedSmoothed * 0.04), 0.08);
+      (uniforms.colorA.value as THREE.Color).copy(this.trackTintA);
+      (uniforms.colorB.value as THREE.Color).copy(this.trackTintB);
+    }
+
+    this.updateTrackMotionMatrices();
+
+    return this.rideSpeedSmoothed;
+  }
+
+  private createTunnelRushEffect(): void {
+    if (this.tunnelRushMesh) {
+      return;
+    }
+
+    const geometry = new THREE.SphereGeometry(65, 32, 24);
+    const material = new THREE.ShaderMaterial({
+      side: THREE.BackSide,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      uniforms: {
+        time: { value: 0 },
+        intensity: { value: 0 },
+        speedFactor: { value: 0 },
+        colorA: { value: this.trackTintA.clone() },
+        colorB: { value: this.trackTintB.clone() },
+      },
+      vertexShader: `
+varying vec3 vNormalDir;
+void main() {
+  vNormalDir = normalize(normal);
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+      `,
+      fragmentShader: `
+varying vec3 vNormalDir;
+uniform float time;
+uniform float intensity;
+uniform float speedFactor;
+uniform vec3 colorA;
+uniform vec3 colorB;
+void main() {
+  float lane = sin(vNormalDir.z * 16.0 - time * (4.0 + speedFactor * 6.0));
+  float radial = sin(vNormalDir.x * 12.0 + time * 5.0) * 0.5 + 0.5;
+  float pulse = sin(time * 3.0 + vNormalDir.y * 8.0) * 0.5 + 0.5;
+  float mixFactor = clamp(radial + speedFactor * 0.3, 0.0, 1.0);
+  vec3 color = mix(colorA, colorB, mixFactor);
+  color += vec3(0.2, 0.15, 0.3) * speedFactor;
+  float opacity = clamp(intensity * (0.35 + pulse * 0.4) + abs(lane) * 0.25, 0.0, 1.0);
+  if (opacity < 0.02) discard;
+  gl_FragColor = vec4(color, opacity);
+}
+      `,
+    });
+
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.name = 'tunnelRush';
+    mesh.renderOrder = 1;
+    this.camera.add(mesh);
+
+    this.tunnelRushMesh = mesh;
+    this.tunnelRushMaterial = material;
+  }
+
+  private updateTrackMotionMatrices(): void {
+    if (!this.trackShaderUniforms || !this.trackMesh) {
+      return;
+    }
+
+  this.camera.updateMatrixWorld();
+  const current = this._tmpMatrix.multiplyMatrices(this.camera.matrixWorldInverse, this.trackMesh.matrixWorld);
+
+    if (!this.hasPreviousModelViewMatrix) {
+      this.previousTrackModelViewMatrix.copy(current);
+      this.hasPreviousModelViewMatrix = true;
+    }
+
+    const uniform = this.trackShaderUniforms.previousModelViewMatrix;
+    if (uniform && uniform.value instanceof THREE.Matrix4) {
+      uniform.value.copy(this.previousTrackModelViewMatrix);
+    }
+
+    this.previousTrackModelViewMatrix.copy(current);
+  }
+
   private deriveSegmentColor(detail?: SegmentDetail): THREE.Color {
     if (!detail) return this.baseEmissiveColor;
     const env = detail.environmentChange;
@@ -413,8 +924,9 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
       const deltaSeconds = this.lastUpdateSeconds === 0 ? 1 / 60 : Math.min(0.25, Math.max(1 / 240, nowSeconds - this.lastUpdateSeconds));
       this.lastUpdateSeconds = nowSeconds;
 
-      const clampedProgress = THREE.MathUtils.clamp(rideProgress ?? 0, 0, 1);
-      const baseSegmentBoost = this.applySegmentMood(clampedProgress);
+  const clampedProgress = THREE.MathUtils.clamp(rideProgress ?? 0, 0, 1);
+  const rideSpeed = this.updateMotionEffects(deltaSeconds, cameraPosition, lookAtPosition, clampedProgress);
+  const baseSegmentBoost = this.applySegmentMood(clampedProgress);
       this.trackMaterial.emissive.lerp(this.segmentColorTarget, 0.05);
       this._colorTmp.copy(this.segmentColorTarget).lerp(this.baseRailColor, 0.4);
       this.trackMaterial.color.lerp(this._colorTmp, 0.05);
@@ -524,6 +1036,8 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
         this.updateUniformSafe(uniforms.distortionStrength, Math.min(0.6, 0.2 + this.trackPulse * 0.5 + this.segmentIntensityBoost * 0.1));
         this.updateUniformSafe(uniforms.bassIntensity, this.audioFeatures.bass || 0);
         this.updateUniformSafe(uniforms.trebleIntensity, this.audioFeatures.treble || 0);
+        this.updateUniformSafe(uniforms.rideSpeed, rideSpeed, 1e-3);
+        this.updateUniformSafe(uniforms.motionBlur, Math.min(1.0, rideSpeed * 0.12), 1e-3);
       }
 
       if (this.ghostRibbonMaterial) {
@@ -552,7 +1066,7 @@ transformed += normal * distortionStrength * (0.2 + 0.3 * ribbon);
         }
       } catch (e) {}
 
-      this.particles.updatePointsMaterial(this.audioFeatures, this.segmentIntensityBoost, this.segmentColorTarget, this.baseRailColor);
+  this.particles.updatePointsMaterial(this.audioFeatures, this.segmentIntensityBoost, this.segmentColorTarget, this.baseRailColor);
     } finally {
       this.releaseTempVectors();
     }
@@ -808,8 +1322,13 @@ void main() {
 
   private switchToLowQuality() {
     if (!this.highQualityMode) return;
-  this.highQualityMode = false;
-  this.particles.setQualityProfile('low');
+    this.highQualityMode = false;
+    this.particles.setQualityProfile('low');
+    this.particles.registerFeatureVisual('speed', {
+      size: 1.0,
+      lifetime: 1.2,
+      sensitivity: 0.7,
+    });
     
     const oldGeometry = this.trackMesh.geometry;
     const curve = new THREE.CatmullRomCurve3(this.trackData.path.map(p => new THREE.Vector3(p.x, p.y, p.z)));
@@ -825,12 +1344,18 @@ void main() {
     this.trackMesh.geometry = newGeometry;
     oldGeometry.dispose();
     this.rebuildGhostRibbon(curve, this.trackData.path.length * LOW_QUALITY_SEGMENTS);
+    this.createSpeedStreakSystem();
   }
 
   public switchToHighQuality() {
     if (this.highQualityMode) return;
-  this.highQualityMode = true;
-  this.particles.setQualityProfile('high');
+    this.highQualityMode = true;
+    this.particles.setQualityProfile('high');
+    this.particles.registerFeatureVisual('speed', {
+      size: 1.4,
+      lifetime: 1.8,
+      sensitivity: 0.8,
+    });
 
     const oldGeometry = this.trackMesh.geometry;
     const curve = new THREE.CatmullRomCurve3(this.trackData.path.map(p => new THREE.Vector3(p.x, p.y, p.z)));
@@ -846,6 +1371,7 @@ void main() {
     this.trackMesh.geometry = newGeometry;
     oldGeometry.dispose();
     this.rebuildGhostRibbon(curve, this.trackData.path.length * HIGH_QUALITY_SEGMENTS);
+    this.createSpeedStreakSystem();
   }
 
   public dispose() {
@@ -867,6 +1393,20 @@ void main() {
     if (this.ghostRibbonMaterial) {
       try { this.ghostRibbonMaterial.dispose(); } catch (e) {}
       this.ghostRibbonMaterial = null;
+    }
+
+    this.teardownSpeedStreakSystem();
+
+    if (this.tunnelRushMesh) {
+      try {
+        this.camera.remove(this.tunnelRushMesh);
+        this.tunnelRushMesh.geometry.dispose();
+      } catch (e) {}
+      this.tunnelRushMesh = null;
+    }
+    if (this.tunnelRushMaterial) {
+      try { this.tunnelRushMaterial.dispose(); } catch (e) {}
+      this.tunnelRushMaterial = null;
     }
 
     this.particles.dispose();

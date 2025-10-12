@@ -107,6 +107,14 @@ const computePolylineLength = (pts: THREE.Vector3[]): number => {
     return total;
 };
 
+const MAX_AUDIO_LATERAL_SHIFT = 18;
+const MAX_AUDIO_VERTICAL_SHIFT = 24;
+const MAX_DEFAULT_LATERAL_SHIFT = 12;
+const MAX_DEFAULT_VERTICAL_SHIFT = 16;
+const AUDIO_WARP_BLEND = 0.55;
+const DEFAULT_WARP_BLEND = 0.4;
+const ROLL_CLAMP = Math.PI / 4;
+
 export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFeatures): TrackData => {
     const SPEED_MULTIPLIER = 1.25;
     const points: THREE.Vector3[] = [];
@@ -408,6 +416,9 @@ const applyAudioWarp = (
         return;
     }
 
+    const basePoints = points.map((p) => p.clone());
+    const baseUpVectors = upVectors.map((u) => u.clone());
+
     const wireframeDensity = clamp01(geometrySettings?.wireframeDensity, 0.55);
     const breathingStrength = clamp01(geometrySettings?.organicBreathing, 0.4);
     const impossiblePhysics = Boolean(geometrySettings?.impossiblePhysics);
@@ -423,6 +434,8 @@ const applyAudioWarp = (
     const tangent = new THREE.Vector3();
     const lateral = new THREE.Vector3();
     const rollUp = new THREE.Vector3();
+    const displaced = new THREE.Vector3();
+    const verticalOffset = new THREE.Vector3();
     let smoothedLateral = 0;
     let smoothedVertical = 0;
     let smoothedRoll = 0;
@@ -443,17 +456,27 @@ const applyAudioWarp = (
         return THREE.MathUtils.lerp(a, b, t);
     };
 
+    const warpBlend = THREE.MathUtils.clamp(AUDIO_WARP_BLEND + breathingStrength * 0.15, 0.35, 0.72);
+
     for (let i = 1; i < points.length - 1; i++) {
         const progress = i / (points.length - 1);
         const fade = THREE.MathUtils.smoothstep(progress, 0.05, 0.95);
         const energyNorm = (sample(progress, 'energy') / maxEnergy) * fade;
         const fluxNorm = (sample(progress, 'spectralFlux') / maxFlux) * fade;
         const centroidNorm = (sample(progress, 'spectralCentroid') / maxCentroid) * fade;
-        const driverNorm = breathingDriver === 'spectralFlux' ? fluxNorm : breathingDriver === 'spectralCentroid' ? centroidNorm : energyNorm;
+        const driverNorm = breathingDriver === 'spectralFlux'
+            ? fluxNorm
+            : breathingDriver === 'spectralCentroid'
+                ? centroidNorm
+                : energyNorm;
 
-        prev.copy(points[i - 1]);
-        next.copy(points[i + 1]);
-        tangent.copy(next).sub(prev);
+        const basePrev = basePoints[i - 1];
+        const baseCurrent = basePoints[i];
+        const baseNext = basePoints[i + 1];
+
+        prev.copy(basePrev);
+        next.copy(baseNext);
+        tangent.copy(baseNext).sub(basePrev);
         if (tangent.lengthSq() < 1e-6) continue;
         tangent.normalize();
 
@@ -478,7 +501,6 @@ const applyAudioWarp = (
         targetVert += macroRise * 0.75;
 
         if (breathingStrength > 0.001) {
-            // Encourage the track to breathe with the music by biasing displacement toward the chosen driver feature.
             const globalPhase = progress * Math.PI * 2 * breathFrequency;
             const breathPulse = Math.sin(globalPhase + driverNorm * Math.PI * 1.5);
             const breathLift = breathPulse * breathingStrength * (7.5 + wireframeDensity * 4.0) * fade;
@@ -490,29 +512,40 @@ const applyAudioWarp = (
         if (impossiblePhysics) {
             const tumble = Math.sin(progress * Math.PI * (3.6 + wireframeDensity * 3.0) + energyNorm * 5.0) * fluxNorm;
             const lateralInvert = Math.cos(progress * Math.PI * 2.6 + centroidNorm * 3.6) * energyNorm;
-            targetVert += tumble * 3.0;
-            targetLat += lateralInvert * 2.8;
+            targetVert += tumble * 2.4;
+            targetLat += lateralInvert * 2.1;
         }
 
-        smoothedLateral = THREE.MathUtils.lerp(smoothedLateral, targetLat, 0.08 + fluxNorm * 0.06);
-        smoothedVertical = THREE.MathUtils.lerp(smoothedVertical, targetVert, 0.1 + energyNorm * 0.06);
+        targetLat = THREE.MathUtils.clamp(targetLat, -MAX_AUDIO_LATERAL_SHIFT, MAX_AUDIO_LATERAL_SHIFT);
+        targetVert = THREE.MathUtils.clamp(targetVert, -MAX_AUDIO_VERTICAL_SHIFT, MAX_AUDIO_VERTICAL_SHIFT);
+
+        smoothedLateral = THREE.MathUtils.lerp(smoothedLateral, targetLat, 0.08 + fluxNorm * 0.05);
+        smoothedVertical = THREE.MathUtils.lerp(smoothedVertical, targetVert, 0.09 + energyNorm * 0.05);
         smoothedRoll = THREE.MathUtils.lerp(smoothedRoll, targetRoll, 0.14);
 
-        points[i].addScaledVector(lateral, smoothedLateral);
-        points[i].y += smoothedVertical;
+        displaced.copy(baseCurrent)
+            .addScaledVector(lateral, smoothedLateral)
+            .addScaledVector(worldUp, smoothedVertical);
 
-        rollUp.copy(worldUp).applyAxisAngle(tangent, smoothedRoll).normalize();
-        upVectors[i].lerp(rollUp, 0.34).normalize();
+        points[i].lerpVectors(baseCurrent, displaced, warpBlend);
+
+        const clampedRoll = THREE.MathUtils.clamp(smoothedRoll, -ROLL_CLAMP, ROLL_CLAMP);
+        rollUp.copy(worldUp).applyAxisAngle(tangent, clampedRoll).normalize();
+        upVectors[i].copy(baseUpVectors[i]).lerp(rollUp, warpBlend * 0.6).normalize();
     }
 };
 
 const applyDefaultWave = (points: THREE.Vector3[], upVectors: THREE.Vector3[], geometrySettings: SynestheticGeometry | null) => {
     if (points.length < 3) return;
+    const basePoints = points.map((p) => p.clone());
+    const baseUpVectors = upVectors.map((u) => u.clone());
+
     const worldUp = new THREE.Vector3(0, 1, 0);
     const prev = new THREE.Vector3();
     const next = new THREE.Vector3();
     const tangent = new THREE.Vector3();
     const lateral = new THREE.Vector3();
+    const displaced = new THREE.Vector3();
     let smoothedLateral = 0;
     let smoothedVertical = 0;
 
@@ -521,19 +554,24 @@ const applyDefaultWave = (points: THREE.Vector3[], upVectors: THREE.Vector3[], g
     const impossiblePhysics = Boolean(geometrySettings?.impossiblePhysics);
     const macroBend = 22 + wireframeDensity * 34;
     const macroLift = 18 + breathingStrength * 28;
+    const warpBlend = THREE.MathUtils.clamp(DEFAULT_WARP_BLEND + breathingStrength * 0.2, 0.25, 0.55);
 
     for (let i = 1; i < points.length - 1; i++) {
         const progress = i / (points.length - 1);
         const fade = THREE.MathUtils.smoothstep(progress, 0.05, 0.95);
-    const baseWave = Math.sin(progress * Math.PI * (1.8 + wireframeDensity * 1.4)) * fade;
-    const breath = Math.cos(progress * Math.PI * 1.4) * breathingStrength * fade;
-    const macroCurve = Math.sin(progress * Math.PI * 0.85) * macroBend * fade;
-    const macroRise = Math.cos(progress * Math.PI * 0.7) * macroLift * fade;
-    const wave = baseWave + breath * 0.55;
+        const baseWave = Math.sin(progress * Math.PI * (1.8 + wireframeDensity * 1.4)) * fade;
+        const breath = Math.cos(progress * Math.PI * 1.4) * breathingStrength * fade;
+        const macroCurve = Math.sin(progress * Math.PI * 0.85) * macroBend * fade;
+        const macroRise = Math.cos(progress * Math.PI * 0.7) * macroLift * fade;
+        const wave = baseWave + breath * 0.55;
 
-        prev.copy(points[i - 1]);
-        next.copy(points[i + 1]);
-        tangent.copy(next).sub(prev);
+        const basePrev = basePoints[i - 1];
+        const baseCurrent = basePoints[i];
+        const baseNext = basePoints[i + 1];
+
+        prev.copy(basePrev);
+        next.copy(baseNext);
+        tangent.copy(baseNext).sub(basePrev);
         if (tangent.lengthSq() < 1e-6) continue;
         tangent.normalize();
 
@@ -548,15 +586,21 @@ const applyDefaultWave = (points: THREE.Vector3[], upVectors: THREE.Vector3[], g
         let targetVert = wave * (7.5 + breathingStrength * 3.6) + macroRise * 0.7;
 
         if (impossiblePhysics) {
-            targetLat += Math.cos(progress * Math.PI * 3.4) * 2.2 * fade;
-            targetVert += Math.sin(progress * Math.PI * 3.8) * 2.6 * fade;
+            targetLat += Math.cos(progress * Math.PI * 3.4) * 2.0 * fade;
+            targetVert += Math.sin(progress * Math.PI * 3.8) * 2.2 * fade;
         }
+
+        targetLat = THREE.MathUtils.clamp(targetLat, -MAX_DEFAULT_LATERAL_SHIFT, MAX_DEFAULT_LATERAL_SHIFT);
+        targetVert = THREE.MathUtils.clamp(targetVert, -MAX_DEFAULT_VERTICAL_SHIFT, MAX_DEFAULT_VERTICAL_SHIFT);
 
         smoothedLateral = THREE.MathUtils.lerp(smoothedLateral, targetLat, 0.12);
         smoothedVertical = THREE.MathUtils.lerp(smoothedVertical, targetVert, 0.12);
 
-        points[i].addScaledVector(lateral, smoothedLateral);
-        points[i].y += smoothedVertical;
-        upVectors[i].lerp(worldUp, 0.4).normalize();
+        displaced.copy(baseCurrent)
+            .addScaledVector(lateral, smoothedLateral)
+            .addScaledVector(worldUp, smoothedVertical);
+
+        points[i].lerpVectors(baseCurrent, displaced, warpBlend);
+        upVectors[i].copy(baseUpVectors[i]).lerp(worldUp, warpBlend * 0.5).normalize();
     }
 };
