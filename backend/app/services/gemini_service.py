@@ -1,8 +1,5 @@
-import os
 import json
 from io import BytesIO
-import tempfile
-import pathlib
 
 # Avoid hard failures at import time for optional / heavy dependencies (fastapi, google-genai, librosa)
 try:
@@ -48,7 +45,7 @@ class GeminiService:
         if genai is not None:
             try:
                 self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
-            except Exception as e:
+            except Exception:
                 # Keep the attribute so tests can replace it.
                 self.client = None
         else:
@@ -123,62 +120,40 @@ Always ensure the JSON response matches the schema: include rideName, moodDescri
                 options
             )
 
+            if self.client is None or types is None:
+                # Bubble up to the generic exception handler so the procedural fallback engages.
+                raise RuntimeError("Gemini SDK is not configured. Install google-genai and set GEMINI_API_KEY.")
+
             # Choose an upload strategy based on payload size:
             # - Inline Part for small payloads (keeps everything in one request)
             # - Files API upload for larger payloads (stream via BytesIO)
-            contents = None
             SIZE_THRESHOLD = 2 * 1024 * 1024  # 2 MB
 
             if len(audio_bytes) <= SIZE_THRESHOLD:
-                # Inline the bytes as a Part (recommended/explicit mime type)
-                part = types.Part.from_bytes(data=audio_bytes, mime_type=content_type or "audio/mpeg")
-                contents = [part, prompt]
+                audio_part = types.Part.from_bytes(data=audio_bytes, mime_type=content_type or "audio/mpeg")
+                contents = [prompt, audio_part]
             else:
-                # For larger files: write to a temp file and upload by path.
-                # This is the most robust approach across SDK versions.
-                tmp_path = None
-                try:
-                    # infer suffix from content_type when available
-                    mime_to_ext = {
-                        'audio/mpeg': '.mp3',
-                        'audio/mp3': '.mp3',
-                        'audio/wav': '.wav',
-                        'audio/x-wav': '.wav',
-                        'audio/flac': '.flac',
-                        'audio/aac': '.aac',
-                        'audio/ogg': '.ogg',
-                    }
-                    suffix = mime_to_ext.get((content_type or '').lower(), '.mp3')
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tf:
-                        tf.write(audio_bytes)
-                        tmp_path = tf.name
-                    uploaded_file = await self.client.aio.files.upload(file=tmp_path)
-                    contents = [uploaded_file, prompt]
-                finally:
-                    try:
-                        if tmp_path and pathlib.Path(tmp_path).exists():
-                            pathlib.Path(tmp_path).unlink()
-                    except Exception:
-                        pass
+                buffer = BytesIO(audio_bytes)
+                uploaded_file = await self.client.aio.files.upload(
+                    file=buffer,
+                    mime_type=content_type or "audio/mpeg",
+                )
+                contents = [prompt, uploaded_file]
 
             # Request structured JSON output using the Blueprint Pydantic model.
-            # The SDK will convert Pydantic -> Schema automatically.
-            # Put system instructions inside the config so SDK variations accept it
-            config_dict = {'response_mime_type': 'application/json', 'response_schema': Blueprint, 'system_instruction': self.SYSTEM_INSTRUCTION, 'temperature': 0.8}
-            try:
-                response = await self.client.aio.models.generate_content(
-                    model='gemini-2.5-flash',
-                    contents=contents,
-                    config=config_dict,
-                )
-            except TypeError:
-                # Try using types.GenerateContentConfig if the SDK expects that type
-                gen_cfg = types.GenerateContentConfig(response_mime_type='application/json', system_instruction=self.SYSTEM_INSTRUCTION, temperature=0.8)
-                response = await self.client.aio.models.generate_content(
-                    model='gemini-2.5-flash',
-                    contents=contents,
-                    config=gen_cfg,
-                )
+            # The SDK converts Pydantic -> Schema automatically.
+            generation_config = types.GenerateContentConfig(
+                response_mime_type='application/json',
+                response_schema=Blueprint,
+                system_instruction=self.SYSTEM_INSTRUCTION,
+                temperature=0.8,
+            )
+
+            response = await self.client.aio.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=contents,
+                config=generation_config,
+            )
 
             # Prefer SDK-parsed pydantic object if available
             try:
