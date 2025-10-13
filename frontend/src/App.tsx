@@ -1,71 +1,36 @@
-import React, { useRef, useEffect, useCallback } from 'react';
+import React, { useEffect } from 'react';
 import { AppStatus } from '../../shared/types';
 import { useAppStore } from './lib/store';
 import { runAudioProcessingWorkflow } from './lib/workflow';
 import { startPreload } from './lib/preloader';
-import { Loader } from './components/Loader';
 import { LoadingProgress } from './components/LoadingProgress';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { UploadIcon, PlayIcon, SparkleIcon, AlertTriangleIcon } from './components/Icon';
 import ThreeCanvas from './components/ThreeCanvas';
 import ReglOverlay from './components/ReglOverlay';
 import DevPanel from './components/DevPanel';
 import RendererWarning from './components/RendererWarning';
+import IdleUI from './components/views/IdleUI';
+import ReadyUI from './components/views/ReadyUI';
+import FinishedUI from './components/views/FinishedUI';
+import ErrorUI from './components/views/ErrorUI';
 
 const App: React.FC = () => {
     const status = useAppStore((state) => state.status);
-    const error = useAppStore((state) => state.error);
     const statusMessage = useAppStore((state) => state.statusMessage);
     const audioFile = useAppStore((state) => state.audioFile);
     const trackData = useAppStore((state) => state.trackData);
-    const audioFeatures = useAppStore((state) => state.trackData?.audioFeatures); // Get audioFeatures for the overlay
-    const { setAudioFile, startRide, resetApp, startRideAgain, setError } = useAppStore((state) => state.actions);
-    const fileInputRef = useRef<HTMLInputElement>(null);
+    const audioFeatures = useAppStore((state) => state.trackData?.audioFeatures);
+    const generationOptions = useAppStore(state => state.generationOptions);
 
     // Start preloading resources as soon as the app mounts
     useEffect(() => {
         startPreload();
     }, []);
 
-    const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-        const file = event.target.files?.[0];
-        if (!file) return;
-
-        const allowedTypes = new Set(['audio/mpeg', 'audio/wav', 'audio/x-wav']);
-        const maxBytes = 20 * 1024 * 1024; // 20 MB
-
-        if (!allowedTypes.has(file.type)) {
-            setError({ title: "Unsupported File Type", message: `Please select a valid audio file (MP3, WAV). You selected a file of type: ${file.type}` });
-            return;
-        }
-        if (file.size > maxBytes) {
-            setError({ title: "File Too Large", message: `The selected file is too large (${(file.size / (1024 * 1024)).toFixed(1)}MB). Please select a file smaller than 20MB.` });
-            return;
-        }
-
-        setAudioFile(file);
-    }, [setAudioFile, setError]);
-    
-    useEffect(() => {
-        if (status === AppStatus.Idle && fileInputRef.current) {
-            fileInputRef.current.value = '';
-        }
-    }, [status]);
-
-    // Preset options (kept inline for now — server endpoint exists for dynamic lists)
-    const TRACK_STYLES = ['classic', 'extreme', 'flowing', 'technical', 'experimental'];
-    const WORLD_THEMES = ['fantasy', 'cyberpunk', 'aurora', 'desert', 'space', 'underwater', 'noir'];
-    const VISUAL_STYLES = ['photorealistic', 'stylized', 'painterly', 'lowpoly', 'retro'];
-    const DETAIL_LEVELS = ['low', 'medium', 'high'];
-    const CAMERA_PRESETS = ['epic', 'immersive', 'first_person', 'wide_angle'];
-
-    const generationOptions = useAppStore(state => state.generationOptions);
-    const setGenerationOptions = useAppStore(state => state.actions.setGenerationOptions);
-
+    // This effect runs the main audio processing workflow whenever a new audio file is set
+    // and the generation options are available.
     useEffect(() => {
         if (audioFile) {
-            // Pass current generation options into workflow so the backend / Gemini
-            // model can honor the user's stylistic choices.
             runAudioProcessingWorkflow(audioFile, { generationOptions });
         }
     }, [audioFile, generationOptions]);
@@ -73,142 +38,15 @@ const App: React.FC = () => {
     const renderContent = () => {
         switch (status) {
             case AppStatus.Error:
-                if (!error) return null;
-                return (
-                    <div className="text-center animate-fade-in bg-red-900/20 border border-red-500/50 rounded-lg p-8 max-w-lg shadow-xl">
-                        <AlertTriangleIcon className="w-16 h-16 text-red-400 mx-auto" />
-                        <h2 className="mt-4 text-3xl font-bold text-red-300">{error.title}</h2>
-                        <p className="mt-2 text-red-200">{error.message}</p>
-                        <button onClick={resetApp} className="mt-6 px-8 py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-md transition-colors transform hover:scale-105">Try Again</button>
-                    </div>
-                );
+                return <ErrorUI />;
             case AppStatus.Idle:
-                return (
-                    <div className="text-center animate-fade-in">
-                        <h1 className="text-5xl md:text-7xl font-thin tracking-widest uppercase bg-clip-text text-transparent bg-gradient-to-r from-fuchsia-400 to-cyan-400">AudioRail Rider</h1>
-                        <p className="mt-4 max-w-2xl mx-auto text-gray-400">Translate music into a navigable space. Inhabit the soul of a song.</p>
-                        <label htmlFor="audio-upload" className="mt-8 inline-flex items-center gap-3 px-8 py-4 bg-gray-800/50 border border-gray-600 rounded-lg cursor-pointer hover:bg-gray-700/70 hover:border-cyan-400 transition-all duration-300 transform hover:scale-105">
-                            <UploadIcon className="w-6 h-6" />
-                            <span>Offer a ghost... (MP3, WAV)</span>
-                        </label>
-                        <input ref={fileInputRef} id="audio-upload" type="file" accept="audio/mp3, audio/wav, audio/mpeg" className="hidden" onChange={handleFileChange} />
-                        <p className="text-xs text-gray-600 mt-4">For the best experience, use a track with dynamic range.</p>
-                        <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-3 max-w-xl mx-auto text-left">
-                            <div>
-                                <label className="block text-xs text-gray-400">Track Style</label>
-                                <select
-                                    value={(generationOptions && (generationOptions as any).trackStyle) || ''}
-                                    onChange={(e) => setGenerationOptions({ ...(generationOptions || {}), trackStyle: (e.target.value ? (e.target.value as import('shared/types').TrackStyle) : undefined) })}
-                                    className="mt-1 w-full bg-gray-800/60 border border-gray-700 rounded-md p-2 text-sm text-gray-200"
-                                >
-                                    <option value="">(auto)</option>
-                                    {TRACK_STYLES.map(s => <option key={s} value={s}>{s}</option>)}
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-xs text-gray-400">World Theme</label>
-                                <select
-                                    value={(generationOptions && (generationOptions as any).worldTheme) || ''}
-                                    onChange={(e) => setGenerationOptions({ ...(generationOptions || {}), worldTheme: (e.target.value ? (e.target.value as import('shared/types').WorldTheme) : undefined) })}
-                                    className="mt-1 w-full bg-gray-800/60 border border-gray-700 rounded-md p-2 text-sm text-gray-200"
-                                >
-                                    <option value="">(auto)</option>
-                                    {WORLD_THEMES.map(s => <option key={s} value={s}>{s}</option>)}
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-xs text-gray-400">Visual Style</label>
-                                <select
-                                    value={(generationOptions && (generationOptions as any).visualStyle) || ''}
-                                    onChange={(e) => setGenerationOptions({ ...(generationOptions || {}), visualStyle: (e.target.value ? (e.target.value as import('shared/types').VisualStyle) : undefined) })}
-                                    className="mt-1 w-full bg-gray-800/60 border border-gray-700 rounded-md p-2 text-sm text-gray-200"
-                                >
-                                    <option value="">(auto)</option>
-                                    {VISUAL_STYLES.map(s => <option key={s} value={s}>{s}</option>)}
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-xs text-gray-400">Detail Level</label>
-                                <select
-                                    value={(generationOptions && (generationOptions as any).detailLevel) || ''}
-                                    onChange={(e) => setGenerationOptions({ ...(generationOptions || {}), detailLevel: (e.target.value ? (e.target.value as import('shared/types').DetailLevel) : undefined) })}
-                                    className="mt-1 w-full bg-gray-800/60 border border-gray-700 rounded-md p-2 text-sm text-gray-200"
-                                >
-                                    <option value="">(auto)</option>
-                                    {DETAIL_LEVELS.map(s => <option key={s} value={s}>{s}</option>)}
-                                </select>
-                            </div>
-                            <div className="md:col-span-2">
-                                <label className="block text-xs text-gray-400">Event Presets</label>
-                                <div className="mt-2 flex flex-wrap gap-2">
-                                    {['fog', 'fireworks', 'starshow', 'lightBurst', 'sparkRing', 'confetti'].map((ev) => {
-                                        const checked = (generationOptions && (generationOptions as any).preferredEventPresets || []).includes(ev);
-                                        return (
-                                            <label key={ev} className="inline-flex items-center gap-2 text-sm text-gray-300 bg-gray-800/40 px-3 py-1 rounded-md cursor-pointer">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={checked}
-                                                    onChange={(e) => {
-                                                        const cur = (generationOptions && (generationOptions as any).preferredEventPresets) || [];
-                                                        const next = e.target.checked ? Array.from(new Set([...cur, ev])) : cur.filter((x: string) => x !== ev);
-                                                        setGenerationOptions({ ...(generationOptions || {}), preferredEventPresets: next as any });
-                                                    }}
-                                                />
-                                                <span className="capitalize">{ev}</span>
-                                            </label>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-                        </div>
-                         <div className="mt-8 text-sm text-gray-500">
-                             Powered by <span className="font-semibold text-gray-400">Gemini</span> & <span className="font-semibold text-gray-400">Three.js</span>
-                         </div>
-                    </div>
-                );
+                return <IdleUI />;
             case AppStatus.Ready:
-                 return (
-                    <div className="text-center flex flex-col items-center animate-fade-in">
-                        <SparkleIcon className="w-16 h-16 text-cyan-300" />
-                        <h2 className="text-4xl font-bold mt-4 bg-clip-text text-transparent bg-gradient-to-r from-fuchsia-400 to-cyan-400">The Dreamscape is Ready</h2>
-                        <p className="mt-2 text-gray-300">Your ride through "{audioFile?.name}" has been constructed.</p>
-                        <button 
-                            onClick={() => {
-                                console.log('[App] Begin the Ride button clicked');
-                                startRide();
-                            }} 
-                            className="mt-8 inline-flex items-center gap-3 px-12 py-5 bg-cyan-500/80 text-white font-bold rounded-full shadow-lg shadow-cyan-500/20 hover:bg-cyan-400 transition-all duration-300 transform hover:scale-110"
-                        >
-                            <PlayIcon className="w-8 h-8" />
-                            <span>Begin the Ride</span>
-                        </button>
-                    </div>
-                );
+                return <ReadyUI />;
             case AppStatus.Finished:
-                return (
-                   <div className="text-center animate-fade-in">
-                       <h2 className="text-4xl font-bold">Ride Complete</h2>
-                       <p className="mt-2 text-gray-300">
-                         You have journeyed through "{audioFile?.name || 'your audio'}".
-                       </p>
-                       <div className="mt-8 flex justify-center gap-4">
-                           <button
-                             onClick={startRideAgain}
-                             className="px-6 py-2 bg-cyan-500 hover:bg-cyan-600 rounded-md transition-colors"
-                           >
-                               Ride Again
-                           </button>
-                           <button
-                             onClick={resetApp}
-                             className="px-6 py-2 bg-gray-600 hover:bg-gray-700 rounded-md transition-colors"
-                           >
-                               Upload New Song
-                           </button>
-                       </div>
-                   </div>
-               );
+                return <FinishedUI />;
             default:
-                return null; // Riding state is handled by ThreeCanvas, Loader handles others
+                return null; // Riding, Analyzing, Generating, etc., are handled by overlays
         }
     };
 

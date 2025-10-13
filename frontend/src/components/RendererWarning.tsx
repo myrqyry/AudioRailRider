@@ -5,8 +5,7 @@ const isSoftwareRenderer = (renderer: string | null, vendor: string | null) => {
   const r = (renderer || '').toLowerCase();
   const v = (vendor || '').toLowerCase();
   // SwiftShader and ANGLE vendor strings frequently indicate software paths
-  if (r.includes('swiftshader') || r.includes('subzero') || v.includes('google')) return true;
-  if (r.includes('angle')) return true;
+  if (r.includes('swiftshader') || v === 'google inc. (google)') return true;
   return false;
 };
 
