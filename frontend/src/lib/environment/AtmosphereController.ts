@@ -33,8 +33,6 @@ export class AtmosphereController {
     this.synesthetic = synesthetic;
   }
 
-  private synesthetic: SynestheticAtmosphere | null = null;
-
   public setSynesthetic(atmosphere: SynestheticAtmosphere | null): void {
     this.synesthetic = atmosphere;
   }

@@ -1,5 +1,6 @@
 import json
-from io import BytesIO
+import pathlib
+import tempfile
 
 # Avoid hard failures at import time for optional / heavy dependencies (fastapi, google-genai, librosa)
 try:
@@ -126,19 +127,46 @@ Always ensure the JSON response matches the schema: include rideName, moodDescri
 
             # Choose an upload strategy based on payload size:
             # - Inline Part for small payloads (keeps everything in one request)
-            # - Files API upload for larger payloads (stream via BytesIO)
+            # - Files API upload for larger payloads (persist to disk for streaming)
             SIZE_THRESHOLD = 2 * 1024 * 1024  # 2 MB
 
             if len(audio_bytes) <= SIZE_THRESHOLD:
                 audio_part = types.Part.from_bytes(data=audio_bytes, mime_type=content_type or "audio/mpeg")
                 contents = [prompt, audio_part]
             else:
-                buffer = BytesIO(audio_bytes)
-                uploaded_file = await self.client.aio.files.upload(
-                    file=buffer,
-                    mime_type=content_type or "audio/mpeg",
-                )
-                contents = [prompt, uploaded_file]
+                tmp_path: str | None = None
+                try:
+                    # Persist the payload because the Files API expects a file path, not a stream.
+                    mime_map = {
+                        'audio/mpeg': '.mp3',
+                        'audio/mp3': '.mp3',
+                        'audio/wav': '.wav',
+                        'audio/x-wav': '.wav',
+                        'audio/flac': '.flac',
+                        'audio/aac': '.aac',
+                        'audio/ogg': '.ogg',
+                    }
+                    suffix = mime_map.get((content_type or '').lower(), '.mp3')
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                        tmp.write(audio_bytes)
+                        tmp_path = tmp.name
+
+                    upload_kwargs: dict[str, object] = {'file': tmp_path}
+                    if types and hasattr(types, 'UploadFileConfig') and content_type:
+                        try:
+                            upload_kwargs['config'] = types.UploadFileConfig(mime_type=content_type)
+                        except Exception:
+                            # Some SDK versions may not expose UploadFileConfig; continue without it.
+                            pass
+
+                    uploaded_file = await self.client.aio.files.upload(**upload_kwargs)
+                    contents = [prompt, uploaded_file]
+                finally:
+                    if tmp_path:
+                        try:
+                            pathlib.Path(tmp_path).unlink(missing_ok=True)  # type: ignore[arg-type]
+                        except Exception:
+                            pass
 
             # Request structured JSON output using the Blueprint Pydantic model.
             # The SDK converts Pydantic -> Schema automatically.
@@ -293,10 +321,11 @@ Always ensure the JSON response matches the schema: include rideName, moodDescri
         """
         Generate a skybox image using Gemini 2.5 Flash Image Preview model.
         This model excels at creative image generation with rich context understanding.
-        
+
         Args:
             prompt: The mood/theme description from the blueprint
             blueprint_data: Optional full blueprint for additional context
+            options: Optional hints that further constrain the skybox aesthetics
         """
         try:
             # Build a rich, contextual prompt using blueprint data if available

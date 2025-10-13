@@ -91,6 +91,8 @@ export class VisualEffects {
   private motionEffectsInitialized: boolean = false;
   private motionUniformsBound: boolean = false;
   private readonly _tmpMatrix = new THREE.Matrix4();
+  private trackPathPoints: THREE.Vector3[] = [];
+  private usingProceduralTrack: boolean = false;
 
   // --- Object Pools ---
   private readonly _vectorPool = new Vector3Pool(12);
@@ -168,6 +170,27 @@ export class VisualEffects {
     this.camera = camera;
     this.trackData = trackData;
     this.synesthetic = trackData.synesthetic ?? null;
+
+    const sanitized = this.analyzeAndSanitizePath(trackData.path);
+    console.log('[VisualEffects] Track diagnostics', {
+      hasPath: Array.isArray(trackData.path),
+      receivedCount: Array.isArray(trackData.path) ? trackData.path.length : 0,
+      validCount: sanitized.points.length,
+      issues: sanitized.issues,
+      sample: sanitized.points.slice(0, 3).map((v) => ({ x: v.x, y: v.y, z: v.z })),
+    });
+    if (sanitized.issues.length) {
+      console.warn('[VisualEffects] Track path issues detected', sanitized.issues);
+    }
+
+    this.trackPathPoints = sanitized.points;
+    if (this.trackPathPoints.length < 2) {
+      console.warn('[VisualEffects] Track path invalid or too short, generating procedural fallback');
+      this.trackPathPoints = this.generateProceduralTrack(trackData);
+      this.usingProceduralTrack = true;
+    } else {
+      this.usingProceduralTrack = false;
+    }
 
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     this.highQualityMode = !isMobile;
@@ -339,8 +362,8 @@ vWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;
       this.hasPreviousModelViewMatrix = false;
     };
 
-    const segments = this.highQualityMode ? this.trackData.path.length * HIGH_QUALITY_SEGMENTS : this.trackData.path.length * LOW_QUALITY_SEGMENTS;
-    const curve = new THREE.CatmullRomCurve3(this.trackData.path.map(p => new THREE.Vector3(p.x, p.y, p.z)));
+  const segments = this.highQualityMode ? this.trackPathPoints.length * HIGH_QUALITY_SEGMENTS : this.trackPathPoints.length * LOW_QUALITY_SEGMENTS;
+  const curve = new THREE.CatmullRomCurve3(this.trackPathPoints.map((p) => p.clone()));
     this.pathCurve = curve;
     const geometry = new THREE.TubeGeometry(curve, segments, TRACK_RADIUS, 8, false);
 
@@ -350,6 +373,10 @@ vWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;
     this.trackMesh = new THREE.Mesh(geometry, this.trackMaterial);
     this.trackMesh.frustumCulled = true;
     this.scene.add(this.trackMesh);
+
+    if (this.usingProceduralTrack) {
+      this.trackMaterial.color.setHex(0xff6b6b);
+    }
 
     this.ghostRibbonMaterial = this.createGhostRibbonMaterial();
     this.rebuildGhostRibbon(curve, segments);
@@ -378,9 +405,122 @@ vWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;
     }
   }
 
+  private static normalizePathPoint(point: any): THREE.Vector3 | null {
+    if (!point) return null;
+    if (point instanceof THREE.Vector3) {
+      if (Number.isFinite(point.x) && Number.isFinite(point.y) && Number.isFinite(point.z)) {
+        return point.clone();
+      }
+      return null;
+    }
+    if (typeof point === 'object') {
+      const { x, y, z } = point as { x?: number; y?: number; z?: number };
+      if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
+        return new THREE.Vector3(x, y, z);
+      }
+    }
+    return null;
+  }
+
+  private static removeDuplicatePoints(points: THREE.Vector3[], epsilon = 1e-2): THREE.Vector3[] {
+    if (points.length <= 1) {
+      return points;
+    }
+    const unique: THREE.Vector3[] = [points[0].clone()];
+    for (let i = 1; i < points.length; i++) {
+      const candidate = points[i];
+      const previous = unique[unique.length - 1];
+      if (candidate.distanceTo(previous) > epsilon) {
+        unique.push(candidate.clone());
+      }
+    }
+    return unique;
+  }
+
+  private analyzeAndSanitizePath(rawPath: unknown): { points: THREE.Vector3[]; issues: string[] } {
+    const issues: string[] = [];
+    if (!Array.isArray(rawPath)) {
+      issues.push('Path is not an array');
+      return { points: [], issues };
+    }
+
+    const normalized: THREE.Vector3[] = [];
+    rawPath.forEach((entry, index) => {
+      const vec = VisualEffects.normalizePathPoint(entry);
+      if (!vec) {
+        issues.push(`Invalid point at index ${index}`);
+      } else {
+        normalized.push(vec);
+      }
+    });
+
+    const deduped = VisualEffects.removeDuplicatePoints(normalized);
+    if (deduped.length === 0) {
+      issues.push('No valid points after sanitization');
+    } else if (deduped.length === 1) {
+      issues.push('Only one unique point provided');
+    }
+
+    return { points: deduped, issues };
+  }
+
+  public static validateTrackData(data: any): { valid: boolean; issues: string[] } {
+    const issues: string[] = [];
+    if (!data) {
+      issues.push('TrackData is null or undefined');
+      return { valid: false, issues };
+    }
+    if (!Array.isArray(data.path)) {
+      issues.push('TrackData.path must be an array');
+    } else if (data.path.length < 2) {
+      issues.push(`TrackData.path must contain at least 2 points (received ${data.path.length})`);
+    }
+    if (Array.isArray(data.path)) {
+      data.path.forEach((point: any, index: number) => {
+        const vec = VisualEffects.normalizePathPoint(point);
+        if (!vec) {
+          issues.push(`TrackData.path[${index}] is not a valid Vector3-like point`);
+        }
+      });
+    }
+    const valid = issues.length === 0;
+    return { valid, issues };
+  }
+
+  private generateProceduralTrack(trackData: TrackData): THREE.Vector3[] {
+    const points: THREE.Vector3[] = [];
+    const audio = trackData.audioFeatures || {};
+    const duration = typeof audio.duration === 'number' ? audio.duration : secondsToNumber(audio.duration ?? 120);
+    const energy = typeof audio.energy === 'number' ? THREE.MathUtils.clamp(audio.energy, 0, 1) : 0.5;
+    const bpm = typeof audio.bpm === 'number' ? Math.max(60, Math.min(240, audio.bpm)) : 120;
+    const segmentCount = Math.max(24, Math.round(32 + (duration / 30) * 12 + energy * 24));
+    const radius = 28 + energy * 12;
+    const height = 12 + energy * 10;
+
+    for (let i = 0; i <= segmentCount; i++) {
+      const t = i / segmentCount;
+      const energyMod = 1 + Math.sin(t * Math.PI * 4) * 0.25 * energy;
+      const angle = t * Math.PI * 4 * energyMod + (bpm / 180) * t;
+      const spiral = 1 + Math.sin(t * Math.PI * 6) * 0.18;
+      const x = Math.cos(angle) * radius * spiral;
+      const z = Math.sin(angle) * radius * spiral;
+      const y = Math.sin(t * Math.PI * 3) * height * energy + Math.sin(t * Math.PI * 9) * height * 0.25;
+      points.push(new THREE.Vector3(x, y, z));
+    }
+
+    console.log('[VisualEffects] Procedural track generated', {
+      pointCount: points.length,
+      duration,
+      energy,
+      bpm,
+    });
+
+    return points;
+  }
+
   private seedAmbientParticles(): void {
     if (!this.pathCurve) return;
-    const sampleCount = Math.min(48, Math.max(18, Math.floor(this.trackData.path.length / 4)));
+    const sampleCount = Math.min(48, Math.max(18, Math.floor(this.trackPathPoints.length / 4)));
     const nowSeconds = performance.now() / 1000;
     const spread = GHOST_RIBBON_RADIUS * 4.2;
     this.particles.seedAmbientField(this.pathCurve, sampleCount, spread, nowSeconds, this.audioFeatures, 0.9);
@@ -1331,19 +1471,13 @@ void main() {
     });
     
     const oldGeometry = this.trackMesh.geometry;
-    const curve = new THREE.CatmullRomCurve3(this.trackData.path.map(p => new THREE.Vector3(p.x, p.y, p.z)));
-    const newGeometry = new THREE.TubeGeometry(
-      curve, 
-      this.trackData.path.length * LOW_QUALITY_SEGMENTS,
-      TRACK_RADIUS,
-      6,
-      false
-    );
+    const curve = new THREE.CatmullRomCurve3(this.trackPathPoints.map((p) => p.clone()));
+    const newGeometry = new THREE.TubeGeometry(curve, this.trackPathPoints.length * LOW_QUALITY_SEGMENTS, TRACK_RADIUS, 6, false);
     
     (newGeometry as any).boundsTree = new MeshBVH(newGeometry);
     this.trackMesh.geometry = newGeometry;
     oldGeometry.dispose();
-    this.rebuildGhostRibbon(curve, this.trackData.path.length * LOW_QUALITY_SEGMENTS);
+    this.rebuildGhostRibbon(curve, this.trackPathPoints.length * LOW_QUALITY_SEGMENTS);
     this.createSpeedStreakSystem();
   }
 
@@ -1358,19 +1492,13 @@ void main() {
     });
 
     const oldGeometry = this.trackMesh.geometry;
-    const curve = new THREE.CatmullRomCurve3(this.trackData.path.map(p => new THREE.Vector3(p.x, p.y, p.z)));
-    const newGeometry = new THREE.TubeGeometry(
-      curve,
-      this.trackData.path.length * HIGH_QUALITY_SEGMENTS,
-      TRACK_RADIUS,
-      8,
-      false
-    );
+    const curve = new THREE.CatmullRomCurve3(this.trackPathPoints.map((p) => p.clone()));
+    const newGeometry = new THREE.TubeGeometry(curve, this.trackPathPoints.length * HIGH_QUALITY_SEGMENTS, TRACK_RADIUS, 8, false);
 
     (newGeometry as any).boundsTree = new MeshBVH(newGeometry);
     this.trackMesh.geometry = newGeometry;
     oldGeometry.dispose();
-    this.rebuildGhostRibbon(curve, this.trackData.path.length * HIGH_QUALITY_SEGMENTS);
+    this.rebuildGhostRibbon(curve, this.trackPathPoints.length * HIGH_QUALITY_SEGMENTS);
     this.createSpeedStreakSystem();
   }
 
