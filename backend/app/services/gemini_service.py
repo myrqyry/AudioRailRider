@@ -1,12 +1,12 @@
 import json
-import logging
+import structlog
 import pathlib
 import tempfile
 from io import BytesIO
 from contextlib import asynccontextmanager
 
 # Configure logging
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # Avoid hard failures at import time for optional / heavy dependencies
 try:
@@ -31,13 +31,10 @@ except ImportError:
     APIError = Exception
     BadResponseError = Exception
 
+import hashlib
+from cachetools import TTLCache
 from ..config.settings import settings
 from ..schema.blueprint import Blueprint
-
-    
-    
-    
-    
 
 # Lazily import the audio analysis implementation to avoid importing librosa at module import time.
 async def analyze_audio(audio_bytes: bytes):
@@ -51,14 +48,19 @@ async def analyze_audio(audio_bytes: bytes):
 
 class GeminiService:
     def __init__(self):
+        # Initialize the Gemini client
         if genai and settings.GEMINI_API_KEY:
             try:
                 self.client: Client | None = genai.Client(api_key=settings.GEMINI_API_KEY)
             except Exception as e:
-                logger.error(f"Failed to initialize Gemini client: {e}", exc_info=True)
+                logger.error("Failed to initialize Gemini client", error=str(e), exc_info=True)
                 self.client = None
         else:
             self.client = None
+
+        # Initialize a time-to-live (TTL) cache
+        # Caches up to 100 blueprints for 1 hour (3600 seconds)
+        self.blueprint_cache = TTLCache(maxsize=100, ttl=3600)
     @asynccontextmanager
     async def _managed_file_upload(self, audio_bytes: bytes, content_type: str):
         """Context manager for uploading and cleaning up temporary files.
@@ -74,7 +76,11 @@ class GeminiService:
         tmp_path: str | None = None
         uploaded_file = None
         try:
-            logger.info(f"Uploading {len(audio_bytes) / 1024:.1f} KB file to Gemini (attempt stream upload).")
+            logger.info(
+                "Uploading file to Gemini",
+                size_kb=round(len(audio_bytes) / 1024, 1),
+                upload_type="stream"
+            )
             # First try stream upload using an in-memory buffer.
             try:
                 buffer = BytesIO(audio_bytes)
@@ -89,8 +95,12 @@ class GeminiService:
                     uploaded_file = await self.client.aio.files.upload(file=buffer, mime_type=content_type or "audio/mpeg")
                 yield uploaded_file
                 return
-            except Exception:
-                logger.debug("Stream upload failed, falling back to tempfile-based upload.", exc_info=True)
+            except Exception as e:
+                logger.debug(
+                    "Stream upload failed, falling back to tempfile-based upload.",
+                    error=str(e),
+                    exc_info=True
+                )
 
             # Fallback: persist to a temporary file and upload by path
             mime_map = {
@@ -123,15 +133,20 @@ class GeminiService:
                 try:
                     if hasattr(uploaded_file, 'name'):
                         await self.client.aio.files.delete(uploaded_file.name)
-                except Exception:
-                    logger.warning("Failed to delete uploaded remote file", exc_info=True)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to delete uploaded remote file",
+                        file_name=getattr(uploaded_file, 'name', 'unknown'),
+                        error=str(e),
+                        exc_info=True
+                    )
 
             # Remove local temporary file if we created one
             if tmp_path:
                 try:
                     pathlib.Path(tmp_path).unlink(missing_ok=True)  # type: ignore[arg-type]
-                except Exception:
-                    logger.debug("Failed to remove temporary file", exc_info=True)
+                except Exception as e:
+                    logger.debug("Failed to remove temporary file", path=tmp_path, error=str(e), exc_info=True)
 
     def generate_prompt_text(self, duration: float, bpm: float, energy: float,
                              spectral_centroid: float, spectral_flux: float,
@@ -152,9 +167,28 @@ Create a rollercoaster blueprint (12-20 segments) from this audio...
 You are a synesthetic architect...
 """ # (omitting for brevity)
 
+    def _generate_cache_key(self, audio_bytes: bytes, options: dict | None) -> str:
+        """Generates a stable cache key from audio content and options."""
+        hasher = hashlib.sha256()
+        hasher.update(audio_bytes)
+        if options:
+            # Serialize options in a consistent order
+            serialized_options = json.dumps(options, sort_keys=True).encode('utf-8')
+            hasher.update(serialized_options)
+        return hasher.hexdigest()
+
     async def generate_blueprint(self, audio_bytes: bytes, content_type: str, options: dict | None = None):
+        # Generate a cache key based on the audio content and generation options
+        cache_key = self._generate_cache_key(audio_bytes, options)
+
+        # Check if a valid result is already in the cache
+        if cache_key in self.blueprint_cache:
+            logger.info("Blueprint found in cache.", cache_key=cache_key)
+            return self.blueprint_cache[cache_key]
+
         audio_features = {}
         try:
+            logger.info("Generating new blueprint (not found in cache).", cache_key=cache_key)
             # Asynchronously analyze audio first. If this fails, we can't proceed.
             audio_features = await analyze_audio(audio_bytes)
 
@@ -193,17 +227,23 @@ You are a synesthetic architect...
                 else:
                     setattr(blueprint, 'generationOptions', options)
 
-            return {"blueprint": blueprint, "features": audio_features}
+            result = {"blueprint": blueprint, "features": audio_features}
+
+            # Store the successful result in the cache
+            self.blueprint_cache[cache_key] = result
+            logger.info("Stored new blueprint in cache.", cache_key=cache_key)
+
+            return result
 
         except (APIError, BadResponseError) as e:
-            logger.error(f"Gemini API error during blueprint generation: {e}", exc_info=True)
+            logger.error("Gemini API error during blueprint generation", error=str(e), exc_info=True)
             # Fall through to procedural fallback
         except json.JSONDecodeError as e:
-            logger.error(f"Gemini returned invalid JSON: {e}", exc_info=True)
+            logger.error("Gemini returned invalid JSON", error=str(e), exc_info=True)
             # Fall through to procedural fallback
         except Exception as e:
             # Catch other exceptions (e.g., from audio analysis) and attempt fallback
-            logger.error(f"Unexpected error during blueprint generation: {e}", exc_info=True)
+            logger.error("Unexpected error during blueprint generation", error=str(e), exc_info=True)
             # If audio features are missing, we cannot run fallback.
             if not audio_features:
                 raise HTTPException(status_code=500, detail=f"Failed to generate blueprint due to an initial error: {e}")
@@ -214,7 +254,7 @@ You are a synesthetic architect...
             fb = self._procedural_fallback(audio_features)
             return {"blueprint": fb, "features": audio_features}
         except Exception as e:
-            logger.error(f"Procedural fallback also failed: {e}", exc_info=True)
+            logger.error("Procedural fallback failed", error=str(e), exc_info=True)
             raise HTTPException(status_code=500, detail=f"Failed to generate fallback blueprint: {e}")
 
     def _procedural_fallback(self, features: dict) -> dict:
@@ -300,9 +340,7 @@ Make it photorealistic, epic, and atmospheric with dramatic lighting, volumetric
                     raise HTTPException(status_code=400, detail=f"Invalid request for skybox generation: {str(e)}")
             raise HTTPException(status_code=500, detail=f"API error during skybox generation: {str(e)}")
         except Exception as e:
-            import traceback
-            print(f"[GeminiService] Skybox generation error: {e}")
-            print(traceback.format_exc())
+            logger.error("Skybox generation error", error=str(e), exc_info=True)
             raise HTTPException(status_code=500, detail=f"An unexpected error occurred during image generation: {e}")
 
 gemini_service = GeminiService()

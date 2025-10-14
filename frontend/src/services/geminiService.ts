@@ -1,7 +1,6 @@
 import { RideBlueprint, AudioFeatures } from 'shared/types';
 import { GoogleGenAI } from '@google/genai';
-import { getEndpointUrl, API_ENDPOINTS, buildApiUrl, withRetry, validateApiResponse, getErrorMessage } from '../config/api';
-import { env } from '../config/environment';
+import { config } from '../config';
 
 const MAX_INLINE_BYTES = 20 * 1024 * 1024; // 20 MB
 const SUPPORTED_AUDIO_MIME_TYPES = new Set([
@@ -84,8 +83,7 @@ export const generateRideBlueprintWithAI = async (
   spectralCentroid: number,
   spectralFlux: number
 ): Promise<RideBlueprint> => {
-  const googleApiKey = (globalThis as any)?.CONFIG?.apiKey || (typeof process !== 'undefined' ? (process.env.VITE_GOOGLE_API_KEY || process.env.GOOGLE_API_KEY) : undefined) || '';
-  const ai = new GoogleGenAI({ apiKey: googleApiKey });
+  const ai = new GoogleGenAI({ apiKey: config.apiKey });
 
   const prompt = `Generate a ride blueprint JSON for an audio track with duration=${duration}, bpm=${bpm}, energy=${energy}, spectralCentroid=${spectralCentroid}, spectralFlux=${spectralFlux}`;
 
@@ -116,14 +114,12 @@ export const generateRideBlueprintWithAI = async (
  * perform analysis + blueprint generation and return both the blueprint and
  * extracted audio features. This is the runtime path used by the web app.
  */
-export const generateRideBlueprintFromBackend = async (
+export const generateRideBlueprint = async (
   audioFile: File,
   signal?: AbortSignal,
   options?: Record<string, any>
-): Promise<{ blueprint: RideBlueprint; features: any }> => {
-  const backendUrl = (globalThis as any)?.BACKEND_URL || env.VITE_BACKEND_URL;
-  if (!backendUrl) throw new Error('BACKEND_URL is not defined');
-  const url = backendUrl.replace(/\/$/, '') + API_ENDPOINTS.GENERATE_BLUEPRINT;
+): Promise<{ blueprint: Blueprint; features: any }> => {
+  const url = `${config.api.baseUrl}${config.api.endpoints.processAudio}`;
 
   const fd = new FormData();
   fd.append('audio_file', audioFile);
@@ -147,41 +143,18 @@ export const generateRideBlueprintFromBackend = async (
     const data = await res.json();
     // Expect { blueprint, features }
     if (!data || !data.blueprint) throw new Error('Backend returned invalid payload');
-    return { blueprint: data.blueprint as RideBlueprint, features: data.features };
+    return { blueprint: data.blueprint as Blueprint, features: data.features };
   } catch (e: any) {
     // Provide clearer diagnostics for network/fetch failures which often surface
     // as "Failed to fetch" in the browser. Include likely causes (CORS, backend
     // not running, network down) and the backend URL to help debugging.
-    console.error('[GeminiService] generateRideBlueprintFromBackend failed:', e);
+    console.error('[GeminiService] generateRideBlueprint failed:', e);
     const baseMsg = e instanceof Error ? e.message : String(e);
     if (baseMsg.includes('Failed to fetch') || baseMsg.includes('NetworkError') || baseMsg.includes('TypeError')) {
       throw new Error(`Failed to contact backend at ${url}. This may indicate the backend is not running, CORS is blocking the request, or a network problem. Original error: ${baseMsg}`);
     }
     throw e;
   }
-};
-
-/**
- * Public generateRideBlueprint function that supports two call signatures:
- * - generateRideBlueprint(file, signal?) -> calls backend and returns {blueprint, features}
- * - generateRideBlueprint(file, duration, bpm, energy, spectralCentroid, spectralFlux) -> uses AI helper (tests)
- */
-export const generateRideBlueprint = async (...args: any[]): Promise<any> => {
-  // Signature: (file: File, signal?: AbortSignal)
-  if (args.length >= 1 && args[0] instanceof File && (args.length === 1 || args[1] instanceof AbortSignal || typeof args[1] === 'undefined')) {
-    const file: File = args[0];
-    const signal: AbortSignal | undefined = args[1];
-    const options: Record<string, any> | undefined = args[2];
-    return await generateRideBlueprintFromBackend(file, signal, options);
-  }
-
-  // Otherwise, delegate to the AI-backed generator (used by unit tests)
-  if (args.length >= 6 && args[0] instanceof File) {
-    const [file, duration, bpm, energy, spectralCentroid, spectralFlux] = args as [File, number, number, number, number, number];
-    return await generateRideBlueprintWithAI(file, duration, bpm, energy, spectralCentroid, spectralFlux);
-  }
-
-  throw new Error('Invalid arguments passed to generateRideBlueprint');
 };
 
 /**
@@ -193,12 +166,11 @@ export const generateRideBlueprint = async (...args: any[]): Promise<any> => {
  */
 export const generateSkyboxImage = async (prompt: string, blueprint?: any): Promise<string> => {
   try {
-    const backendUrl = (globalThis as any)?.BACKEND_URL || env.VITE_BACKEND_URL;
-    if (!backendUrl) throw new Error('BACKEND_URL is not defined');
+    const url = `${config.api.baseUrl}${config.api.endpoints.generateSkybox}`;
     // Extract any generation options embedded in the blueprint and send them
     // explicitly as part of the request body so the backend can respect them.
     const optionsPayload = blueprint && (blueprint as any).generationOptions ? (blueprint as any).generationOptions : null;
-    const response = await fetch(`${backendUrl}/api/generate-skybox`, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

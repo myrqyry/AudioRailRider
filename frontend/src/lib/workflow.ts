@@ -73,7 +73,7 @@ export const runAudioProcessingWorkflow = async (
       console.debug('[Workflow] Backend URL (effective):', backendUrl);
     } catch (e) {}
   // Pass the abort signal and any user-selected generation options to the backend
-  const { blueprint: rawBlueprint, features: audioFeatures } = await generateRideBlueprint(file, controller.signal, options?.generationOptions);
+  const { blueprint, features: audioFeatures } = await generateRideBlueprint(file, controller.signal, options?.generationOptions);
     console.log('[Workflow] Successfully received blueprint and audio features');
 
     clearTimeout(timeoutId); // Clear the timeout if the request succeeds
@@ -84,7 +84,7 @@ export const runAudioProcessingWorkflow = async (
     setStatus(AppStatus.Generating, 'Refining for physical plausibility...');
     checkAbort();
     console.log('[Workflow] Refining blueprint...');
-    const refinedBlueprint = validateAndRefineBlueprint(rawBlueprint);
+    const refinedBlueprint = validateAndRefineBlueprint(blueprint);
     try {
       console.log('[Workflow] Refined segment components', refinedBlueprint.track.map((segment, index) => ({ index, component: segment.component })));
     } catch (e) {}

@@ -1,4 +1,4 @@
-import { RideBlueprint, TrackSegmentWithMeta as TrackSegment, seconds } from 'shared/types';
+import { Blueprint, TrackSegmentWithMeta as TrackSegment, seconds } from 'shared/types';
 
 const getComponent = (segment: TrackSegment): string | undefined => {
     const comp = (segment as any).component ?? (segment as any).type;
@@ -36,10 +36,10 @@ const createEasingSegment = (): TrackSegment => ({
  * Validates and refines an AI-generated ride blueprint to make it more physically plausible.
  * It identifies consecutive intense segments and inserts short, straight "easing" segments
  * between them to allow for smoother transitions.
- * @param blueprint The original RideBlueprint from the AI.
- * @returns A new, refined RideBlueprint with easing segments added where necessary.
+ * @param blueprint The original Blueprint from the AI.
+ * @returns A new, refined Blueprint with easing segments added where necessary.
  */
-export const validateAndRefineBlueprint = (blueprint: RideBlueprint): RideBlueprint => {
+export const validateAndRefineBlueprint = (blueprint: Blueprint): Blueprint => {
     console.log("Starting blueprint validation and refinement...");
     const originalTrack = blueprint.track;
     if (originalTrack.length < 2) {

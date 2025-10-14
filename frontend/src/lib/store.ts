@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { AppStatus, RideBlueprint, TrackData } from 'shared/types';
+import { AppStatus, Blueprint, TrackData } from 'shared/types';
 
 interface ErrorState {
     title: string;

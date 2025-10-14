@@ -1,15 +1,46 @@
-from typing import List, Literal, Optional
+from typing import List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, conlist, constr
 
+# --- Stricter Track Segment Definitions ---
 
-class TrackSegment(BaseModel):
-    type: Literal["climb", "drop", "turn", "loop", "barrelRoll"]
-    angle: Optional[float] = None
-    length: Optional[float] = None
-    direction: Optional[str] = None
-    radius: Optional[float] = None
-    rotations: Optional[int] = None
+class BaseSegment(BaseModel):
+    """Base model for all track segments, including optional metadata."""
+    name: Optional[str] = Field(None, description="A descriptive name for this segment, e.g., 'The Ascent'")
+    intensity: Optional[float] = Field(None, ge=0, le=100, description="Intensity score (0-100) suggested by the AI.")
+    lightingEffect: Optional[str] = Field(None, description="Suggested lighting effect, e.g., 'warm-pulse', 'strobe'")
+    environmentChange: Optional[str] = Field(None, description="Suggested environmental change, e.g., 'enter-cave', 'starfield'")
+    audioSyncPoint: Optional[float] = Field(None, ge=0, description="The audio timestamp (in seconds) this segment should sync with.")
+
+class ClimbSegment(BaseSegment):
+    component: Literal['climb']
+    length: float = Field(..., gt=0)
+    angle: Optional[float] = Field(None, ge=-90, le=90)
+
+class DropSegment(BaseSegment):
+    component: Literal['drop']
+    length: float = Field(..., gt=0)
+    angle: Optional[float] = Field(None, ge=-90, le=90)
+
+class TurnSegment(BaseSegment):
+    component: Literal['turn']
+    length: float = Field(..., gt=0)
+    direction: Literal['left', 'right']
+    angle: float = Field(..., ge=-720, le=720)
+    radius: Optional[float] = Field(None, gt=0)
+
+class LoopSegment(BaseSegment):
+    component: Literal['loop']
+    radius: float = Field(..., gt=0)
+    rotations: Optional[int] = Field(1, ge=1)
+
+class BarrelRollSegment(BaseSegment):
+    component: Literal['barrelRoll']
+    rotations: int = Field(..., gt=0)
+    length: Optional[float] = Field(None, gt=0)
+
+# A discriminated union to validate incoming track segments
+TrackSegment = Union[ClimbSegment, DropSegment, TurnSegment, LoopSegment, BarrelRollSegment]
 
 
 class SynestheticGeometry(BaseModel):
@@ -40,10 +71,15 @@ class SynestheticLayer(BaseModel):
 
 
 class Blueprint(BaseModel):
-    rideName: str
-    moodDescription: str
-    palette: List[str] = Field(min_items=3, max_items=3)
-    track: List[TrackSegment]
-    events: Optional[List[dict]] = None
-    generationOptions: Optional[dict] = None
-    synesthetic: Optional[SynestheticLayer] = None
+    """
+    The root object describing a generated rollercoaster ride.
+    This serves as the schema for the AI's output and is validated
+    on the backend.
+    """
+    rideName: constr(min_length=3, max_length=50) = Field(..., description="A creative and fitting name for the ride.")
+    moodDescription: constr(min_length=10, max_length=500) = Field(..., description="A detailed, evocative description of the ride's mood and atmosphere.")
+    palette: conlist(str, min_length=3, max_length=5) = Field(..., description="An array of 3 to 5 hex color codes.")
+    track: conlist(TrackSegment, min_length=12, max_length=40) = Field(..., description="An array of 12 to 40 track segments.")
+    events: Optional[List[dict]] = Field(None, description="Optional timeline of small visual events.")
+    generationOptions: Optional[dict] = Field(None, description="Optional generation options that were used to produce this blueprint.")
+    synesthetic: Optional[SynestheticLayer] = Field(None, description="Optional synesthetic metadata that informs advanced visuals.")

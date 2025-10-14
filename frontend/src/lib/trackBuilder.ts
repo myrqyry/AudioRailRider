@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import {
-    RideBlueprint,
+    Blueprint,
     TrackSegmentWithMeta as TrackSegment,
     TrackData,
     seconds,
@@ -115,7 +115,7 @@ const AUDIO_WARP_BLEND = 0.55;
 const DEFAULT_WARP_BLEND = 0.4;
 const ROLL_CLAMP = Math.PI / 4;
 
-export const buildTrackData = (blueprint: RideBlueprint, audioFeatures?: AudioFeatures): TrackData => {
+export const buildTrackData = (blueprint: Blueprint, audioFeatures?: AudioFeatures): TrackData => {
     const SPEED_MULTIPLIER = 1.25;
     const points: THREE.Vector3[] = [];
     const upVectors: THREE.Vector3[] = [];

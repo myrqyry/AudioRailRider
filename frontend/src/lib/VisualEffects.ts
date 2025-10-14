@@ -5,6 +5,7 @@ import { RIDE_CONFIG } from 'shared/constants';
 import { ParticleSystem, FeatureVisualConfig, GPUUpdateParams, ParticleQualityLevel } from './visual-effects/ParticleSystem';
 import { Vector3Pool } from './utils/Vector3Pool';
 import { AtmosphereController } from './environment/AtmosphereController';
+import { geometryPool } from './utils/memory';
 
 // --- Helpers ---
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
@@ -1447,17 +1448,23 @@ void main() {
   private rebuildGhostRibbon(curve: THREE.CatmullRomCurve3, segments: number) {
     if (!this.ghostRibbonMaterial) return;
     const tubularSegments = Math.max(6, Math.floor(segments));
-    const newGeometry = new THREE.TubeGeometry(curve, tubularSegments, GHOST_RIBBON_RADIUS, 6, false);
+    const newGeom = new THREE.TubeGeometry(curve, tubularSegments, GHOST_RIBBON_RADIUS, 6, false);
+
     if (!this.ghostRibbonMesh) {
-      this.ghostRibbonMesh = new THREE.Mesh(newGeometry, this.ghostRibbonMaterial);
+      const geometry = geometryPool.acquire();
+      geometry.copy(newGeom);
+      this.ghostRibbonMesh = new THREE.Mesh(geometry, this.ghostRibbonMaterial);
       this.ghostRibbonMesh.frustumCulled = true;
       this.ghostRibbonMesh.renderOrder = 9;
       this.scene.add(this.ghostRibbonMesh);
     } else {
-      const old = this.ghostRibbonMesh.geometry;
-      this.ghostRibbonMesh.geometry = newGeometry;
-      old.dispose();
+      const old = this.ghostRibbonMesh.geometry as THREE.BufferGeometry;
+      geometryPool.release(old);
+      const geometry = geometryPool.acquire();
+      geometry.copy(newGeom);
+      this.ghostRibbonMesh.geometry = geometry;
     }
+    newGeom.dispose();
   }
 
   private switchToLowQuality() {
@@ -1470,13 +1477,17 @@ void main() {
       sensitivity: 0.7,
     });
     
-    const oldGeometry = this.trackMesh.geometry;
+    const oldGeometry = this.trackMesh.geometry as THREE.BufferGeometry;
+    geometryPool.release(oldGeometry);
+
     const curve = new THREE.CatmullRomCurve3(this.trackPathPoints.map((p) => p.clone()));
-    const newGeometry = new THREE.TubeGeometry(curve, this.trackPathPoints.length * LOW_QUALITY_SEGMENTS, TRACK_RADIUS, 6, false);
+    const newGeom = new THREE.TubeGeometry(curve, this.trackPathPoints.length * LOW_QUALITY_SEGMENTS, TRACK_RADIUS, 6, false);
+    const geometry = geometryPool.acquire();
+    geometry.copy(newGeom);
+    newGeom.dispose();
     
-    (newGeometry as any).boundsTree = new MeshBVH(newGeometry);
-    this.trackMesh.geometry = newGeometry;
-    oldGeometry.dispose();
+    (geometry as any).boundsTree = new MeshBVH(geometry);
+    this.trackMesh.geometry = geometry;
     this.rebuildGhostRibbon(curve, this.trackPathPoints.length * LOW_QUALITY_SEGMENTS);
     this.createSpeedStreakSystem();
   }
@@ -1491,13 +1502,17 @@ void main() {
       sensitivity: 0.8,
     });
 
-    const oldGeometry = this.trackMesh.geometry;
-    const curve = new THREE.CatmullRomCurve3(this.trackPathPoints.map((p) => p.clone()));
-    const newGeometry = new THREE.TubeGeometry(curve, this.trackPathPoints.length * HIGH_QUALITY_SEGMENTS, TRACK_RADIUS, 8, false);
+    const oldGeometry = this.trackMesh.geometry as THREE.BufferGeometry;
+    geometryPool.release(oldGeometry);
 
-    (newGeometry as any).boundsTree = new MeshBVH(newGeometry);
-    this.trackMesh.geometry = newGeometry;
-    oldGeometry.dispose();
+    const curve = new THREE.CatmullRomCurve3(this.trackPathPoints.map((p) => p.clone()));
+    const newGeom = new THREE.TubeGeometry(curve, this.trackPathPoints.length * HIGH_QUALITY_SEGMENTS, TRACK_RADIUS, 8, false);
+    const geometry = geometryPool.acquire();
+    geometry.copy(newGeom);
+    newGeom.dispose();
+
+    (geometry as any).boundsTree = new MeshBVH(geometry);
+    this.trackMesh.geometry = geometry;
     this.rebuildGhostRibbon(curve, this.trackPathPoints.length * HIGH_QUALITY_SEGMENTS);
     this.createSpeedStreakSystem();
   }
@@ -1505,7 +1520,7 @@ void main() {
   public dispose() {
     if (this.trackMesh) {
       this.scene.remove(this.trackMesh);
-      try { this.trackMesh.geometry.dispose(); } catch (e) {}
+      geometryPool.release(this.trackMesh.geometry as THREE.BufferGeometry);
     }
     if (this.trackMaterial) {
       try { this.trackMaterial.dispose(); } catch (e) {}
