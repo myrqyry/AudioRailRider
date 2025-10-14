@@ -158,9 +158,6 @@ export const generateRideBlueprint = async (
 };
 
 /**
-// empty
-
-/**
  * Generates a skybox image using Gemini 2.5 Flash Image Preview model.
  * This model excels at creative, contextual image generation.
  * @param prompt A descriptive prompt for the skybox image.
