@@ -161,7 +161,7 @@ export interface Blueprint {
   // A detailed, evocative description of the ride's mood and atmosphere.
   moodDescription: string;
   // An array of 3 to 5 hex color codes for the ride's color scheme.
-  palette: [string, string, string, string?, string?];
+  palette: [string, string, string] | [string, string, string, string] | [string, string, string, string, string];
   // An array of 12 to 30 track segments defining the rollercoaster's path.
   track: TrackSegment[];
   // Optional generation options that were used to produce this blueprint.
