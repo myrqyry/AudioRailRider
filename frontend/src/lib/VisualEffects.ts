@@ -366,10 +366,7 @@ vWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;
   const segments = this.highQualityMode ? this.trackPathPoints.length * HIGH_QUALITY_SEGMENTS : this.trackPathPoints.length * LOW_QUALITY_SEGMENTS;
   const curve = new THREE.CatmullRomCurve3(this.trackPathPoints.map((p) => p.clone()));
     this.pathCurve = curve;
-    const geometry = geometryPool.acquire();
-    const newGeometry = new THREE.TubeGeometry(curve, segments, TRACK_RADIUS, 8, false);
-    geometry.copy(newGeometry);
-    newGeometry.dispose();
+    const geometry = new THREE.TubeGeometry(curve, segments, TRACK_RADIUS, 8, false);
 
     // Generate the BVH for the track geometry to accelerate raycasting
     (geometry as any).boundsTree = new MeshBVH(geometry);
