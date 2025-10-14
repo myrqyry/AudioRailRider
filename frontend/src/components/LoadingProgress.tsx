@@ -1,7 +1,7 @@
 import React from 'react';
 
 interface LoadingProgressProps {
-  stage: 'analyzing' | 'generating' | 'building';
+  stage: 'analyzing' | 'generating' | 'building' | 'loading';
   progress?: number;
 }
 
@@ -21,6 +21,11 @@ export const LoadingProgress: React.FC<LoadingProgressProps> = ({ stage, progres
       title: 'Building Track',
       description: 'Creating the 3D visualization...',
       icon: '🏗️',
+    },
+    loading: {
+      title: 'Loading Scene',
+      description: 'Preparing your ride...',
+      icon: '⚡',
     },
   };
 

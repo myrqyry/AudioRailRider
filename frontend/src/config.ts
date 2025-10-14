@@ -50,7 +50,7 @@ export const config = Object.freeze({
     // The Vite proxy in `vite.config.ts` will handle routing this to the backend.
     baseUrl: '/api',
     endpoints: {
-      processAudio: '/process-audio',
+      processAudio: '/generate-blueprint',
       generateSkybox: '/generate-skybox',
     }
   }

@@ -75,6 +75,13 @@ export const runAudioProcessingWorkflow = async (
   // Pass the abort signal and any user-selected generation options to the backend
   const { blueprint, features: audioFeatures } = await generateRideBlueprint(file, controller.signal, options?.generationOptions);
     console.log('[Workflow] Successfully received blueprint and audio features');
+    console.log('[Workflow] Blueprint data:', {
+        hasBlueprintProp: !!blueprint,
+        blueprintType: typeof blueprint,
+        hasTrack: !!(blueprint as any)?.track,
+        trackLength: (blueprint as any)?.track?.length,
+        blueprintKeys: blueprint ? Object.keys(blueprint) : []
+    });
 
     clearTimeout(timeoutId); // Clear the timeout if the request succeeds
     console.log('[Workflow] Timeout cleared successfully');

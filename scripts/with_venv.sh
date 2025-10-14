@@ -10,6 +10,15 @@ fi
 # shellcheck source=/dev/null
 source "$VENV/bin/activate"
 
+# Auto-load backend/.env if it exists
+ENV_FILE="$REPO_ROOT/backend/.env"
+if [ -f "$ENV_FILE" ]; then
+  set -a  # auto-export all variables
+  # shellcheck source=/dev/null
+  source "$ENV_FILE"
+  set +a
+fi
+
 if [ "$#" -eq 0 ]; then
   exec bash
 else

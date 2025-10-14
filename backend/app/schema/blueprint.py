@@ -80,6 +80,4 @@ class Blueprint(BaseModel):
     moodDescription: constr(min_length=10, max_length=500) = Field(..., description="A detailed, evocative description of the ride's mood and atmosphere.")
     palette: conlist(str, min_length=3, max_length=5) = Field(..., description="An array of 3 to 5 hex color codes.")
     track: conlist(TrackSegment, min_length=12, max_length=40) = Field(..., description="An array of 12 to 40 track segments.")
-    events: Optional[List[dict]] = Field(None, description="Optional timeline of small visual events.")
-    generationOptions: Optional[dict] = Field(None, description="Optional generation options that were used to produce this blueprint.")
     synesthetic: Optional[SynestheticLayer] = Field(None, description="Optional synesthetic metadata that informs advanced visuals.")

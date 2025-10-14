@@ -1,4 +1,4 @@
-import { RideBlueprint, AudioFeatures } from 'shared/types';
+import { Blueprint, AudioFeatures } from 'shared/types';
 import { GoogleGenAI } from '@google/genai';
 import { config } from '../config';
 
@@ -82,7 +82,7 @@ export const generateRideBlueprintWithAI = async (
   energy: number,
   spectralCentroid: number,
   spectralFlux: number
-): Promise<RideBlueprint> => {
+): Promise<Blueprint> => {
   const ai = new GoogleGenAI({ apiKey: config.apiKey });
 
   const prompt = `Generate a ride blueprint JSON for an audio track with duration=${duration}, bpm=${bpm}, energy=${energy}, spectralCentroid=${spectralCentroid}, spectralFlux=${spectralFlux}`;
@@ -91,7 +91,7 @@ export const generateRideBlueprintWithAI = async (
   const text = response.text;
   try {
     const parsed = JSON.parse(text);
-    return parsed as RideBlueprint;
+    return parsed as Blueprint;
   } catch (e) {
     throw new Error('The AI returned malformed data.');
   }

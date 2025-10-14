@@ -21,14 +21,15 @@ except ImportError:
 try:
     from google import genai
     from google.genai import types
-    from google.genai.client import File, Client
-    from google.generative_ai.errors import APIError, BadResponseError
-except ImportError:
+    from google.genai.errors import APIError, ClientError
+    # Alias for backward compatibility
+    BadResponseError = ClientError
+except ImportError as e:
+    logger.debug(f"Failed to import google-genai: {e}")
     genai = None
     types = None
-    File = None
-    Client = None
     APIError = Exception
+    ClientError = Exception
     BadResponseError = Exception
 
 import hashlib
@@ -51,11 +52,16 @@ class GeminiService:
         # Initialize the Gemini client
         if genai and settings.GEMINI_API_KEY:
             try:
-                self.client: Client | None = genai.Client(api_key=settings.GEMINI_API_KEY)
+                self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
+                logger.info("Gemini client initialized successfully")
             except Exception as e:
                 logger.error("Failed to initialize Gemini client", error=str(e), exc_info=True)
                 self.client = None
         else:
+            if not genai:
+                logger.warning("Gemini client not initialized: google-genai module not available")
+            elif not settings.GEMINI_API_KEY:
+                logger.warning("Gemini client not initialized: GEMINI_API_KEY not set")
             self.client = None
 
         # Initialize a time-to-live (TTL) cache
@@ -70,7 +76,7 @@ class GeminiService:
         2. If stream upload fails, fall back to writing a temporary file and uploading by path.
         3. Ensure remote file is deleted after use and local temp file is removed.
         """
-        if not self.client or not File:
+        if not self.client:
             raise HTTPException(status_code=503, detail="Gemini client not available for file upload.")
 
         tmp_path: str | None = None
@@ -132,7 +138,7 @@ class GeminiService:
             if uploaded_file:
                 try:
                     if hasattr(uploaded_file, 'name'):
-                        await self.client.aio.files.delete(uploaded_file.name)
+                        await self.client.aio.files.delete(name=uploaded_file.name)
                 except Exception as e:
                     logger.warning(
                         "Failed to delete uploaded remote file",
@@ -217,15 +223,26 @@ You are a synesthetic architect...
             )
 
             response = await self.client.aio.models.generate_content(
-                model='gemini-2.5-flash', contents=contents, config=generation_config,
+                model='gemini-2.0-flash', contents=contents, config=generation_config,
             )
 
-            blueprint = response.parsed if hasattr(response, 'parsed') else json.loads(response.text)
-            if blueprint:
-                if isinstance(blueprint, dict):
-                    blueprint['generationOptions'] = options
-                else:
-                    setattr(blueprint, 'generationOptions', options)
+            # Get the blueprint data, preferring parsed Pydantic model
+            blueprint_obj = response.parsed if hasattr(response, 'parsed') else json.loads(response.text)
+            
+            # Convert Pydantic model to dict for consistent JSON serialization
+            if blueprint_obj and hasattr(blueprint_obj, 'model_dump'):
+                # Pydantic v2 style
+                blueprint = blueprint_obj.model_dump(mode='json')
+            elif blueprint_obj and hasattr(blueprint_obj, 'dict'):
+                # Pydantic v1 style
+                blueprint = blueprint_obj.dict()
+            else:
+                # Already a dict
+                blueprint = blueprint_obj
+            
+            # Add generation options to the blueprint dict
+            if blueprint and isinstance(blueprint, dict):
+                blueprint['generationOptions'] = options
 
             result = {"blueprint": blueprint, "features": audio_features}
 
@@ -258,8 +275,90 @@ You are a synesthetic architect...
             raise HTTPException(status_code=500, detail=f"Failed to generate fallback blueprint: {e}")
 
     def _procedural_fallback(self, features: dict) -> dict:
-        # ... (omitting for brevity, no changes here) ...
-        return {}
+        """
+        Generate a simple procedural blueprint when Gemini API is unavailable.
+        Creates a basic but valid track structure based on audio features.
+        """
+        import math
+        
+        duration = features.get('duration', 120)
+        bpm = features.get('bpm', 120)
+        energy = features.get('energy', 0.5)
+        
+        # Calculate number of segments based on duration (aim for ~8-12 seconds per segment)
+        num_segments = max(12, min(30, int(duration / 8)))
+        
+        # Create a simple track with variety
+        track = []
+        segment_types = ['climb', 'drop', 'turn', 'loop', 'barrelRoll']
+        
+        for i in range(num_segments):
+            # Vary intensity based on position and energy
+            intensity = 30 + (energy * 40) + (20 * math.sin(i * math.pi / num_segments))
+            
+            # Choose segment type based on intensity and position
+            if intensity > 70:
+                if i % 5 == 0:
+                    segment = {
+                        'component': 'loop',
+                        'radius': 50 + (intensity * 0.5),
+                        'intensity': intensity,
+                    }
+                elif i % 3 == 0:
+                    segment = {
+                        'component': 'barrelRoll',
+                        'rotations': 1,
+                        'length': 80,
+                        'intensity': intensity,
+                    }
+                else:
+                    segment = {
+                        'component': 'drop',
+                        'length': 60 + (intensity * 0.8),
+                        'angle': -30 - (intensity * 0.3),
+                        'intensity': intensity,
+                    }
+            elif intensity > 45:
+                if i % 2 == 0:
+                    segment = {
+                        'component': 'turn',
+                        'length': 70,
+                        'direction': 'left' if i % 4 == 0 else 'right',
+                        'angle': 45 + (intensity * 0.5),
+                        'radius': 100,
+                        'intensity': intensity,
+                    }
+                else:
+                    segment = {
+                        'component': 'climb',
+                        'length': 60,
+                        'angle': 20 + (intensity * 0.2),
+                        'intensity': intensity,
+                    }
+            else:
+                segment = {
+                    'component': 'climb',
+                    'length': 50,
+                    'angle': 10,
+                    'intensity': intensity,
+                }
+            
+            track.append(segment)
+        
+        # Generate a simple color palette based on energy
+        if energy > 0.7:
+            palette = ['#FF6B6B', '#FFA500', '#FFD700']  # Warm, energetic
+        elif energy > 0.4:
+            palette = ['#4ECDC4', '#45B7D1', '#96CEB4']  # Cool, balanced
+        else:
+            palette = ['#9B59B6', '#8E44AD', '#E8DAEF']  # Purple, calm
+        
+        return {
+            'rideName': 'Procedural Ride',
+            'moodDescription': f'A procedurally generated ride with {num_segments} segments, matching the audio\'s energy level of {energy:.2f}.',
+            'palette': palette,
+            'track': track,
+        }
 
     async def generate_skybox(self, prompt: str, blueprint_data: dict | None = None, options: dict | None = None):
         """
@@ -271,6 +370,13 @@ You are a synesthetic architect...
             blueprint_data: Optional full blueprint for additional context
             options: Optional hints that further constrain the skybox aesthetics
         """
+        # Check if Gemini client is available
+        if not self.client:
+            raise HTTPException(
+                status_code=503,
+                detail="Gemini client not available. Please check GEMINI_API_KEY configuration."
+            )
+        
         try:
             # Build a rich, contextual prompt using blueprint data if available
             if blueprint_data:
@@ -311,11 +417,15 @@ The sky should evoke the emotional journey of the ride - make it vast, immersive
 
 Make it photorealistic, epic, and atmospheric with dramatic lighting, volumetric clouds, and a sense of vast infinite space. The output must be a seamless, tileable 360° equirectangular skybox image with no people, characters, silhouettes, signage, or text. Focus purely on sky and atmospheric detail for use as an immersive rollercoaster backdrop."""
 
-            # Use Gemini 2.5 Flash Image Preview with chat mode for best results
-            # This model supports direct image generation without needing a base image
-            chat = self.client.aio.chats.create(model='gemini-2.5-flash-image-preview')
-            
-            response = await chat.send_message(full_prompt)
+            # Use Gemini 2.5 Flash Image for conversational image generation
+            # This model excels at contextual, conversational image generation
+            response = await self.client.aio.models.generate_content(
+                model='gemini-2.5-flash-image',
+                contents=[full_prompt],
+                config=types.GenerateContentConfig(
+                    response_modalities=['Image'],  # Request only image output
+                )
+            )
 
             # Extract the generated image from response parts
             image_bytes = None

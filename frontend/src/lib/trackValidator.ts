@@ -41,7 +41,22 @@ const createEasingSegment = (): TrackSegment => ({
  */
 export const validateAndRefineBlueprint = (blueprint: Blueprint): Blueprint => {
     console.log("Starting blueprint validation and refinement...");
+    console.log('[Validator] Blueprint structure:', { 
+        hasTrack: !!blueprint.track, 
+        trackType: typeof blueprint.track,
+        trackLength: blueprint.track?.length,
+        rideName: blueprint.rideName,
+        blueprintKeys: Object.keys(blueprint)
+    });
+    
     const originalTrack = blueprint.track;
+    
+    // Defensive check: ensure track exists and is an array
+    if (!originalTrack || !Array.isArray(originalTrack)) {
+        console.error('[Validator] Invalid blueprint.track:', originalTrack);
+        throw new Error('Blueprint is missing a valid track array');
+    }
+    
     if (originalTrack.length < 2) {
         return blueprint; // Not enough segments to need refinement
     }
