@@ -28,9 +28,10 @@ class GeometryPool {
      */
     release(geometry: THREE.BufferGeometry) {
         if (this.activeGeometries.has(geometry)) {
-            geometry.dispose(); // Dispose of old buffers
+            // Reset geometry for reuse
+            geometry.clear(); // Removes all attributes, index, and morph attributes
             this.activeGeometries.delete(geometry);
-            this.pool.push(new THREE.BufferGeometry()); // Add a fresh geometry to the pool
+            this.pool.push(geometry); // Return the same geometry to the pool
         }
     }
 
