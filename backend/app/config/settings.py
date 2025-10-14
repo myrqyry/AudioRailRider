@@ -16,9 +16,7 @@ class Settings(BaseSettings):
         Validates that the Gemini API key has a plausible format.
         This is not a foolproof check but prevents common mistakes.
         """
-        # Google AI Studio keys often start with 'AIzaSy'
-        if not v.startswith('AIza'):
-            raise ValueError("Invalid Gemini API key format. Key should start with 'AIza'.")
+        # Basic length check for plausibility
         if len(v) < 30:
             raise ValueError("Gemini API key seems too short.")
         return v
