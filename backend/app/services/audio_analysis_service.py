@@ -1,12 +1,18 @@
+import asyncio
 import librosa
 import numpy as np
 import io
+import logging
 from typing import Dict, Any, List
+from fastapi import HTTPException
 
-def analyze_audio(audio_bytes: bytes) -> Dict[str, Any]:
+# Configure logging
+logger = logging.getLogger(__name__)
+
+def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
     """
-    Analyze audio with a faster, safer path that resamples and caps very
-    long files to avoid excessive CPU/time during analysis.
+    Synchronous implementation of audio analysis. This function is designed
+    to be run in a separate thread to avoid blocking the asyncio event loop.
     """
     try:
         audio_stream = io.BytesIO(audio_bytes)
@@ -75,7 +81,7 @@ def analyze_audio(audio_bytes: bytes) -> Dict[str, Any]:
         avg_spectral_centroid = float(np.mean([f['spectralCentroid'] for f in frame_analyses])) if frame_analyses else 0
         avg_spectral_flux = float(np.mean([f['spectralFlux'] for f in frame_analyses])) if frame_analyses else 0
 
-        print(f"[audio_analysis] analyzed duration={duration:.1f}s frames={len(frame_analyses)} sr={sr} n_fft={n_fft} hop={hop_length}")
+        logger.info(f"Analyzed audio: duration={duration:.1f}s, frames={len(frame_analyses)}")
 
         return {
             "duration": duration,
@@ -85,10 +91,21 @@ def analyze_audio(audio_bytes: bytes) -> Dict[str, Any]:
             "spectralFlux": avg_spectral_flux,
             "frameAnalyses": frame_analyses
         }
-
+    # Catch specific, expected errors from audio processing
+    except librosa.LibrosaError as e:
+        logger.error(f"Librosa error during audio analysis: {e}")
+        # Re-raise as HTTPException so the API can return a 400 Bad Request
+        raise HTTPException(status_code=400, detail=f"Audio processing failed: {e}")
     except Exception as e:
-        print(f"Error during audio analysis: {e}")
-        return {
-            "duration": 120.0, "bpm": 120.0, "energy": 0.5,
-            "spectralCentroid": 1500.0, "spectralFlux": 0.1, "frameAnalyses": []
-        }
+        logger.error(f"Unexpected error during audio analysis: {e}", exc_info=True)
+        # For unexpected errors, it's better to return a 500 Internal Server Error
+        raise HTTPException(status_code=500, detail="An unexpected error occurred during audio analysis.")
+
+async def analyze_audio(audio_bytes: bytes) -> Dict[str, Any]:
+    """
+    Asynchronously analyze audio by running the synchronous, CPU-bound
+    `_analyze_audio_sync` function in a separate thread.
+    """
+    loop = asyncio.get_event_loop()
+    # Use run_in_executor to avoid blocking the event loop with CPU-intensive work
+    return await loop.run_in_executor(None, _analyze_audio_sync, audio_bytes)
