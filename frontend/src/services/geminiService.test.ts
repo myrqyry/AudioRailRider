@@ -1,5 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
-import { generateRideBlueprint, prepareAudioPart } from './geminiService';
+import { generateRideBlueprintWithAI, prepareAudioPart } from './geminiService';
 import { analyzeAudio } from '../lib/audioProcessor';
 
 jest.mock('../config', () => ({
@@ -78,13 +78,13 @@ describe('geminiService', () => {
         });
     });
 
-    describe('generateRideBlueprint', () => {
+    describe('generateRideBlueprintWithAI', () => {
         it('should generate a ride blueprint successfully', async () => {
             const mockBlueprint = { rideName: 'Test Ride', track: [], palette: ['#ffffff', '#ffffff', '#ffffff'], moodDescription: 'A test ride' };
             mockGenerateContent.mockResolvedValue({ text: JSON.stringify(mockBlueprint) });
 
             const file = new File([''], 'test.mp3', { type: 'audio/mpeg' });
-            const blueprint = await generateRideBlueprint(file, 120, 120, 0.5, 1500, 0.2);
+            const blueprint = await generateRideBlueprintWithAI(file, 120, 120, 0.5, 1500, 0.2);
 
             expect(blueprint).toEqual(expect.objectContaining(mockBlueprint));
             expect(mockGenerateContent).toHaveBeenCalledTimes(1);
@@ -93,7 +93,7 @@ describe('geminiService', () => {
         it('should throw an error for invalid JSON response', async () => {
             mockGenerateContent.mockResolvedValue({ text: 'invalid json' });
             const file = new File([''], 'test.mp3', { type: 'audio/mpeg' });
-            await expect(generateRideBlueprint(file, 120, 120, 0.5, 1500, 0.2)).rejects.toThrow('The AI returned malformed data.');
+            await expect(generateRideBlueprintWithAI(file, 120, 120, 0.5, 1500, 0.2)).rejects.toThrow('The AI returned malformed data.');
         });
     });
 });

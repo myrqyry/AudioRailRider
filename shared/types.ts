@@ -83,24 +83,33 @@ export interface AudioFeatures {
 }
 
 // Discriminated union for track segments so each variant has its own required params
-export type TrackSegment =
+// --- Stricter Track Segment Definitions ---
+
+// Base interface for all track segments, including optional metadata.
+export interface BaseSegment {
+  // A descriptive name for this segment, e.g., "The Ascent"
+  name?: string;
+  // Intensity score (0-100) suggested by the AI.
+  intensity?: number;
+  // Suggested lighting effect, e.g., "warm-pulse", "strobe"
+  lightingEffect?: string;
+  // Suggested environmental change, e.g., "enter-cave", "starfield"
+  environmentChange?: string;
+  // The audio timestamp (in seconds) this segment should sync with.
+  audioSyncPoint?: Seconds;
+}
+
+// Discriminated union for track segments with stricter validation hints.
+export type TrackSegment = BaseSegment & (
   | { component: 'climb'; length: number; angle?: number }
   | { component: 'drop'; length: number; angle?: number }
   | { component: 'turn'; length: number; direction: 'left' | 'right'; angle: number; radius?: number }
   | { component: 'loop'; radius: number; rotations?: number }
-  | { component: 'barrelRoll'; rotations: number; length?: number };
+  | { component: 'barrelRoll'; rotations: number; length?: number }
+);
 
-// Optional metadata that may be attached to segments by AI or processing steps.
-export interface SegmentMeta {
-  intensity?: number;
-  lightingEffect?: string;
-  environmentChange?: string;
-  audioSyncPoint?: Seconds;
-}
-
-// Allow TrackSegment variants to optionally include SegmentMeta fields without
-// losing discriminated union behavior.
-export type TrackSegmentWithMeta = TrackSegment & Partial<SegmentMeta>;
+// This alias is deprecated but kept for backward compatibility during refactoring.
+export type TrackSegmentWithMeta = TrackSegment;
 
 export interface SynestheticGeometry {
   /** Relative density of fine-grained wireframe ripples (0-1). */
@@ -141,18 +150,28 @@ export interface SynestheticBlueprintLayer {
   atmosphere?: SynestheticAtmosphere | null;
 }
 
-export interface RideBlueprint {
-  palette: string[];
-  track: TrackSegment[];
+/**
+ * The root object describing a generated rollercoaster ride.
+ * This serves as the schema for the AI's output and is validated
+ * on the backend.
+ */
+export interface Blueprint {
+  // A creative and fitting name for the ride, e.g., "The Timewarp".
   rideName: string;
+  // A detailed, evocative description of the ride's mood and atmosphere.
   moodDescription: string;
-  // Optional generation options that were used to produce this blueprint
+  // An array of 3 to 5 hex color codes for the ride's color scheme.
+  palette: [string, string, string, string?, string?];
+  // An array of 12 to 30 track segments defining the rollercoaster's path.
+  track: TrackSegment[];
+  // Optional generation options that were used to produce this blueprint.
   generationOptions?: GenerationOptions;
-  // Optional timeline of small visual events (type + timestamp + params)
+  // Optional timeline of small visual events (type + timestamp + params).
   events?: TimelineEvent[];
-  // Optional synesthetic metadata that informs advanced visuals
+  // Optional synesthetic metadata that informs advanced visuals.
   synesthetic?: SynestheticBlueprintLayer | null;
 }
+
 
 // Enumerated presets for track and world generation. These inform the AI
 // prompt and allow the user to select a preferred stylistic direction.

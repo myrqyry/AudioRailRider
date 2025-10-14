@@ -1,9 +1,9 @@
 import { buildTrackData } from './trackBuilder';
-import { RideBlueprint } from 'shared/types';
+import { Blueprint } from 'shared/types';
 import { RIDE_CONFIG } from './constants';
 
 describe('buildTrackData', () => {
-  const mockBlueprint: RideBlueprint = {
+  const mockBlueprint: Blueprint = {
     rideName: 'Test Ride',
     moodDescription: 'A test ride',
     palette: ['#ff0000', '#00ff00', '#0000ff'],
@@ -30,7 +30,7 @@ describe('buildTrackData', () => {
   });
 
   it('should handle an empty track blueprint', () => {
-    const emptyBlueprint: RideBlueprint = {
+    const emptyBlueprint: Blueprint = {
       ...mockBlueprint,
       track: [],
     };

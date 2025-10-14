@@ -1,5 +1,13 @@
 from dotenv import load_dotenv
 load_dotenv()
+
+# --- Logging Setup ---
+# It's crucial to set up logging before importing other app components
+# so that they can inherit the proper logging configuration.
+from app.config.logging import setup_logging
+setup_logging()
+
+import structlog
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.endpoints import router
@@ -9,6 +17,9 @@ from app.exceptions import http_exception_handler, generic_exception_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
 import uvicorn
+
+# Initialize logger after setup
+logger = structlog.get_logger("main")
 
 # --- FastAPI App Setup ---
 app = FastAPI(
@@ -51,7 +62,8 @@ app.include_router(router)
 if __name__ == "__main__":
     try:
         # Pydantic will raise a validation error if GEMINI_API_KEY is missing
+        logger.info("Starting application", host="0.0.0.0", port=8000, reload=True)
         settings
         uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
     except ValueError as e:
-        print(f"FATAL: Configuration error - {e}. The application cannot start.")
+        logger.critical("Configuration error, application cannot start.", error=str(e), exc_info=True)

@@ -1,11 +1,11 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, Suspense } from 'react';
 import { AppStatus } from '../../shared/types';
 import { useAppStore } from './lib/store';
 import { runAudioProcessingWorkflow } from './lib/workflow';
 import { startPreload } from './lib/preloader';
 import { LoadingProgress } from './components/LoadingProgress';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import ThreeCanvas from './components/ThreeCanvas';
+const ThreeCanvas = React.lazy(() => import('./components/ThreeCanvas'));
 import ReglOverlay from './components/ReglOverlay';
 import DevPanel from './components/DevPanel';
 import RendererWarning from './components/RendererWarning';
@@ -90,7 +90,9 @@ const App: React.FC = () => {
             
             {(status === AppStatus.Riding || status === AppStatus.Ready) && trackData && (
                 <ErrorBoundary>
-                    <ThreeCanvas />
+                    <Suspense fallback={<LoadingProgress stage="loading" />}>
+                        <ThreeCanvas />
+                    </Suspense>
                     {/* Only show waveform overlay when Ready, hide during Riding */}
                     {status === AppStatus.Ready && <ReglOverlay audioFeatures={audioFeatures || null} />}
                 </ErrorBoundary>

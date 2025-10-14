@@ -2,12 +2,12 @@ import asyncio
 import librosa
 import numpy as np
 import io
-import logging
+import structlog
 from typing import Dict, Any, List
 from fastapi import HTTPException
 
 # Configure logging
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
     """
@@ -81,7 +81,12 @@ def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
         avg_spectral_centroid = float(np.mean([f['spectralCentroid'] for f in frame_analyses])) if frame_analyses else 0
         avg_spectral_flux = float(np.mean([f['spectralFlux'] for f in frame_analyses])) if frame_analyses else 0
 
-        logger.info(f"Analyzed audio: duration={duration:.1f}s, frames={len(frame_analyses)}")
+        logger.info(
+            "Audio analysis complete",
+            duration_s=round(duration, 1),
+            frame_count=len(frame_analyses),
+            bpm=round(bpm, 1)
+        )
 
         return {
             "duration": duration,
@@ -93,11 +98,11 @@ def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
         }
     # Catch specific, expected errors from audio processing
     except librosa.LibrosaError as e:
-        logger.error(f"Librosa error during audio analysis: {e}")
+        logger.error("Librosa error during audio analysis", error=str(e), exc_info=True)
         # Re-raise as HTTPException so the API can return a 400 Bad Request
         raise HTTPException(status_code=400, detail=f"Audio processing failed: {e}")
     except Exception as e:
-        logger.error(f"Unexpected error during audio analysis: {e}", exc_info=True)
+        logger.error("Unexpected error during audio analysis", error=str(e), exc_info=True)
         # For unexpected errors, it's better to return a 500 Internal Server Error
         raise HTTPException(status_code=500, detail="An unexpected error occurred during audio analysis.")
 
