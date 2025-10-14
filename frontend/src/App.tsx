@@ -28,11 +28,30 @@ const App: React.FC = () => {
     }, []);
 
     // This effect runs the main audio processing workflow whenever a new audio file is set
-    // and the generation options are available.
+    // and the generation options are available. It includes cancellation logic to prevent
+    // race conditions if the user selects a new file while a previous one is processing.
     useEffect(() => {
-        if (audioFile) {
-            runAudioProcessingWorkflow(audioFile, { generationOptions });
+        // Do nothing if there's no audio file.
+        if (!audioFile) {
+            return;
         }
+
+        // Create an AbortController to manage the lifecycle of the workflow.
+        const controller = new AbortController();
+
+        // Run the workflow with the audio file, options, and the abort signal.
+        runAudioProcessingWorkflow(audioFile, {
+            generationOptions,
+            signal: controller.signal,
+        });
+
+        // The cleanup function for this effect will be called when the component
+        // unmounts or when the dependencies (audioFile, generationOptions) change.
+        // This is the key to preventing race conditions.
+        return () => {
+            console.log("Cancelling previous audio processing workflow.");
+            controller.abort();
+        };
     }, [audioFile, generationOptions]);
 
     const renderContent = () => {
