@@ -21,8 +21,19 @@ const PERFORMANCE_CHECK_INTERVAL = 2000;
 const TARGET_FPS = 50;
 const LOW_QUALITY_DEBOUNCE_MS = 3000;
 
-const TRACK_RADIUS = 0.9;
-const GHOST_RIBBON_RADIUS = 1.6;
+const TRACK_RADIUS = 0.35;  // Small but visible track
+const GHOST_RIBBON_RADIUS = 0.7;  // Proportional guide
+
+// When true, build the track geometry below the original path so the camera
+// (which follows the path) sits above the rails. The offset is calculated
+// relative to TRACK_RADIUS to guarantee clearance.
+const PLACE_TRACK_UNDER_CAMERA = true;
+const TRACK_UNDER_CAMERA_VERTICAL_OFFSET = TRACK_RADIUS + 0.2;
+// When the camera is inside the track tube, reduce rail opacity so the scene is visible
+const TRACK_INSIDE_OPACITY = 0.28;
+const TRACK_DEFAULT_OPACITY = 0.92; // initial material opacity
+const TRACK_OPACITY_LERP_SPEED = 6.0; // how quickly opacity transitions
+const TRACK_INSIDE_SAMPLES = 48; // how many samples along curve to estimate proximity
 
 export class VisualEffects {
   private static readonly UP_VECTOR = new THREE.Vector3(0, 1, 0);
@@ -48,6 +59,158 @@ export class VisualEffects {
   private lastAudioTimeSeconds: number = 0;
   private baseRailColor: THREE.Color;
   private baseEmissiveColor: THREE.Color;
+  // Runtime-configurable track settings (can be controlled from the DevPanel)
+  private placeTrackUnderCamera: boolean = PLACE_TRACK_UNDER_CAMERA;
+  private trackUnderCameraVerticalOffset: number = TRACK_UNDER_CAMERA_VERTICAL_OFFSET;
+  private trackInsideOpacity: number = TRACK_INSIDE_OPACITY;
+  private trackDefaultOpacity: number = TRACK_DEFAULT_OPACITY;
+  private trackOpacityLerpSpeed: number = TRACK_OPACITY_LERP_SPEED;
+  private trackRadius: number = TRACK_RADIUS;
+  private _forceInside: boolean = false;
+  private _tmpClosest = new THREE.Vector3();
+
+  // Compute curve points offset underneath the camera using the track's per-point up vectors
+  // This keeps the rails below the camera even during rolls and inversions.
+  private computeOffsetCurvePoints(points: THREE.Vector3[]): THREE.Vector3[] {
+    const ups = this.trackData?.upVectors;
+    const n = points.length;
+    if (!ups || ups.length === 0) {
+      const down = new THREE.Vector3(0, -this.trackUnderCameraVerticalOffset, 0);
+      return points.map((p) => p.clone().add(down));
+    }
+    const out: THREE.Vector3[] = [];
+    for (let i = 0; i < n; i++) {
+      let up = new THREE.Vector3(0, 1, 0);
+      if (ups.length >= 2) {
+        const scaled = (i / Math.max(1, n - 1)) * (ups.length - 1);
+        const a = Math.floor(scaled);
+        const b = Math.min(a + 1, ups.length - 1);
+        const t = scaled - a;
+        const upA = new THREE.Vector3(ups[a].x, ups[a].y, ups[a].z);
+        const upB = new THREE.Vector3(ups[b].x, ups[b].y, ups[b].z);
+        up = upA.lerp(upB, t).normalize();
+      } else if (ups.length === 1) {
+        up = new THREE.Vector3(ups[0].x, ups[0].y, ups[0].z).normalize();
+      }
+      const down = up.clone().multiplyScalar(-this.trackUnderCameraVerticalOffset);
+      out.push(points[i].clone().add(down));
+    }
+    return out;
+  }
+
+  // Estimate whether the provided camera position is inside the track tube.
+  // We sample points along the track curve and check the minimum distance.
+  private isCameraInsideTrack(cameraPosition: THREE.Vector3): boolean {
+    if (this._forceInside) return true;
+    // Prefer a BVH-based closest-point test against the track mesh when available
+    try {
+      if (this.trackMesh && (this.trackMesh.geometry as any)?.boundsTree && typeof (this.trackMesh.geometry as any).boundsTree.closestPointToPoint === 'function') {
+        const bounds = (this.trackMesh.geometry as any).boundsTree;
+        bounds.closestPointToPoint(cameraPosition, this._tmpClosest);
+        const minDist = cameraPosition.distanceTo(this._tmpClosest);
+        return minDist <= this.trackRadius + 0.01;
+      }
+    } catch (e) {
+      // If BVH nearest-point test fails for any reason, fall back to sampling
+    }
+
+    if (!this.pathCurve || !this.trackPathPoints || this.trackPathPoints.length === 0) return false;
+    const sampleCount = Math.min(TRACK_INSIDE_SAMPLES, Math.max(12, Math.floor(this.trackPathPoints.length / 4)));
+    let minSq = Number.POSITIVE_INFINITY;
+    for (let i = 0; i <= sampleCount; i++) {
+      const t = i / sampleCount;
+      const p = this.pathCurve.getPointAt(t);
+      const d2 = p.distanceToSquared(cameraPosition);
+      if (d2 < minSq) minSq = d2;
+    }
+    const minDist = Math.sqrt(minSq);
+    return minDist <= this.trackRadius + 0.01; // small tolerance to avoid jitter at edge
+  }
+
+  // Called by DevPanel/ThreeCanvas when track-related settings change
+  public setTrackSettings(settings: { placeUnderCamera?: boolean; verticalOffset?: number; defaultOpacity?: number; insideOpacity?: number; opacityLerpSpeed?: number; trackRadius?: number; }) {
+    try {
+      let needsRebuild = false;
+      if (typeof settings.placeUnderCamera === 'boolean' && settings.placeUnderCamera !== this.placeTrackUnderCamera) {
+        this.placeTrackUnderCamera = settings.placeUnderCamera;
+        needsRebuild = true;
+      }
+      if (typeof settings.verticalOffset === 'number' && settings.verticalOffset !== this.trackUnderCameraVerticalOffset) {
+        this.trackUnderCameraVerticalOffset = settings.verticalOffset;
+        needsRebuild = true;
+      }
+      if (typeof settings.trackRadius === 'number' && settings.trackRadius !== this.trackRadius) {
+        this.trackRadius = settings.trackRadius;
+        needsRebuild = true;
+      }
+
+      if (typeof settings.defaultOpacity === 'number') {
+        this.trackDefaultOpacity = settings.defaultOpacity;
+        if (this.trackMaterial) {
+          this.trackMaterial.opacity = this.trackDefaultOpacity;
+          this.trackMaterial.transparent = this.trackMaterial.opacity < 0.995;
+          this.trackMaterial.needsUpdate = true;
+        }
+      }
+      if (typeof settings.insideOpacity === 'number') {
+        this.trackInsideOpacity = settings.insideOpacity;
+      }
+      if (typeof settings.opacityLerpSpeed === 'number') {
+        this.trackOpacityLerpSpeed = settings.opacityLerpSpeed;
+      }
+
+      if (needsRebuild) {
+        this.rebuildTrackGeometry();
+      }
+    } catch (e) {
+      console.error('[VisualEffects] Failed to apply track settings', e);
+    }
+  }
+
+  public forceTrackInside(force: boolean) {
+    this._forceInside = !!force;
+    try {
+      if (this.trackMaterial) {
+        this.trackMaterial.opacity = this._forceInside ? this.trackInsideOpacity : this.trackDefaultOpacity;
+        this.trackMaterial.transparent = this.trackMaterial.opacity < 0.995;
+        this.trackMaterial.needsUpdate = true;
+      }
+    } catch (e) {}
+  }
+
+  // Build or rebuild the track geometry and ghost ribbon using runtime fields
+  public rebuildTrackGeometry() {
+    try {
+      if (!this.trackPathPoints || this.trackPathPoints.length === 0) return;
+      const segments = this.highQualityMode ? this.trackPathPoints.length * HIGH_QUALITY_SEGMENTS : this.trackPathPoints.length * LOW_QUALITY_SEGMENTS;
+      let curvePoints = this.trackPathPoints.map((p) => p.clone());
+      if (this.placeTrackUnderCamera) {
+        curvePoints = this.computeOffsetCurvePoints(this.trackPathPoints);
+      }
+      const curve = new THREE.CatmullRomCurve3(curvePoints);
+      const newGeom = new THREE.TubeGeometry(curve, Math.max(4, segments), this.trackRadius, this.highQualityMode ? 8 : 6, false);
+      const geometry = geometryPool.acquire();
+      geometry.copy(newGeom);
+      newGeom.dispose();
+      (geometry as any).boundsTree = new MeshBVH(geometry);
+
+      if (!this.trackMesh) {
+        this.trackMesh = new THREE.Mesh(geometry, this.trackMaterial);
+        this.trackMesh.frustumCulled = true;
+        this.scene.add(this.trackMesh);
+      } else {
+        const oldGeometry = this.trackMesh.geometry as THREE.BufferGeometry;
+        geometryPool.release(oldGeometry);
+        this.trackMesh.geometry = geometry;
+      }
+
+      // Rebuild ghost ribbon to follow the same curve/resolution
+      if (!this.ghostRibbonMaterial) this.ghostRibbonMaterial = this.createGhostRibbonMaterial();
+      this.rebuildGhostRibbon(curve, Math.max(4, segments));
+    } catch (e) {
+      console.error('[VisualEffects] rebuildTrackGeometry failed', e);
+    }
+  }
   private baseGhostTintA: THREE.Color;
   private baseGhostTintB: THREE.Color;
   private trackTintA: THREE.Color;
@@ -236,7 +399,7 @@ export class VisualEffects {
       metalness: 0.15,
       roughness: 0.65,
       transparent: true,
-      opacity: 0.92,
+      opacity: this.trackDefaultOpacity,
       side: THREE.DoubleSide,
     });
     this.trackMaterial.onBeforeCompile = (shader) => {
@@ -364,23 +527,14 @@ vWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;
     };
 
   const segments = this.highQualityMode ? this.trackPathPoints.length * HIGH_QUALITY_SEGMENTS : this.trackPathPoints.length * LOW_QUALITY_SEGMENTS;
-  const curve = new THREE.CatmullRomCurve3(this.trackPathPoints.map((p) => p.clone()));
-    this.pathCurve = curve;
-    const geometry = new THREE.TubeGeometry(curve, segments, TRACK_RADIUS, 8, false);
-
-    // Generate the BVH for the track geometry to accelerate raycasting
-    (geometry as any).boundsTree = new MeshBVH(geometry);
-
-    this.trackMesh = new THREE.Mesh(geometry, this.trackMaterial);
-    this.trackMesh.frustumCulled = true;
-    this.scene.add(this.trackMesh);
-
-    if (this.usingProceduralTrack) {
-      this.trackMaterial.color.setHex(0xff6b6b);
-    }
-
-    this.ghostRibbonMaterial = this.createGhostRibbonMaterial();
-    this.rebuildGhostRibbon(curve, segments);
+  // Optionally place the track below the path so the camera (which follows the path) sits above the rails
+  let curvePoints = this.trackPathPoints.map((p) => p.clone());
+  if (this.placeTrackUnderCamera) {
+    curvePoints = this.computeOffsetCurvePoints(this.trackPathPoints);
+  }
+  // Create ghost ribbon material and build the track geometry using current settings
+  this.ghostRibbonMaterial = this.createGhostRibbonMaterial();
+  this.rebuildTrackGeometry();
 
     this.particles = new ParticleSystem(this.scene);
     const initialProfile: ParticleQualityLevel = this.highQualityMode ? 'high' : 'medium';
@@ -490,7 +644,7 @@ vWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;
 
   private generateProceduralTrack(trackData: TrackData): THREE.Vector3[] {
     const points: THREE.Vector3[] = [];
-    const audio = trackData.audioFeatures || {};
+  const audio = trackData.audioFeatures ?? ({} as any);
     const duration = typeof audio.duration === 'number' ? audio.duration : secondsToNumber(audio.duration ?? 120);
     const energy = typeof audio.energy === 'number' ? THREE.MathUtils.clamp(audio.energy, 0, 1) : 0.5;
     const bpm = typeof audio.bpm === 'number' ? Math.max(60, Math.min(240, audio.bpm)) : 120;
@@ -1168,6 +1322,23 @@ void main() {
         this.lastAudioTimeSeconds = currentAudioTime;
       } catch (e) {}
 
+      // Adjust track opacity smoothly when the camera is inside the track tube
+      try {
+        if (this.trackMaterial) {
+          const inside = this.isCameraInsideTrack(cameraPosition);
+          const targetOpacity = inside ? this.trackInsideOpacity : this.trackDefaultOpacity;
+          const currentOpacity = typeof this.trackMaterial.opacity === 'number' ? this.trackMaterial.opacity : this.trackDefaultOpacity;
+          const nextOpacity = THREE.MathUtils.lerp(currentOpacity, targetOpacity, Math.min(1, deltaSeconds * this.trackOpacityLerpSpeed));
+          this.trackMaterial.opacity = nextOpacity;
+          // Keep the material flagged as transparent while opacity < 1
+          const shouldBeTransparent = nextOpacity < 0.995;
+          if (this.trackMaterial.transparent !== shouldBeTransparent) {
+            this.trackMaterial.transparent = shouldBeTransparent;
+            this.trackMaterial.needsUpdate = true;
+          }
+        }
+      } catch (e) {}
+
       if (this.trackShaderUniforms) {
         const uniforms = this.trackShaderUniforms;
         this.updateUniformSafe(uniforms.trackTime, elapsedTime, 1e-2);
@@ -1480,15 +1651,8 @@ void main() {
     const oldGeometry = this.trackMesh.geometry as THREE.BufferGeometry;
     geometryPool.release(oldGeometry);
 
-    const curve = new THREE.CatmullRomCurve3(this.trackPathPoints.map((p) => p.clone()));
-    const newGeom = new THREE.TubeGeometry(curve, this.trackPathPoints.length * LOW_QUALITY_SEGMENTS, TRACK_RADIUS, 6, false);
-    const geometry = geometryPool.acquire();
-    geometry.copy(newGeom);
-    newGeom.dispose();
-    
-    (geometry as any).boundsTree = new MeshBVH(geometry);
-    this.trackMesh.geometry = geometry;
-    this.rebuildGhostRibbon(curve, this.trackPathPoints.length * LOW_QUALITY_SEGMENTS);
+    // Rebuild track geometry with the new (lower) LOD
+    this.rebuildTrackGeometry();
     this.createSpeedStreakSystem();
   }
 
@@ -1505,15 +1669,8 @@ void main() {
     const oldGeometry = this.trackMesh.geometry as THREE.BufferGeometry;
     geometryPool.release(oldGeometry);
 
-    const curve = new THREE.CatmullRomCurve3(this.trackPathPoints.map((p) => p.clone()));
-    const newGeom = new THREE.TubeGeometry(curve, this.trackPathPoints.length * HIGH_QUALITY_SEGMENTS, TRACK_RADIUS, 8, false);
-    const geometry = geometryPool.acquire();
-    geometry.copy(newGeom);
-    newGeom.dispose();
-
-    (geometry as any).boundsTree = new MeshBVH(geometry);
-    this.trackMesh.geometry = geometry;
-    this.rebuildGhostRibbon(curve, this.trackPathPoints.length * HIGH_QUALITY_SEGMENTS);
+    // Rebuild track geometry with the new (higher) LOD
+    this.rebuildTrackGeometry();
     this.createSpeedStreakSystem();
   }
 

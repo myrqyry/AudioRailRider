@@ -19,9 +19,14 @@ export class RideCamera {
     private readonly _lastSide = new THREE.Vector3(1, 0, 0);
     private readonly _blendedUp = new THREE.Vector3(0, 1, 0);
     private readonly _smoothedUp = new THREE.Vector3(0, 1, 0);
+    private _trackRadius: number = 0.35;
 
     public get lookAtPos(): THREE.Vector3 {
         return this._lookAtPos;
+    }
+
+    public setTrackRadius(r: number) {
+        if (typeof r === 'number' && isFinite(r) && r > 0) this._trackRadius = r;
     }
 
     constructor(camera: THREE.PerspectiveCamera, trackData: TrackData) {
@@ -79,14 +84,14 @@ export class RideCamera {
         }
 
         const rollFactor = THREE.MathUtils.clamp(1 - Math.abs(this._smoothedUp.dot(RideCamera.WORLD_UP)), 0, 1);
-    const seatHeight = THREE.MathUtils.lerp(2.7, 3.4, rollFactor);
-    const lateralOffset = THREE.MathUtils.lerp(4.2, 3.0, rollFactor);
-    const backwardOffset = THREE.MathUtils.lerp(3.2, 4.4, rollFactor * 0.65);
-
-        this._offsetTmp.set(0, 0, 0)
-            .addScaledVector(RideCamera.WORLD_UP, seatHeight)
-            .addScaledVector(this._sideTmp, lateralOffset)
-            .addScaledVector(tangent, -backwardOffset);
+    // Camera positioned relative to the configured track radius
+    const SAFETY_MARGIN = 0.18; // Extra distance to guarantee clearance
+    const lateralOffset = this._trackRadius + SAFETY_MARGIN;
+    const seatHeight = 0.12; // Small vertical offset
+    // Remove backwardOffset for now to avoid being inside tube on sharp turns
+    this._offsetTmp.set(0, 0, 0)
+        .addScaledVector(this._sideTmp, lateralOffset)
+        .addScaledVector(RideCamera.WORLD_UP, seatHeight);
 
     this._cameraPosTmp.copy(this._pos).add(this._offsetTmp);
     this.camera.position.copy(this._cameraPosTmp);

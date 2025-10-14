@@ -28,10 +28,48 @@ class GeometryPool {
      */
     release(geometry: THREE.BufferGeometry) {
         if (this.activeGeometries.has(geometry)) {
-            // Reset geometry for reuse
-            geometry.clear(); // Removes all attributes, index, and morph attributes
-            this.activeGeometries.delete(geometry);
-            this.pool.push(geometry); // Return the same geometry to the pool
+            // Reset geometry for reuse. Older versions of three.js do not implement
+            // BufferGeometry.clear(), so try to call it when available and otherwise
+            // perform a manual cleanup of attributes / index / morph targets.
+            try {
+                if (typeof (geometry as any).clear === 'function') {
+                    // Preferred, available on newer three.js versions
+                    (geometry as any).clear();
+                } else {
+                    // Manual cleanup for compatibility with older three.js
+                    const gAny = geometry as any;
+                    if (gAny.attributes && typeof gAny.attributes === 'object') {
+                        for (const name of Object.keys(gAny.attributes)) {
+                            if (typeof (geometry as any).deleteAttribute === 'function') {
+                                geometry.deleteAttribute(name);
+                            } else {
+                                // best-effort: remove attribute entry
+                                try { delete gAny.attributes[name]; } catch (e) {}
+                            }
+                        }
+                    }
+                    try { geometry.setIndex(null); } catch (e) {}
+                    if (gAny.morphAttributes && typeof gAny.morphAttributes === 'object') {
+                        for (const k of Object.keys(gAny.morphAttributes)) {
+                            try { delete gAny.morphAttributes[k]; } catch (e) {}
+                        }
+                    }
+                    // clear cached spatial acceleration structures if present
+                    try { if ((gAny).boundsTree) { delete (gAny).boundsTree; } } catch (e) {}
+                    // reset bounding data
+                    try { geometry.boundingBox = null; geometry.boundingSphere = null; } catch (e) {}
+                    try { geometry.groups = []; } catch (e) {}
+                }
+
+                this.activeGeometries.delete(geometry);
+                this.pool.push(geometry); // Return the same geometry to the pool
+            } catch (cleanupErr) {
+                // If anything goes wrong during cleanup, dispose the geometry and
+                // replace it with a fresh BufferGeometry to keep the pool healthy.
+                try { geometry.dispose(); } catch (e) {}
+                this.activeGeometries.delete(geometry);
+                this.pool.push(new THREE.BufferGeometry());
+            }
         }
     }
 

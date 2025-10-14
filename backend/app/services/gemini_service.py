@@ -159,19 +159,84 @@ class GeminiService:
                              options: dict | None = None) -> str:
         opt_lines = []
         if options:
-            # ... (omitting for brevity, no changes here) ...
-            pass
+            if options.get('worldTheme'):
+                opt_lines.append(f"World Theme: {options['worldTheme']}")
+            if options.get('visualStyle'):
+                opt_lines.append(f"Visual Style: {options['visualStyle']}")
+            if options.get('paletteHint') and isinstance(options['paletteHint'], list):
+                opt_lines.append(f"Palette Hint: {', '.join(options['paletteHint'][:3])}")
         option_block = ('\n'.join(opt_lines) + '\n') if opt_lines else ''
 
         return f"""
-Audio analysis: {duration:.0f}s, {bpm:.0f} BPM, Energy {energy:.2f}, Spectral Centroid {spectral_centroid:.0f}Hz, Spectral Flux {spectral_flux:.3f}.
+🎵 AUDIO ESSENCE 🎵
+Duration: {duration:.0f}s | BPM: {bpm:.0f} | Energy: {energy:.2f}/1.0
+Spectral Centroid: {spectral_centroid:.0f}Hz | Spectral Flux: {spectral_flux:.3f}
 {option_block}
-Create a rollercoaster blueprint (12-20 segments) from this audio...
-""" # (omitting rest of prompt for brevity)
+
+🎢 CREATIVE MISSION 🎢
+You are a synesthetic architect designing an IMPOSSIBLY IMAGINATIVE rollercoaster experience. 
+This is not a normal ride - it's a journey through sound made visible, where physics bends to emotion and geometry dances with rhythm.
+
+DESIGN PHILOSOPHY:
+• Let the audio's personality guide WILD, UNEXPECTED segment combinations
+• If the energy is high, consider explosive drops into tight barrel rolls, loops that defy gravity, climbs that pierce dimensional barriers
+• If the BPM is fast, weave rapid turns and quick transitions that feel like controlled chaos
+• If spectral flux is high, introduce jarring contrasts: serene climbs suddenly collapsing into vertiginous drops
+• AVOID predictable patterns - surprise the rider with impossible transitions
+• Think of segments as emotional beats: joy, terror, wonder, transcendence, euphoria
+• Use 24-40 segments (MORE SEGMENTS = MORE EVENTS = MORE EXCITEMENT)
+• Mix segment types creatively for dynamic flow
+• Vary segment lengths (8-20) to create rhythm and pacing
+
+SEGMENT CREATIVITY GUIDELINES:
+• climbs: Can be gentle ascents or desperate clawing toward light/chaos
+• drops: From gentle descents to reality-shattering plunges  
+• turns: Sharp hairpins, sweeping curves, spiral descents through dimensions
+• loops: Single perfect circles or dizzying multi-rotation vortexes
+• barrelRolls: Quick twists or prolonged tumbling through space-time
+
+EXCITING COMBINATIONS:
+• Alternate between different segment types to create variety
+• Mix sharp maneuvers with flowing transitions
+• Use loops and barrel rolls as dramatic punctuation
+• Create crescendos and releases in intensity
+
+SYNESTHETIC LAYER (CRUCIAL):
+• geometry.wireframeDensity (0-1): How much the track dissolves into pure energy
+• geometry.impossiblePhysics (bool): Track segments that couldn't exist in reality
+• geometry.organicBreathing (0-1): Track pulses with music, as if alive
+• particles.connectionDensity (0-1): Intensity of particle swarms connecting to the track
+• particles.resonanceThreshold (0-1): How aggressively particles react to audio peaks
+• atmosphere.skyMood: "transcendent-euphoria", "menacing-void", "crystalline-serenity", "chaotic-ecstasy"
+• atmosphere.turbulenceBias (-1 to 1): Negative = smooth, positive = chaotic
+• atmosphere.passionIntensity (0+): Emotional intensity of atmospheric effects
+
+NAMING & MOOD:
+• rideName: Should be EVOCATIVE and MEMORABLE - examples: "Fracture Point", "The Ascending Scream", "Dopamine Cascade", "Temporal Vertigo"
+• moodDescription: Paint a vivid 50-200 word picture of the emotional/sensory journey
+• palette: 3-5 hex colors that capture the audio's emotional temperature (vibrant, muted, neon, organic, etc.)
+
+OUTPUT: Return ONLY valid JSON matching the Blueprint schema. Be MAXIMALLY CREATIVE while respecting schema constraints.
+"""
 
     SYSTEM_INSTRUCTION = """
-You are a synesthetic architect...
-""" # (omitting for brevity)
+You are a synesthetic architect and impossible geometry artist specializing in audio-reactive experiences.
+Your designs transcend conventional rollercoaster logic, creating rides that exist at the intersection of sound, emotion, and surreal physics.
+
+CORE PRINCIPLES:
+1. Audio is your blueprint - every frequency, every rhythm shift, every dynamic surge should manifest in track geometry
+2. Embrace the impossible - tracks can breathe, dissolve, defy gravity, fold through dimensions
+3. Emotional storytelling - each segment transition tells a story of transformation
+4. Surprise and delight - avoid predictable patterns, create moments of unexpected wonder
+5. Synesthetic integration - deeply specify the synesthetic layer to create immersive, impossible beauty
+
+CREATIVE MANTRAS:
+• "What would this sound look like if geometry could dream?"
+• "How does this rhythm want to move through space?"
+• "What emotion is hiding in this frequency range?"
+
+Always output strictly valid JSON. Push creativity to the MAXIMUM while respecting the schema.
+"""
 
     def _generate_cache_key(self, audio_bytes: bytes, options: dict | None) -> str:
         """Generates a stable cache key from audio content and options."""
@@ -219,7 +284,7 @@ You are a synesthetic architect...
 
             generation_config = types.GenerateContentConfig(
                 response_mime_type='application/json', response_schema=Blueprint,
-                system_instruction=self.SYSTEM_INSTRUCTION, temperature=0.8,
+                system_instruction=self.SYSTEM_INSTRUCTION, temperature=1.2,
             )
 
             response = await self.client.aio.models.generate_content(
@@ -401,21 +466,60 @@ You are a synesthetic architect...
 
                 options_block = ('\n'.join(opt_lines) + '\n') if opt_lines else ''
 
-                full_prompt = f"""Create a breathtaking, cinematic wide-angle sky scene for a rollercoaster experience called "{ride_name}".
+                full_prompt = f"""🌌 SKYBOX VISION FOR "{ride_name}" 🌌
 
-Mood: {mood}
-{options_block}Visual Style: Photorealistic, epic, atmospheric, with dynamic lighting and volumetric effects{palette_desc}.
+EMOTIONAL NARRATIVE:
+{mood}
 
-Requirements:
-- Seamless, tileable 360° equirectangular image suitable for a skybox
-- No people, characters, silhouettes, signage, or text overlays
-- Focus entirely on sky, clouds, light, and atmospheric elements
+ARTISTIC DIRECTION:
+You are creating the celestial stage for an impossible journey - a sky that transcends reality itself.
+This is not merely a backdrop, but an active participant in the ride's emotional arc.
 
-The sky should evoke the emotional journey of the ride - make it vast, immersive, and visually stunning. Think of this as the backdrop for an unforgettable thrill ride experience. Include dramatic clouds, atmospheric perspective, and a sense of infinite space."""
+CORE AESTHETICS:
+• Style: Surreal photorealism blending dreamlike wonder with cinematic grandeur
+• Atmosphere: {', '.join([c for c in palette[:3]]) if palette else 'Emotionally resonant colors'} dominating the color palette
+• Mood Keywords: Transcendent, breathtaking, otherworldly, immersive, infinite
+{options_block}
+CREATIVE VISION:
+- Imagine skies that exist beyond Earth: nebulae weaving through aurora, crystalline cloud formations, bioluminescent atmospheres
+- If mood is intense/energetic: Dramatic storm fronts, swirling vortexes, lightning dancing across dimensional rifts
+- If mood is serene/contemplative: Ethereal twilight gradients, soft volumetric god rays, floating islands of cumulus
+- If mood is chaotic/ecstatic: Reality-bending color explosions, geometric fractals in cloud formations, impossible light phenomena
+- Incorporate DEEP atmospheric perspective - distant layers fading into cosmic infinity
+- Use volumetric lighting as emotional punctuation: divine rays, soft glows, lens flares suggesting something beyond
+
+TECHNICAL SPECS:
+- Format: Seamless 360° equirectangular projection (perfect tiling required)
+- Content Restrictions: ZERO people, characters, silhouettes, text, signage, recognizable landmarks
+- Focus: Pure atmospheric poetry - sky, clouds, light, color, space, celestial phenomena
+
+ARTISTIC INFLUENCES:
+Think: Terrence Malick cinematography meets Alex Grey cosmic visions meets Roger Deakins lighting mastery meets Studio Ghibli dreamscapes.
+
+OUTPUT: A skybox that makes riders feel they're hurtling through a realm where physics and beauty merge into pure emotional experience."""
             else:
-                full_prompt = f"""Create a breathtaking, cinematic wide-angle sky scene with the following mood: {prompt}
+                full_prompt = f"""🌌 CREATE AN IMPOSSIBLE SKY 🌌
 
-Make it photorealistic, epic, and atmospheric with dramatic lighting, volumetric clouds, and a sense of vast infinite space. The output must be a seamless, tileable 360° equirectangular skybox image with no people, characters, silhouettes, signage, or text. Focus purely on sky and atmospheric detail for use as an immersive rollercoaster backdrop."""
+MOOD ESSENCE: {prompt}
+
+ARTISTIC MANDATE:
+Design a celestial environment that transcends earthly skies. This is a dreamscape, a visual poem, a cosmic stage for an impossible journey.
+
+CREATIVE FREEDOM:
+- Blend surreal beauty with photorealistic detail
+- Imagine skies from alien worlds, parallel dimensions, abstract emotional planes
+- Use color, light, and form to tell an emotional story
+- Volumetric clouds that feel alive, light that behaves impossibly, atmospheres that breathe
+
+STYLE INSPIRATION:
+Cinematic mastery (Roger Deakins lighting) × Cosmic wonder (Hubble imagery) × Dreamlike surrealism (Studio Ghibli) × Emotional intensity (Terrence Malick)
+
+TECHNICAL REQUIREMENTS:
+- Perfect 360° equirectangular projection (seamless tiling)
+- NO people, characters, text, signage, recognizable objects
+- Pure atmospheric poetry: sky, clouds, light, space, celestial phenomena
+
+OUTPUT: A skybox that transforms a ride into a journey through living emotion made visible."""
 
             # Use Gemini 2.5 Flash Image for conversational image generation
             # This model excels at contextual, conversational image generation

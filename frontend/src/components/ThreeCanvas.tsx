@@ -6,13 +6,15 @@ import { useAppStore } from '../lib/store';
 import { SceneManager } from '../lib/SceneManager';
 import { RideCamera } from '../lib/RideCamera';
 import { VisualEffects } from '../lib/VisualEffects';
-import { generateSkyboxImage } from '../services/geminiService';
+// Skybox generation is now initiated by the workflow; ThreeCanvas will apply
+// the resulting image URL from the global store when it becomes available.
 
 const ThreeCanvas: React.FC = () => {
   const status = useAppStore((state) => state.status);
   const trackData = useAppStore((state) => state.trackData);
   const audioFile = useAppStore((state) => state.audioFile);
   const onRideFinish = useAppStore((state) => state.actions.handleRideFinish);
+  const skyboxUrl = useAppStore((state) => state.skyboxUrl);
 
   const mountRef = useRef<HTMLDivElement>(null);
   const sceneManagerRef = useRef<SceneManager | null>(null);
@@ -75,23 +77,23 @@ const ThreeCanvas: React.FC = () => {
         });
     }
 
-    // Generate and apply the skybox with full blueprint context
-    if (trackData.moodDescription) {
-      const prompt = trackData.moodDescription;
-      // Pass the full trackData (blueprint) and any generation options for richer contextual generation
-  const options = (trackData as any).generationOptions;
-  const blueprintWithOptions = { ...trackData, generationOptions: options };
-  generateSkyboxImage(prompt, blueprintWithOptions)
-        .then(imageUrl => {
-          console.log('[ThreeCanvas] Skybox generated successfully with Gemini 2.5 Flash Image');
-          sceneManager.updateSkybox(imageUrl);
-        })
-        .catch(error => {
-          // Skybox generation not critical - log and continue with default skybox
-          console.info('[ThreeCanvas] Continuing without custom skybox:', error.message);
-        });
-    }
+    // The workflow now starts skybox generation earlier and stores the result
+    // in the global store. When the store's `skyboxUrl` becomes available we
+    // apply it to the SceneManager below.
   }, [trackData]);
+
+  // Apply skybox from the global store when it becomes available
+  useEffect(() => {
+    const sceneManager = sceneManagerRef.current;
+    if (!sceneManager) return;
+    if (!skyboxUrl) return;
+    try {
+      console.log('[ThreeCanvas] Applying skybox from store', skyboxUrl);
+      sceneManager.updateSkybox(skyboxUrl);
+    } catch (e) {
+      console.warn('[ThreeCanvas] Failed to apply skybox from store', e);
+    }
+  }, [skyboxUrl]);
 
   // Wire low-latency audio frames (dispatched by useAudioAnalysis) to VisualEffects.
   useEffect(() => {
@@ -146,6 +148,40 @@ const ThreeCanvas: React.FC = () => {
       } catch (e) {}
     };
 
+    // Dev track settings handler: forward settings to VisualEffects
+    const devTrackHandler = (ev: Event) => {
+      try {
+        const ve = visualEffectsRef.current;
+        if (!ve) return;
+        const detail = (ev as CustomEvent).detail as any;
+        if (!detail) return;
+        if (typeof ve.setTrackSettings === 'function') ve.setTrackSettings(detail);
+        // Forward trackRadius to RideCamera if available so camera offsets can adapt
+        const rc = rideCameraRef.current;
+        if (rc && typeof rc.setTrackRadius === 'function' && typeof detail.trackRadius === 'number') {
+          rc.setTrackRadius(detail.trackRadius);
+        }
+      } catch (e) {}
+    };
+
+    const forceTrackHandler = (ev: Event) => {
+      try {
+        const ve = visualEffectsRef.current;
+        if (!ve) return;
+        const detail = (ev as CustomEvent).detail as any;
+        if (!detail) return;
+        if (typeof ve.forceTrackInside === 'function') ve.forceTrackInside(!!detail.force);
+      } catch (e) {}
+    };
+
+    const rebuildTrackHandler = (ev: Event) => {
+      try {
+        const ve = visualEffectsRef.current;
+        if (!ve) return;
+        if (typeof ve.rebuildTrackGeometry === 'function') ve.rebuildTrackGeometry();
+      } catch (e) {}
+    };
+
     const loadManifestHandler = async (ev: Event) => {
       try {
         const ve = visualEffectsRef.current;
@@ -161,11 +197,17 @@ const ThreeCanvas: React.FC = () => {
     window.addEventListener('audiorailrider:dev:setCurlParams', devHandler as EventListener);
     window.addEventListener('audiorailrider:dev:applyUniform', applyUniformHandler as EventListener);
     window.addEventListener('audiorailrider:dev:loadUniformsManifest', loadManifestHandler as EventListener);
+    window.addEventListener('audiorailrider:dev:setTrackSettings', devTrackHandler as EventListener);
+    window.addEventListener('audiorailrider:dev:forceTrackInside', forceTrackHandler as EventListener);
+    window.addEventListener('audiorailrider:dev:rebuildTrack', rebuildTrackHandler as EventListener);
     return () => {
       window.removeEventListener('audiorailrider:frame', handler as EventListener);
       window.removeEventListener('audiorailrider:dev:setCurlParams', devHandler as EventListener);
       window.removeEventListener('audiorailrider:dev:applyUniform', applyUniformHandler as EventListener);
       window.removeEventListener('audiorailrider:dev:loadUniformsManifest', loadManifestHandler as EventListener);
+      window.removeEventListener('audiorailrider:dev:setTrackSettings', devTrackHandler as EventListener);
+      window.removeEventListener('audiorailrider:dev:forceTrackInside', forceTrackHandler as EventListener);
+      window.removeEventListener('audiorailrider:dev:rebuildTrack', rebuildTrackHandler as EventListener);
     };
   }, []);
 

@@ -14,30 +14,30 @@ class BaseSegment(BaseModel):
 
 class ClimbSegment(BaseSegment):
     component: Literal['climb']
-    length: float = Field(..., gt=0)
+    length: float = Field(..., ge=0.1, description="Length must be at least 0.1")
     angle: Optional[float] = Field(None, ge=-90, le=90)
 
 class DropSegment(BaseSegment):
     component: Literal['drop']
-    length: float = Field(..., gt=0)
+    length: float = Field(..., ge=0.1, description="Length must be at least 0.1")
     angle: Optional[float] = Field(None, ge=-90, le=90)
 
 class TurnSegment(BaseSegment):
     component: Literal['turn']
-    length: float = Field(..., gt=0)
+    length: float = Field(..., ge=0.1, description="Length must be at least 0.1")
     direction: Literal['left', 'right']
     angle: float = Field(..., ge=-720, le=720)
-    radius: Optional[float] = Field(None, gt=0)
+    radius: Optional[float] = Field(None, ge=0.1, description="Radius must be at least 0.1")
 
 class LoopSegment(BaseSegment):
     component: Literal['loop']
-    radius: float = Field(..., gt=0)
+    radius: float = Field(..., ge=0.1, description="Radius must be at least 0.1")
     rotations: Optional[int] = Field(1, ge=1)
 
 class BarrelRollSegment(BaseSegment):
     component: Literal['barrelRoll']
-    rotations: int = Field(..., gt=0)
-    length: Optional[float] = Field(None, gt=0)
+    rotations: int = Field(..., ge=1, description="Rotations must be at least 1")
+    length: Optional[float] = Field(None, ge=0.1, description="Length must be at least 0.1")
 
 # A discriminated union to validate incoming track segments
 TrackSegment = Union[ClimbSegment, DropSegment, TurnSegment, LoopSegment, BarrelRollSegment]

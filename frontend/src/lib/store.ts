@@ -12,6 +12,8 @@ interface AppState {
     statusMessage: string;
     audioFile: File | null;
     trackData: TrackData | null;
+    /** URL of the generated skybox image (if available) */
+    skyboxUrl: string | null;
     // User-selected generation options used to influence AI generation
     generationOptions?: import('shared/types').GenerationOptions | null;
     workflowProgress: number;
@@ -22,6 +24,7 @@ interface AppState {
         setError: (error: ErrorState | null) => void;
         setAudioFile: (file: File) => void;
         setWorkflowProgress: (progress: number) => void;
+    setSkyboxUrl: (url: string | null) => void;
         resetApp: () => void;
         startRide: () => void;
         handleRideFinish: () => void;
@@ -36,6 +39,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     audioFile: null,
     trackData: null,
     workflowProgress: 0,
+    skyboxUrl: null,
     generationOptions: null,
     actions: {
     setGenerationOptions: (opts: import('shared/types').GenerationOptions | null) => set({ generationOptions: opts }),
@@ -43,9 +47,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         setTrackData: (data: TrackData | null) => set({ trackData: data }),
         setError: (error: ErrorState | null) => set({ error, status: error ? AppStatus.Error : get().status }),
         setAudioFile: (file: File) => {
-            set({ audioFile: file, status: AppStatus.Idle, error: null, workflowProgress: 0 });
+            // Clear any previously-generated skybox when starting a new audio file
+            set({ audioFile: file, status: AppStatus.Idle, error: null, workflowProgress: 0, skyboxUrl: null });
         },
-        setWorkflowProgress: (progress: number) => set({ workflowProgress: progress }),
+    setWorkflowProgress: (progress: number) => set({ workflowProgress: progress }),
+    setSkyboxUrl: (url: string | null) => set({ skyboxUrl: url }),
         startRide: () => {
             const currentState = get();
             console.log('[Store] startRide called', { 
@@ -68,6 +74,7 @@ export const useAppStore = create<AppState>((set, get) => ({
                 audioFile: null,
                 trackData: null,
                 workflowProgress: 0,
+                skyboxUrl: null,
             });
         },
         handleRideFinish: () => {

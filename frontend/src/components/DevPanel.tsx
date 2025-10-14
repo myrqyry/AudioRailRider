@@ -44,6 +44,30 @@ const DevPanel: React.FC = () => {
     try { return useToast(); } catch (e) { return { addToast: (m: string) => { /* noop when provider absent */ } }; }
   })();
   const PRESET_KEY = 'audiorailrider:dev:presets';
+  const TRACK_SETTINGS_KEY = 'audiorailrider:dev:trackSettings';
+  const TRACK_DEFAULTS = {
+    placeUnderCamera: true,
+    verticalOffset: 0.55,
+    defaultOpacity: 0.92,
+    insideOpacity: 0.28,
+    opacityLerpSpeed: 6.0,
+    trackRadius: 0.35,
+  };
+  const loadTrackSettings = () => {
+    try {
+      const raw = localStorage.getItem(TRACK_SETTINGS_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch (e) {}
+    return TRACK_DEFAULTS;
+  };
+  const savedTrackSettings = loadTrackSettings();
+  const [placeUnderCamera, setPlaceUnderCamera] = useState<boolean>(savedTrackSettings.placeUnderCamera ?? TRACK_DEFAULTS.placeUnderCamera);
+  const [verticalOffset, setVerticalOffset] = useState<number>(savedTrackSettings.verticalOffset ?? TRACK_DEFAULTS.verticalOffset);
+  const [trackDefaultOpacity, setTrackDefaultOpacity] = useState<number>(savedTrackSettings.defaultOpacity ?? TRACK_DEFAULTS.defaultOpacity);
+  const [trackInsideOpacity, setTrackInsideOpacity] = useState<number>(savedTrackSettings.insideOpacity ?? TRACK_DEFAULTS.insideOpacity);
+  const [trackOpacityLerpSpeed, setTrackOpacityLerpSpeed] = useState<number>(savedTrackSettings.opacityLerpSpeed ?? TRACK_DEFAULTS.opacityLerpSpeed);
+  const [trackRadius, setTrackRadius] = useState<number>(savedTrackSettings.trackRadius ?? TRACK_DEFAULTS.trackRadius);
+  const [forceInside, setForceInside] = useState<boolean>(false);
   const [presets, setPresets] = useState<Record<string, any>[]>(() => {
     try { return JSON.parse(localStorage.getItem(PRESET_KEY) || '[]'); } catch (e) { return []; }
   });
@@ -69,6 +93,17 @@ const DevPanel: React.FC = () => {
 
     return () => window.removeEventListener('keydown', onKey);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Dispatch track settings whenever they change
+  useEffect(() => {
+    const detail = { placeUnderCamera, verticalOffset, defaultOpacity: trackDefaultOpacity, insideOpacity: trackInsideOpacity, opacityLerpSpeed: trackOpacityLerpSpeed, trackRadius };
+    try { localStorage.setItem(TRACK_SETTINGS_KEY, JSON.stringify(detail)); } catch (e) {}
+    window.dispatchEvent(new CustomEvent('audiorailrider:dev:setTrackSettings', { detail }));
+  }, [placeUnderCamera, verticalOffset, trackDefaultOpacity, trackInsideOpacity, trackOpacityLerpSpeed, trackRadius]);
+
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('audiorailrider:dev:forceTrackInside', { detail: { force: forceInside } }));
+  }, [forceInside]);
 
   useEffect(() => {
     const detail = { curlStrength, noiseScale, noiseSpeed };
@@ -231,6 +266,13 @@ const DevPanel: React.FC = () => {
     data.curlStrength = curlStrength;
     data.noiseScale = noiseScale;
     data.noiseSpeed = noiseSpeed;
+    // include track settings
+    data.placeUnderCamera = placeUnderCamera;
+    data.verticalOffset = verticalOffset;
+    data.trackDefaultOpacity = trackDefaultOpacity;
+    data.trackInsideOpacity = trackInsideOpacity;
+    data.trackOpacityLerpSpeed = trackOpacityLerpSpeed;
+    data.trackRadius = trackRadius;
     const newPresets = [...presets, { name, data }];
     setPresets(newPresets);
     try { localStorage.setItem(PRESET_KEY, JSON.stringify(newPresets)); } catch (e) {}
@@ -297,6 +339,12 @@ const DevPanel: React.FC = () => {
       if (k === 'curlStrength' && typeof v === 'number') setCurlStrength(v);
       if (k === 'noiseScale' && typeof v === 'number') setNoiseScale(v);
       if (k === 'noiseSpeed' && typeof v === 'number') setNoiseSpeed(v);
+      if (k === 'placeUnderCamera' && typeof v === 'boolean') setPlaceUnderCamera(v);
+      if (k === 'verticalOffset' && typeof v === 'number') setVerticalOffset(v);
+      if (k === 'trackDefaultOpacity' && typeof v === 'number') setTrackDefaultOpacity(v);
+      if (k === 'trackInsideOpacity' && typeof v === 'number') setTrackInsideOpacity(v);
+      if (k === 'trackOpacityLerpSpeed' && typeof v === 'number') setTrackOpacityLerpSpeed(v);
+      if (k === 'trackRadius' && typeof v === 'number') setTrackRadius(v);
       setUniformValues(prev => ({ ...prev, [k]: v }));
       // dispatch apply for each uniform so visuals update
       window.dispatchEvent(new CustomEvent('audiorailrider:dev:applyUniform', { detail: { name: k, value: v } }));
@@ -327,6 +375,39 @@ const DevPanel: React.FC = () => {
       <div className="mt-3 flex gap-2">
         <button onClick={loadUniforms} className="flex-1 px-3 py-1 bg-gray-800 border border-gray-600 rounded">Load Uniforms</button>
         <button onClick={applyCurlDefaults} className="px-3 py-1 bg-emerald-600 rounded">Apply Curl Defaults</button>
+      </div>
+      <div className="mt-4">
+        <h4 className="font-medium text-gray-100 mb-1">Track Settings</h4>
+        <div className="mb-2 text-xs text-gray-300">
+          <label className="inline-flex items-center gap-2">
+            <input type="checkbox" checked={placeUnderCamera} onChange={(e) => setPlaceUnderCamera(e.target.checked)} />
+            Place track under camera
+          </label>
+        </div>
+        <div className="mb-2">
+          <label className="block text-xs text-gray-300">Vertical Offset: {verticalOffset.toFixed(2)}</label>
+          <input type="range" min="0" max="3" step="0.01" value={verticalOffset} onChange={(e) => setVerticalOffset(Number(e.target.value))} className="w-full" />
+        </div>
+        <div className="mb-2">
+          <label className="block text-xs text-gray-300">Track Radius: {trackRadius.toFixed(2)}</label>
+          <input type="range" min="0.05" max="2" step="0.01" value={trackRadius} onChange={(e) => setTrackRadius(Number(e.target.value))} className="w-full" />
+        </div>
+        <div className="mb-2">
+          <label className="block text-xs text-gray-300">Default Opacity: {trackDefaultOpacity.toFixed(2)}</label>
+          <input type="range" min="0" max="1" step="0.01" value={trackDefaultOpacity} onChange={(e) => setTrackDefaultOpacity(Number(e.target.value))} className="w-full" />
+        </div>
+        <div className="mb-2">
+          <label className="block text-xs text-gray-300">Inside Opacity: {trackInsideOpacity.toFixed(2)}</label>
+          <input type="range" min="0" max="1" step="0.01" value={trackInsideOpacity} onChange={(e) => setTrackInsideOpacity(Number(e.target.value))} className="w-full" />
+        </div>
+        <div className="mb-3">
+          <label className="block text-xs text-gray-300">Opacity Lerp Speed: {trackOpacityLerpSpeed.toFixed(2)}</label>
+          <input type="range" min="0.1" max="12" step="0.1" value={trackOpacityLerpSpeed} onChange={(e) => setTrackOpacityLerpSpeed(Number(e.target.value))} className="w-full" />
+        </div>
+        <div className="flex gap-2 mb-3">
+          <button onClick={() => setForceInside((s) => !s)} className="px-3 py-1 bg-orange-600 rounded">{forceInside ? 'Release Inside' : 'Force Inside'}</button>
+          <button onClick={() => window.dispatchEvent(new CustomEvent('audiorailrider:dev:rebuildTrack'))} className="px-3 py-1 bg-blue-600 rounded">Rebuild Track</button>
+        </div>
       </div>
       {uniformsManifest ? (
         <div className="mt-3">
