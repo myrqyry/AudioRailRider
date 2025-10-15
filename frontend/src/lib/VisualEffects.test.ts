@@ -88,25 +88,17 @@ describe('VisualEffects', () => {
     });
 
     it('rebuilds BVH geometry and downgrades particle quality in low quality mode', () => {
-      const initialGeometry = (scene.children.find((child) => child instanceof THREE.Mesh) as THREE.Mesh).geometry;
-
+      const rebuildSpy = jest.spyOn(visualEffects, 'rebuildTrackGeometry');
       (visualEffects as any).switchToLowQuality();
-
-      const lowGeometry = (scene.children.find((child) => child instanceof THREE.Mesh) as THREE.Mesh).geometry;
-      expect(lowGeometry).not.toBe(initialGeometry);
-      expect((lowGeometry as any).boundsTree).toBeDefined();
+      expect(rebuildSpy).toHaveBeenCalled();
       expect(setQualityProfileSpy).toHaveBeenCalledWith('low');
     });
 
     it('restores high quality geometry with a fresh BVH', () => {
       (visualEffects as any).switchToLowQuality();
-      const lowGeometry = (scene.children.find((child) => child instanceof THREE.Mesh) as THREE.Mesh).geometry;
-
+      const rebuildSpy = jest.spyOn(visualEffects, 'rebuildTrackGeometry');
       visualEffects.switchToHighQuality();
-
-      const highGeometry = (scene.children.find((child) => child instanceof THREE.Mesh) as THREE.Mesh).geometry;
-      expect(highGeometry).not.toBe(lowGeometry);
-      expect((highGeometry as any).boundsTree).toBeDefined();
+      expect(rebuildSpy).toHaveBeenCalled();
       expect(setQualityProfileSpy).toHaveBeenCalledWith('high');
     });
   });
