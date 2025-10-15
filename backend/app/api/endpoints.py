@@ -6,7 +6,7 @@ from ..limiter import limiter
 router = APIRouter()
 
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB
-ALLOWED_MIME_TYPES = ["audio/mpeg", "audio/wav", "audio/ogg", "audio/flac", "audio/mp3"]
+ALLOWED_MIME_TYPES = ["audio/mpeg", "audio/wav", "audio/ogg", "audio/flac"]
 
 @router.get("/")
 async def root():
@@ -20,8 +20,8 @@ async def generate_blueprint(
     options: str | None = Form(None),
     service: GeminiService = Depends(lambda: gemini_service)
 ):
-    if audio_file.content_type not in ALLOWED_MIME_TYPES:
-        raise HTTPException(status_code=400, detail="Invalid file type.")
+    if not audio_file.content_type or audio_file.content_type.lower() not in ALLOWED_MIME_TYPES:
+        raise HTTPException(status_code=400, detail=f"Invalid file type: {audio_file.content_type}. Must be one of {ALLOWED_MIME_TYPES}")
 
     audio_bytes = await audio_file.read()
     if len(audio_bytes) > MAX_FILE_SIZE:

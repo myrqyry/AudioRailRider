@@ -154,11 +154,11 @@ describe('VisualEffects', () => {
       visualEffects.spawnParticles(0, new THREE.Vector3(0, 0, 0));
 
       expect(attributes.position.updateRange.offset).toBe(0);
-      expect(attributes.position.updateRange.count).toBe(-1);
+      expect(attributes.position.updateRange.count).toBe(330);
       expect(attributes.velocity.updateRange.offset).toBe(0);
       expect(attributes.velocity.updateRange.count).toBe(-1);
       expect(attributes.startTime.updateRange.offset).toBe(0);
-      expect(attributes.startTime.updateRange.count).toBe(-1);
+      expect(attributes.startTime.updateRange.count).toBe(330);
     });
   });
 });

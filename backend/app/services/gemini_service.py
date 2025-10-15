@@ -425,48 +425,30 @@ Always output strictly valid JSON. Push creativity to the MAXIMUM while respecti
             'track': track,
         }
 
-    async def generate_skybox(self, prompt: str, blueprint_data: dict | None = None, options: dict | None = None):
-        """
-        Generate a skybox image using Gemini 2.5 Flash Image Preview model.
-        This model excels at creative image generation with rich context understanding.
+    def generate_skybox_prompt(self, prompt: str, blueprint_data: dict | None = None, options: dict | None = None) -> str:
+        # Build a rich, contextual prompt using blueprint data if available
+        if blueprint_data:
+            ride_name = blueprint_data.get('rideName', 'Unknown Ride')
+            mood = blueprint_data.get('moodDescription', prompt)
+            palette = blueprint_data.get('palette', [])
 
-        Args:
-            prompt: The mood/theme description from the blueprint
-            blueprint_data: Optional full blueprint for additional context
-            options: Optional hints that further constrain the skybox aesthetics
-        """
-        # Check if Gemini client is available
-        if not self.client:
-            raise HTTPException(
-                status_code=503,
-                detail="Gemini client not available. Please check GEMINI_API_KEY configuration."
-            )
-        
-        try:
-            # Build a rich, contextual prompt using blueprint data if available
-            if blueprint_data:
-                ride_name = blueprint_data.get('rideName', 'Unknown Ride')
-                mood = blueprint_data.get('moodDescription', prompt)
-                palette = blueprint_data.get('palette', [])
-                
-                # Extract palette description
-                palette_desc = ""
-                if palette and len(palette) >= 3:
-                    palette_desc = f" with colors {palette[0]} (rail), {palette[1]} (glow), and {palette[2]} (sky)"
-                
-                # Integrate generation options if provided
-                opt_lines = []
-                if options:
-                    if options.get('worldTheme'):
-                        opt_lines.append(f"Theme: {options.get('worldTheme')}")
-                    if options.get('visualStyle'):
-                        opt_lines.append(f"Visual style: {options.get('visualStyle')}")
-                    if options.get('paletteHint') and isinstance(options.get('paletteHint'), list):
-                        opt_lines.append(f"Palette hint: {', '.join(options.get('paletteHint')[:3])}")
+            palette_desc = ""
+            if palette and len(palette) >= 3:
+                palette_desc = f"\n• Color Palette: A harmonious blend of {palette[0]} (dominant), {palette[1]} (accent), and {palette[2]} (ambient)."
 
-                options_block = ('\n'.join(opt_lines) + '\n') if opt_lines else ''
+            # Integrate generation options if provided
+            opt_lines = []
+            if options:
+                if options.get('worldTheme'):
+                    opt_lines.append(f"Theme: {options.get('worldTheme')}")
+                if options.get('visualStyle'):
+                    opt_lines.append(f"Visual style: {options.get('visualStyle')}")
+                if options.get('paletteHint') and isinstance(options.get('paletteHint'), list):
+                    opt_lines.append(f"Palette hint: {', '.join(options.get('paletteHint')[:3])}")
 
-                full_prompt = f"""🌌 SKYBOX VISION FOR "{ride_name}" 🌌
+            options_block = ('\n'.join(opt_lines) + '\n') if opt_lines else ''
+
+            return f"""🌌 SKYBOX VISION FOR "{ride_name}" 🌌
 
 EMOTIONAL NARRATIVE:
 {mood}
@@ -476,7 +458,7 @@ You are creating the celestial stage for an impossible journey - a sky that tran
 This is not merely a backdrop, but an active participant in the ride's emotional arc.
 
 CORE AESTHETICS:
-• Style: Surreal photorealism blending dreamlike wonder with cinematic grandeur
+• Style: Surreal photorealism blending dreamlike wonder with cinematic grandeur{palette_desc}
 • Atmosphere: {', '.join([c for c in palette[:3]]) if palette else 'Emotionally resonant colors'} dominating the color palette
 • Mood Keywords: Transcendent, breathtaking, otherworldly, immersive, infinite
 {options_block}
@@ -497,8 +479,8 @@ ARTISTIC INFLUENCES:
 Think: Terrence Malick cinematography meets Alex Grey cosmic visions meets Roger Deakins lighting mastery meets Studio Ghibli dreamscapes.
 
 OUTPUT: A skybox that makes riders feel they're hurtling through a realm where physics and beauty merge into pure emotional experience."""
-            else:
-                full_prompt = f"""🌌 CREATE AN IMPOSSIBLE SKY 🌌
+        else:
+            return f"""🌌 CREATE AN IMPOSSIBLE SKY 🌌
 
 MOOD ESSENCE: {prompt}
 
@@ -520,6 +502,26 @@ TECHNICAL REQUIREMENTS:
 - Pure atmospheric poetry: sky, clouds, light, space, celestial phenomena
 
 OUTPUT: A skybox that transforms a ride into a journey through living emotion made visible."""
+
+    async def generate_skybox(self, prompt: str, blueprint_data: dict | None = None, options: dict | None = None):
+        """
+        Generate a skybox image using Gemini 2.5 Flash Image Preview model.
+        This model excels at creative image generation with rich context understanding.
+
+        Args:
+            prompt: The mood/theme description from the blueprint
+            blueprint_data: Optional full blueprint for additional context
+            options: Optional hints that further constrain the skybox aesthetics
+        """
+        # Check if Gemini client is available
+        if not self.client:
+            raise HTTPException(
+                status_code=503,
+                detail="Gemini client not available. Please check GEMINI_API_KEY configuration."
+            )
+
+        try:
+            full_prompt = self.generate_skybox_prompt(prompt, blueprint_data, options)
 
             # Use Gemini 2.5 Flash Image for conversational image generation
             # This model excels at contextual, conversational image generation
