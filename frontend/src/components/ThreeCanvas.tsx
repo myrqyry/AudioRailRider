@@ -262,14 +262,14 @@ const ThreeCanvas: React.FC = () => {
         return;
       }
 
-      if (status === AppStatus.Riding && audioRef.current?.ended) {
-        onRideFinish();
-        return;
-      }
-
       const progress = status === AppStatus.Riding
           ? audioTime / duration
           : (elapsedTime * 0.05) % 1;
+
+      if (status === AppStatus.Riding && progress >= 1) {
+        onRideFinish();
+        return;
+      }
 
       if (status === AppStatus.Riding) {
         const rounded = Math.floor(progress * 20) / 20; // log at ~5% intervals
