@@ -2,12 +2,21 @@ import asyncio
 import librosa
 import numpy as np
 import io
+import os
 import structlog
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Any, List
 from fastapi import HTTPException
 
 # Configure logging
 logger = structlog.get_logger(__name__)
+
+# Create a bounded thread pool executor for CPU-bound audio analysis tasks.
+# Using os.cpu_count() is a good practice for CPU-bound tasks.
+# Default to 4 if cpu_count() is not available or to have a baseline.
+WORKERS = os.cpu_count() or 4
+audio_analysis_executor = ThreadPoolExecutor(max_workers=WORKERS)
+
 
 def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
     """
@@ -109,8 +118,8 @@ def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
 async def analyze_audio(audio_bytes: bytes) -> Dict[str, Any]:
     """
     Asynchronously analyze audio by running the synchronous, CPU-bound
-    `_analyze_audio_sync` function in a separate thread.
+    `_analyze_audio_sync` function in a separate thread from a bounded executor.
     """
     loop = asyncio.get_event_loop()
-    # Use run_in_executor to avoid blocking the event loop with CPU-intensive work
-    return await loop.run_in_executor(None, _analyze_audio_sync, audio_bytes)
+    # Use a specific, bounded executor to prevent resource exhaustion
+    return await loop.run_in_executor(audio_analysis_executor, _analyze_audio_sync, audio_bytes)

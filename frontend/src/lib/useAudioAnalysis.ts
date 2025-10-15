@@ -1,6 +1,8 @@
 import { useRef, useEffect } from 'react';
 import { AppStatus, FrameAnalysis, secondsToNumber } from 'shared/types';
 import { createWorkletAnalyzerForContext } from './audioProcessor';
+import { getLatestFrame } from './audioWorkletState';
+import { createFrameForDispatch } from './audioFeatureUtils';
 
 interface UseAudioAnalysisProps {
   audioFile: File | null;
@@ -9,16 +11,21 @@ interface UseAudioAnalysisProps {
 
 export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const animationFrameId = useRef<number | null>(null);
 
   useEffect(() => {
     console.log('[useAudioAnalysis] Effect triggered', { status, hasAudioFile: !!audioFile });
-    
+
     if (status !== AppStatus.Riding || !audioFile) {
+      if (animationFrameId.current) {
+        cancelAnimationFrame(animationFrameId.current);
+        animationFrameId.current = null;
+      }
       if (audioRef.current) {
         console.log('[useAudioAnalysis] Cleaning up audio');
         audioRef.current.pause();
         if (audioRef.current.src.startsWith('blob:')) {
-            URL.revokeObjectURL(audioRef.current.src);
+          URL.revokeObjectURL(audioRef.current.src);
         }
         audioRef.current = null;
       }
@@ -29,34 +36,24 @@ export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) =
     const audio = new Audio(URL.createObjectURL(audioFile));
     audio.loop = false;
     audio.preload = 'auto';
-    
-    // Add event listeners for debugging
-    audio.addEventListener('loadeddata', () => {
-      console.log('[useAudioAnalysis] Audio loaded', { duration: audio.duration });
-    });
-    audio.addEventListener('playing', () => {
-      console.log('[useAudioAnalysis] Audio is playing');
-    });
-    audio.addEventListener('pause', () => {
-      console.log('[useAudioAnalysis] Audio paused');
-    });
-    audio.addEventListener('error', (e) => {
-      console.error('[useAudioAnalysis] Audio error', e);
-    });
-    
+
+    audio.addEventListener('loadeddata', () => console.log('[useAudioAnalysis] Audio loaded', { duration: audio.duration }));
+    audio.addEventListener('playing', () => console.log('[useAudioAnalysis] Audio is playing'));
+    audio.addEventListener('pause', () => console.log('[useAudioAnalysis] Audio paused'));
+    audio.addEventListener('error', (e) => console.error('[useAudioAnalysis] Audio error', e));
+
     audioRef.current = audio;
 
-    // Setup AudioContext and worklet analyzer for low-latency frames
     let audioCtx: AudioContext | null = null;
     let workletNode: AudioWorkletNode | null = null;
     const energyHistory: number[] = [];
     const centroidHistory: number[] = [];
     const fluxHistory: number[] = [];
-  const beatIntervals: number[] = [];
-  const HISTORY_SIZE = 64;
-  const MIN_BEAT_SPACING = 0.2;
-  const STRUCTURE_SCORE_THRESHOLD = 2.5;
-  const STRUCTURE_MIN_SPACING = 3;
+    const beatIntervals: number[] = [];
+    const HISTORY_SIZE = 64;
+    const MIN_BEAT_SPACING = 0.2;
+    const STRUCTURE_SCORE_THRESHOLD = 2.5;
+    const STRUCTURE_MIN_SPACING = 3;
     let lastBeatTimestamp = -Infinity;
     let lastStructureTimestamp = -Infinity;
     let smoothedTempo = 0;
@@ -147,18 +144,26 @@ export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) =
           console.warn('[useAudioAnalysis] AudioContext.resume failed', resumeError);
         }
         const src = audioCtx.createMediaElementSource(audio);
-        workletNode = await createWorkletAnalyzerForContext(audioCtx, (frame: FrameAnalysis) => {
-          handleFrame(frame);
-          try {
-            const ev = new CustomEvent('audiorailrider:frame', { detail: frame });
-            window.dispatchEvent(ev);
-          } catch {}
-        });
+        workletNode = await createWorkletAnalyzerForContext(audioCtx);
         if (workletNode) {
           src.connect(workletNode);
           workletNode.connect(audioCtx.destination);
+
+          const processFrames = () => {
+            const latestFrameData = getLatestFrame();
+            if (latestFrameData) {
+              const frame = createFrameForDispatch(latestFrameData.timestamp, latestFrameData);
+              handleFrame(frame);
+              try {
+                const ev = new CustomEvent('audiorailrider:frame', { detail: frame });
+                window.dispatchEvent(ev);
+              } catch {}
+            }
+            animationFrameId.current = requestAnimationFrame(processFrames);
+          };
+          processFrames();
+
         } else {
-          // Fallback: connect source to destination
           src.connect(audioCtx.destination);
         }
       } catch (e) {
@@ -173,6 +178,9 @@ export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) =
       .catch(e => console.error("[useAudioAnalysis] Audio playback failed:", e));
 
     return () => {
+      if (animationFrameId.current) {
+        cancelAnimationFrame(animationFrameId.current);
+      }
       if (audioRef.current) {
         audioRef.current.pause();
         if (audioRef.current.src.startsWith('blob:')) {

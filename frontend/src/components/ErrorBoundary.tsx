@@ -1,5 +1,7 @@
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 
+import { useAppStore } from '../lib/store';
+
 interface Props {
   children: ReactNode;
   fallback?: ReactNode;
@@ -7,53 +9,32 @@ interface Props {
 
 interface State {
   hasError: boolean;
-  error: Error | null;
 }
 
 export class ErrorBoundary extends Component<Props, State> {
   public state: State = {
     hasError: false,
-    error: null,
   };
 
-  public static getDerivedStateFromError(error: Error): State {
-    return { hasError: true, error };
+  public static getDerivedStateFromError(_: Error): State {
+    return { hasError: true };
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('ErrorBoundary caught an error:', error, errorInfo);
+    const { setError } = useAppStore.getState().actions;
+    setError({
+      title: 'Rendering Error',
+      message: error.message || 'A critical error occurred in the 3D visualization.',
+    });
   }
 
   public render() {
     if (this.state.hasError) {
-      if (this.props.fallback) {
-        return this.props.fallback;
-      }
-
-      return (
-        <div className="fixed inset-0 flex items-center justify-center bg-black text-white p-8">
-          <div className="max-w-lg text-center">
-            <h1 className="text-4xl font-bold mb-4">Something went wrong</h1>
-            <p className="text-gray-400 mb-6">
-              The visualization encountered an error. This might be due to browser compatibility or resource limitations.
-            </p>
-            <button
-              onClick={() => window.location.reload()}
-              className="px-6 py-3 bg-purple-600 hover:bg-purple-700 rounded-lg transition-colors"
-            >
-              Reload Page
-            </button>
-            {this.state.error && (
-              <details className="mt-6 text-left text-sm text-gray-500">
-                <summary className="cursor-pointer hover:text-gray-300">Technical Details</summary>
-                <pre className="mt-2 p-4 bg-gray-900 rounded overflow-auto">
-                  {this.state.error.message}
-                </pre>
-              </details>
-            )}
-          </div>
-        </div>
-      );
+      // When an error is caught, we now rely on the global state to render the ErrorUI.
+      // This component will render nothing, preventing a broken UI from showing.
+      // The parent component (App.tsx) will render the correct ErrorUI based on the AppStatus.Error state.
+      return this.props.fallback ?? null;
     }
 
     return this.props.children;

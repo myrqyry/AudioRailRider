@@ -69,6 +69,8 @@ export class SceneManager {
 
         if (typeof window !== 'undefined') {
             window.addEventListener('resize', this.handleResize);
+            this.renderer.domElement.addEventListener('webglcontextlost', this.handleContextLost, false);
+            this.renderer.domElement.addEventListener('webglcontextrestored', this.handleContextRestored, false);
         }
     }
 
@@ -105,6 +107,19 @@ export class SceneManager {
         this.renderer.setSize(containerWidth, containerHeight);
     };
 
+    private handleContextLost = (event: Event): void => {
+        event.preventDefault();
+        console.warn('[SceneManager] WebGL context lost. Notifying application.');
+        window.dispatchEvent(new CustomEvent('audiorailrider:webglcontextlost'));
+    }
+
+    private handleContextRestored = (): void => {
+        console.log('[SceneManager] WebGL context restored. Notifying application to rebuild.');
+        // We don't need to do much here because the application will be notified
+        // to rebuild the scene from scratch, which is safer.
+        window.dispatchEvent(new CustomEvent('audiorailrider:webglcontextrestored'));
+    }
+
     render(): void {
         // Update adaptive hints before rendering
         try {
@@ -128,6 +143,8 @@ export class SceneManager {
     dispose(): void {
         if (typeof window !== 'undefined') {
             window.removeEventListener('resize', this.handleResize);
+            this.renderer.domElement.removeEventListener('webglcontextlost', this.handleContextLost, false);
+            this.renderer.domElement.removeEventListener('webglcontextrestored', this.handleContextRestored, false);
         }
         if (this.skyboxTexture) {
             this.skyboxTexture.dispose();

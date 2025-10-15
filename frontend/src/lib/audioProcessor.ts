@@ -333,26 +333,12 @@ export const analyzeAudio = async (audioFile: File): Promise<AudioFeatures> => {
 // Create a live worklet-based analyzer attached to the provided AudioContext.
 // The onFrame callback receives FrameAnalysis objects created from worklet messages.
 export const createWorkletAnalyzerForContext = async (
-  audioContext: AudioContext,
-  onFrame: (frame: FrameAnalysis) => void
+  audioContext: AudioContext
 ): Promise<AudioWorkletNode | null> => {
   if (!audioWorklet.isWorkletSupported()) return null;
   try {
     await audioWorklet.registerWorklet(audioContext);
-    const node = audioWorklet.createAnalyzerNode(audioContext, (a) => {
-      const frame = createFrameForDispatch(a.timestamp, {
-        energy: a.energy,
-        spectralCentroid: a.spectralCentroid,
-        spectralFlux: a.spectralFlux,
-        bass: a.bass,
-        mid: a.mid,
-        high: a.high,
-        sampleRate: a.sampleRate,
-        channelCount: a.channelCount,
-        frame: a.frame,
-      });
-      onFrame(frame);
-    });
+    const node = audioWorklet.createAnalyzerNode(audioContext);
     return node;
   } catch (e) {
     console.warn('[audioProcessor] createWorkletAnalyzerForContext failed', e);

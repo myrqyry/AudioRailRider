@@ -132,6 +132,12 @@ export class ParticleSystem {
   private gpuUpdateInterval: number = QUALITY_PROFILES.high.gpuUpdateInterval;
   private gpuUpdateAccumulator = 0;
   private readonly pendingUniforms = new Map<string, unknown>();
+  private _frameSpawnCount = 0;
+  private _maxFrameSpawns = 200;
+
+  public beginFrame(): void {
+    this._frameSpawnCount = 0;
+  }
 
   constructor(private readonly scene: THREE.Scene) {
     this.texSize = Math.ceil(Math.sqrt(RIDE_CONFIG.PARTICLE_COUNT));
@@ -228,7 +234,7 @@ export class ParticleSystem {
     this.particleBudget = nextBudget;
     this.spawnBatchSize = nextSpawnBatch;
     this.gpuUpdateInterval = nextUpdateInterval;
-    this.gpuUpdateAccumulator = 0;
+    this._maxFrameSpawns = Math.max(100, Math.floor(this.particleBudget * 0.1));
 
     if (this.particleCursor >= this.particleBudget) {
       this.particleCursor = this.particleBudget > 0 ? this.particleCursor % this.particleBudget : 0;
@@ -1461,22 +1467,19 @@ export class ParticleSystem {
     if (!this.particleInstancedMesh) return;
     const particleCount = this.particleBudget;
     if (particleCount <= 0) return;
+
+    // Enforce a per-frame spawn limit to prevent overwhelming the GPU in a single frame.
+    const canSpawn = this._maxFrameSpawns - this._frameSpawnCount;
+    const numToSpawn = Math.min(spawnCount, canSpawn);
+    if (numToSpawn <= 0) return;
+
     const positionsAttr = (this.particleSystem!.geometry as THREE.BufferGeometry).attributes.position as any;
     const velocitiesAttr = (this.particleSystem!.geometry as THREE.BufferGeometry).attributes.velocity as any;
     const startTimesAttr = (this.particleSystem!.geometry as THREE.BufferGeometry).attributes.startTime as any;
     const dummy = this._dummy;
 
-    if (this.particleCursor + spawnCount > particleCount) {
-      positionsAttr.updateRange = { offset: 0, count: -1 };
-      velocitiesAttr.updateRange = { offset: 0, count: -1 };
-      startTimesAttr.updateRange = { offset: 0, count: -1 };
-      this.particleCursor = (this.particleCursor + spawnCount) % particleCount;
-      this.particleInstancedMesh.instanceMatrix.needsUpdate = true;
-      return;
-    }
-
     const allocated: number[] = [];
-    for (let i = 0; i < spawnCount; i++) {
+    for (let i = 0; i < numToSpawn; i++) {
       const idx = this.allocateInstance();
       if (idx === -1) break;
       allocated.push(idx);
@@ -1521,10 +1524,9 @@ export class ParticleSystem {
           const ci = idx * 3;
           let col: [number, number, number] = [0.7, 0.7, 0.7];
           if (visualConfig) {
-            col = visualConfig.color;
             const inten = Math.min(1, (context.feature ? context.audioFeatures[context.feature] || 0 : 0) * context.segmentIntensityBoost);
             const brightness = 0.6 + 0.4 * inten;
-            col = [col[0] * brightness, col[1] * brightness, col[2] * brightness];
+            col = [visualConfig.color[0] * brightness, visualConfig.color[1] * brightness, visualConfig.color[2] * brightness];
           } else {
             col = [0.6 + Math.random() * 0.4, 0.6 + Math.random() * 0.4, 0.6 + Math.random() * 0.4];
           }
@@ -1562,6 +1564,10 @@ export class ParticleSystem {
       } catch (e) {}
     }
 
+    if (allocated.length === 0) return;
+
+    this._frameSpawnCount += allocated.length;
+
     positionsAttr.needsUpdate = true;
     velocitiesAttr.needsUpdate = true;
     startTimesAttr.needsUpdate = true;
@@ -1574,29 +1580,33 @@ export class ParticleSystem {
       velocitiesAttr.updateRange = { offset: posOffset, count: allocated.length * 3 };
       startTimesAttr.updateRange = { offset: minIdx, count: allocated.length };
     }
-
-    this.particleCursor = (this.particleCursor + allocated.length) % particleCount;
   }
 
   private spawnPointsBatch(spawnCount: number, origin: THREE.Vector3, feature: string | undefined, audioFeatures: Record<string, number>, segmentIntensityBoost: number, nowSeconds: number) {
     if (!this.particleSystem) return;
+
+    // Enforce a per-frame spawn limit
+    const canSpawn = this._maxFrameSpawns - this._frameSpawnCount;
+    const numToSpawn = Math.min(spawnCount, canSpawn);
+    if (numToSpawn <= 0) return;
+
     const geom = this.particleSystem.geometry as THREE.BufferGeometry;
     const positions = geom.attributes.position as THREE.BufferAttribute;
     const velocities = geom.attributes.velocity as THREE.BufferAttribute;
     const startTimes = geom.attributes.startTime as THREE.BufferAttribute;
-  const particleCount = this.particleBudget;
-  if (particleCount <= 0) return;
+    const particleCount = this.particleBudget;
+    if (particleCount <= 0) return;
 
-    if (this.particleCursor + spawnCount > particleCount) {
-      (positions as any).updateRange = { offset: 0, count: -1 };
-      (velocities as any).updateRange = { offset: 0, count: -1 };
-      (startTimes as any).updateRange = { offset: 0, count: -1 };
-      this.particleCursor = (this.particleCursor + spawnCount) % particleCount;
-      return;
+    if (this.particleCursor + numToSpawn > particleCount) {
+      this.particleCursor = 0;
+      // If we wrap around, we might still have budget to spawn, but if not, exit.
+      if (this.particleCursor + numToSpawn > particleCount) {
+        return;
+      }
     }
 
     const posOffset = this.particleCursor * 3;
-    for (let i = 0; i < spawnCount; i++) {
+    for (let i = 0; i < numToSpawn; i++) {
       const idx = this.particleCursor + i;
       const offset = idx * 3;
       const featureIntensity = Math.min(1, (feature ? (audioFeatures[feature] || 0) : 0) * segmentIntensityBoost);
@@ -1610,14 +1620,15 @@ export class ParticleSystem {
       startTimes.array[idx] = nowSeconds;
     }
 
-    (positions as any).updateRange = { offset: posOffset, count: spawnCount * 3 };
-    (velocities as any).updateRange = { offset: posOffset, count: spawnCount * 3 };
-    (startTimes as any).updateRange = { offset: this.particleCursor, count: spawnCount };
+    (positions as any).updateRange = { offset: posOffset, count: numToSpawn * 3 };
+    (velocities as any).updateRange = { offset: posOffset, count: numToSpawn * 3 };
+    (startTimes as any).updateRange = { offset: this.particleCursor, count: numToSpawn };
     (positions as any).needsUpdate = true;
     (velocities as any).needsUpdate = true;
     (startTimes as any).needsUpdate = true;
 
-    this.particleCursor += spawnCount;
+    this.particleCursor += numToSpawn;
+    this._frameSpawnCount += numToSpawn;
   }
 
   private allocateInstance(): number {

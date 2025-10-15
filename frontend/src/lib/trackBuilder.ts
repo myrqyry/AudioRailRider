@@ -519,8 +519,9 @@ const applyAudioWarp = (
         targetLat = THREE.MathUtils.clamp(targetLat, -MAX_AUDIO_LATERAL_SHIFT, MAX_AUDIO_LATERAL_SHIFT);
         targetVert = THREE.MathUtils.clamp(targetVert, -MAX_AUDIO_VERTICAL_SHIFT, MAX_AUDIO_VERTICAL_SHIFT);
 
-        smoothedLateral = THREE.MathUtils.lerp(smoothedLateral, targetLat, 0.08 + fluxNorm * 0.05);
-        smoothedVertical = THREE.MathUtils.lerp(smoothedVertical, targetVert, 0.09 + energyNorm * 0.05);
+        // Use fixed lerp factors to prevent numerical instability from rapidly changing audio features.
+        smoothedLateral = THREE.MathUtils.lerp(smoothedLateral, targetLat, 0.08);
+        smoothedVertical = THREE.MathUtils.lerp(smoothedVertical, targetVert, 0.09);
         smoothedRoll = THREE.MathUtils.lerp(smoothedRoll, targetRoll, 0.14);
 
         displaced.copy(baseCurrent)

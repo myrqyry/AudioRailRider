@@ -271,10 +271,18 @@ export class VisualEffects {
   }
 
   private releaseTempVectors(): void {
-    while (this._scopedVectors.length > 0) {
-      const vector = this._scopedVectors.pop()!;
-      this._vectorPool.release(vector);
+    // By iterating backwards, we can safely handle the array.
+    // A try/catch block ensures that if one release fails, we still attempt to release the others.
+    for (let i = this._scopedVectors.length - 1; i >= 0; i--) {
+      const vector = this._scopedVectors[i];
+      try {
+        this._vectorPool.release(vector);
+      } catch (e) {
+        console.error('[VisualEffects] Error releasing temp vector. A pool vector may be lost.', e);
+      }
     }
+    // Ensure the array is completely cleared for the next frame.
+    this._scopedVectors.length = 0;
   }
 
   private getTempColor(): THREE.Color {
@@ -420,66 +428,11 @@ export class VisualEffects {
       shader.fragmentShader = shader.fragmentShader
         .replace(
           '#include <common>',
-          `#include <common>
-varying vec2 vUv;
-varying vec3 vWorldPosition;
-varying vec3 vVelocity;
-uniform float trackTime;
-uniform float pulseIntensity;
-uniform float segmentBoost;
-uniform float audioFlow;
-uniform vec3 ghostTintA;
-uniform vec3 ghostTintB;
-uniform float rideSpeed;
-uniform float motionBlur;
-uniform vec3 cameraDirection;
-`
+          `#include <common>\nvarying vec2 vUv;\nvarying vec3 vWorldPosition;\nvarying vec3 vVelocity;\nvarying float vSpeedLines;\nuniform float trackTime;\nuniform float pulseIntensity;\nuniform float segmentBoost;\nuniform float audioFlow;\nuniform vec3 ghostTintA;\nuniform vec3 ghostTintB;\nuniform float rideSpeed;\nuniform float motionBlur;\nuniform vec3 cameraDirection;\n`
         )
         .replace(
           'vec3 totalEmissiveRadiance = emissive;',
-          `float pathV = clamp(vUv.y, 0.0, 1.0);
-float railCenterLine = abs(vUv.x - 0.5) * 2.0;
-float railShine = smoothstep(0.35, 0.85, 1.0 - railCenterLine);
-float loopWave = sin(pathV * 24.0 - trackTime * 5.5);
-float traveler = smoothstep(0.05, 0.95, fract(pathV - trackTime * 0.35));
-float spirit = pulseIntensity + audioFlow * 0.35 + segmentBoost * 0.2;
-float speedTrailBase = rideSpeed * smoothstep(0.1, 0.9, railShine);
-vec3 energyColorBase = mix(ghostTintA, ghostTintB, clamp(pathV + sin(trackTime * 3.0) * 0.08, 0.0, 1.0));
-
-float speedLines = 0.0;
-for (int i = 0; i < 5; i++) {
-  float lineOffset = float(i) * 0.2;
-  float speedLine = sin((pathV + lineOffset) * 50.0 - trackTime * rideSpeed * 2.0);
-  speedLines += smoothstep(0.8, 1.0, speedLine) * (1.0 - lineOffset);
-}
-speedLines *= rideSpeed * 0.3;
-
-float velocityMag = length(vVelocity);
-vec3 velocityDir = velocityMag > 1e-6 ? vVelocity / velocityMag : vec3(0.0);
-float camDirMag = length(cameraDirection);
-vec3 camDir = camDirMag > 1e-6 ? cameraDirection / camDirMag : vec3(0.0, 0.0, -1.0);
-float velocityDot = dot(velocityDir, camDir);
-vec3 dopplerShift = velocityDot > 0.0 ? vec3(0.0, 0.0, 0.3) * velocityDot : vec3(0.3, 0.0, 0.0) * abs(velocityDot);
-
-vec2 motionVector = vUv - vec2(0.5, pathV - trackTime * 0.1);
-float motionTrail = exp(-length(motionVector * 10.0)) * motionBlur;
-
-float energyFlow = sin(pathV * 20.0 - trackTime * 8.0) * 0.5 + 0.5;
-energyFlow = pow(energyFlow, 3.0);
-float flowIntensity = audioFlow + rideSpeed * 0.1;
-
-float perspectiveBlur = smoothstep(0.0, 1.0, abs(vUv.x - 0.5) * 2.0);
-perspectiveBlur *= rideSpeed * 0.2;
-
-vec3 motionColor = mix(ghostTintA, ghostTintB, clamp(pathV + sin(trackTime * 4.0) * 0.1, 0.0, 1.0));
-vec3 speedGlowDynamic = motionColor * (speedLines + energyFlow * flowIntensity);
-vec3 trailGlow = motionColor * motionTrail * 0.8;
-vec3 blurGlow = motionColor * perspectiveBlur;
-vec3 dreamTint = energyColorBase * (0.35 + 0.25 * traveler + 0.2 * max(loopWave, 0.0));
-vec3 speedGlowBase = energyColorBase * speedTrailBase * 0.5;
-
-vec3 totalEmissiveRadiance = emissive + dreamTint * spirit + speedGlowBase + speedGlowDynamic + trailGlow + blurGlow + dopplerShift;
-`
+          `float pathV = clamp(vUv.y, 0.0, 1.0);\nfloat railCenterLine = abs(vUv.x - 0.5) * 2.0;\nfloat railShine = smoothstep(0.35, 0.85, 1.0 - railCenterLine);\nfloat loopWave = sin(pathV * 24.0 - trackTime * 5.5);\nfloat traveler = smoothstep(0.05, 0.95, fract(pathV - trackTime * 0.35));\nfloat spirit = pulseIntensity + audioFlow * 0.35 + segmentBoost * 0.2;\nfloat speedTrailBase = rideSpeed * smoothstep(0.1, 0.9, railShine);\nvec3 energyColorBase = mix(ghostTintA, ghostTintB, clamp(pathV + sin(trackTime * 3.0) * 0.08, 0.0, 1.0));\n\n// This calculation is now performed per-vertex and interpolated.\nfloat speedLines = vSpeedLines;\n\nfloat velocityMag = length(vVelocity);\nvec3 velocityDir = velocityMag > 1e-6 ? vVelocity / velocityMag : vec3(0.0);\nfloat camDirMag = length(cameraDirection);\nvec3 camDir = camDirMag > 1e-6 ? cameraDirection / camDirMag : vec3(0.0, 0.0, -1.0);\nfloat velocityDot = dot(velocityDir, camDir);\nvec3 dopplerShift = velocityDot > 0.0 ? vec3(0.0, 0.0, 0.3) * velocityDot : vec3(0.3, 0.0, 0.0) * abs(velocityDot);\n\nvec2 motionVector = vUv - vec2(0.5, pathV - trackTime * 0.1);\nfloat motionTrail = exp(-length(motionVector * 10.0)) * motionBlur;\n\nfloat energyFlow = sin(pathV * 20.0 - trackTime * 8.0) * 0.5 + 0.5;\nenergyFlow = pow(energyFlow, 3.0);\nfloat flowIntensity = audioFlow + rideSpeed * 0.1;\n\nfloat perspectiveBlur = smoothstep(0.0, 1.0, abs(vUv.x - 0.5) * 2.0);\nperspectiveBlur *= rideSpeed * 0.2;\n\nvec3 motionColor = mix(ghostTintA, ghostTintB, clamp(pathV + sin(trackTime * 4.0) * 0.1, 0.0, 1.0));\nvec3 speedGlowDynamic = motionColor * (speedLines + energyFlow * flowIntensity);\nvec3 trailGlow = motionColor * motionTrail * 0.8;\nvec3 blurGlow = motionColor * perspectiveBlur;\nvec3 dreamTint = energyColorBase * (0.35 + 0.25 * traveler + 0.2 * max(loopWave, 0.0));\nvec3 speedGlowBase = energyColorBase * speedTrailBase * 0.5;\n\nvec3 totalEmissiveRadiance = emissive + dreamTint * spirit + speedGlowBase + speedGlowDynamic + trailGlow + blurGlow + dopplerShift;\n`
         );
 
       shader.vertexShader = shader.vertexShader
@@ -489,6 +442,7 @@ vec3 totalEmissiveRadiance = emissive + dreamTint * spirit + speedGlowBase + spe
 varying vec2 vUv;
 varying vec3 vWorldPosition;
 varying vec3 vVelocity;
+varying float vSpeedLines;
 uniform float trackTime;
 uniform float distortionStrength;
 uniform float bassIntensity;
@@ -516,6 +470,16 @@ transformed += normal * ribbonIntensity;
 float speedVibration = sin(vPath * 100.0 + trackTime * 20.0) * rideSpeed * 0.02;
 transformed += normal * speedVibration;
 vWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;
+
+// Move speed lines calculation from fragment to vertex shader
+float pathV_vs = clamp(uv.y, 0.0, 1.0);
+float speedLines_vs = 0.0;
+for (int i = 0; i < 5; i++) {
+  float lineOffset = float(i) * 0.2;
+  float speedLine = sin((pathV_vs + lineOffset) * 50.0 - trackTime * rideSpeed * 2.0);
+  speedLines_vs += smoothstep(0.8, 1.0, speedLine) * (1.0 - lineOffset);
+}
+vSpeedLines = speedLines_vs * rideSpeed * 0.3;
 `
         );
 
@@ -1214,6 +1178,7 @@ void main() {
 
   public update(elapsedTime: number, currentFrame: FrameAnalysis | null, cameraPosition: THREE.Vector3, lookAtPosition: THREE.Vector3, rideProgress: number) {
     try {
+      this.particles.beginFrame(); // Reset per-frame particle spawn counter
       const now = performance.now();
       const nowSeconds = now / 1000;
       const deltaSeconds = this.lastUpdateSeconds === 0 ? 1 / 60 : Math.min(0.25, Math.max(1 / 240, nowSeconds - this.lastUpdateSeconds));

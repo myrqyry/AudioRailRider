@@ -3,6 +3,7 @@
 // friendly interface to the main thread. It's intentionally minimal — the
 // main goal is to provide a stable migration surface and a graceful
 // fallback to the existing AudioContext + pipeline.
+import { setLatestFrame } from './audioWorkletState';
 
 export interface WorkletAnalysisResult {
   timestamp: number; // seconds
@@ -166,8 +167,8 @@ export const createWorkletNode = (audioContext: AudioContext): AudioWorkletNode 
   }
 };
 
-// Create an analyzer node and call `onAnalysis` for each posted analysis message.
-export const createAnalyzerNode = (audioContext: AudioContext, onAnalysis: (a: WorkletAnalysisResult) => void): AudioWorkletNode | null => {
+// Create an analyzer node that pushes analysis results into a shared state buffer.
+export const createAnalyzerNode = (audioContext: AudioContext): AudioWorkletNode | null => {
   if (!isWorkletSupported()) return null;
   try {
     const node = new AudioWorkletNode(audioContext, 'simple-analyzer-processor');
@@ -178,7 +179,10 @@ export const createAnalyzerNode = (audioContext: AudioContext, onAnalysis: (a: W
         const frame = data.frame instanceof Float32Array
           ? data.frame
           : (data.frame ? new Float32Array(data.frame) : undefined);
-        onAnalysis({
+
+        // Write the latest frame to the shared state.
+        // This decouples the worklet's output from the main thread's consumption.
+        setLatestFrame({
           timestamp: data.timestamp,
           energy: data.energy,
           spectralCentroid: data.spectralCentroid,
@@ -191,7 +195,7 @@ export const createAnalyzerNode = (audioContext: AudioContext, onAnalysis: (a: W
           channelCount: typeof data.channelCount === 'number' ? data.channelCount : 1,
         });
       } catch (e) {
-        console.warn('[audioWorklet] onAnalysis callback failed', e);
+        console.warn('[audioWorklet] Failed to process and set latest frame', e);
       }
     };
     return node;

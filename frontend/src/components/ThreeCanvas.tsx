@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, memo } from 'react';
+import React, { useRef, useEffect, memo, useState } from 'react';
 import * as THREE from 'three';
 import { AppStatus, TrackData, FrameAnalysis } from 'shared/types';
 import { useAudioAnalysis } from '../lib/useAudioAnalysis';
@@ -22,8 +22,30 @@ const ThreeCanvas: React.FC = () => {
   const visualEffectsRef = useRef<VisualEffects | null>(null);
   const animationFrameId = useRef<number | null>(null);
   const gpuInitRequestedRef = useRef(false);
+  const [recoveryTrigger, setRecoveryTrigger] = useState(0);
 
   const { audioRef } = useAudioAnalysis({ audioFile, status });
+
+  // Effect for handling WebGL context loss and restoration
+  useEffect(() => {
+    const handleContextLost = () => {
+      console.warn('[ThreeCanvas] WebGL context lost. Ride will pause and attempt to recover on context restoration.');
+      // The animation loop will likely be stopped by the browser. We just need to be ready to recover.
+    };
+
+    const handleContextRestored = () => {
+      console.log('[ThreeCanvas] WebGL context restored. Triggering scene rebuild.');
+      setRecoveryTrigger(t => t + 1);
+    };
+
+    window.addEventListener('audiorailrider:webglcontextlost', handleContextLost);
+    window.addEventListener('audiorailrider:webglcontextrestored', handleContextRestored);
+
+    return () => {
+      window.removeEventListener('audiorailrider:webglcontextlost', handleContextLost);
+      window.removeEventListener('audiorailrider:webglcontextrestored', handleContextRestored);
+    };
+  }, []);
 
   // Effect for scene initialization and disposal
   useEffect(() => {
@@ -48,7 +70,7 @@ const ThreeCanvas: React.FC = () => {
     };
   }, []);
 
-  // Effect for building the ride when trackData is ready
+  // Effect for building the ride when trackData is ready or on recovery
   useEffect(() => {
     const sceneManager = sceneManagerRef.current;
     if (!sceneManager || !trackData) {
@@ -56,14 +78,14 @@ const ThreeCanvas: React.FC = () => {
       return;
     }
 
-    console.log('[ThreeCanvas] Building ride from trackData', { pathLength: trackData.path.length, rideName: trackData.rideName });
+    console.log('[ThreeCanvas] Building ride from trackData', { pathLength: trackData.path.length, rideName: trackData.rideName, recoveryTrigger });
 
     // Clean up previous ride visuals
     visualEffectsRef.current?.dispose();
 
     rideCameraRef.current = new RideCamera(sceneManager.camera, trackData);
     console.log('[ThreeCanvas] RideCamera created');
-  visualEffectsRef.current = new VisualEffects(sceneManager.scene, trackData, sceneManager.camera);
+    visualEffectsRef.current = new VisualEffects(sceneManager.scene, trackData, sceneManager.camera);
     console.log('[ThreeCanvas] VisualEffects created');
     gpuInitRequestedRef.current = false;
     const renderer = sceneManager.renderer;
@@ -76,11 +98,7 @@ const ThreeCanvas: React.FC = () => {
           console.info('[ThreeCanvas] GPU particle init skipped', message);
         });
     }
-
-    // The workflow now starts skybox generation earlier and stores the result
-    // in the global store. When the store's `skyboxUrl` becomes available we
-    // apply it to the SceneManager below.
-  }, [trackData]);
+  }, [trackData, recoveryTrigger]);
 
   // Apply skybox from the global store when it becomes available
   useEffect(() => {
@@ -97,9 +115,6 @@ const ThreeCanvas: React.FC = () => {
 
   // Wire low-latency audio frames (dispatched by useAudioAnalysis) to VisualEffects.
   useEffect(() => {
-    // Handlers will read the current VisualEffects ref at event time so
-    // they don't depend on initialization order and won't throw when
-    // the VisualEffects instance is recreated during hot reload or errors.
     const handler = (ev: Event) => {
       try {
         const ve = visualEffectsRef.current;
@@ -148,7 +163,6 @@ const ThreeCanvas: React.FC = () => {
       } catch (e) {}
     };
 
-    // Dev track settings handler: forward settings to VisualEffects
     const devTrackHandler = (ev: Event) => {
       try {
         const ve = visualEffectsRef.current;
@@ -156,7 +170,6 @@ const ThreeCanvas: React.FC = () => {
         const detail = (ev as CustomEvent).detail as any;
         if (!detail) return;
         if (typeof ve.setTrackSettings === 'function') ve.setTrackSettings(detail);
-        // Forward trackRadius to RideCamera if available so camera offsets can adapt
         const rc = rideCameraRef.current;
         if (rc && typeof rc.setTrackRadius === 'function' && typeof detail.trackRadius === 'number') {
           rc.setTrackRadius(detail.trackRadius);
@@ -225,8 +238,6 @@ const ThreeCanvas: React.FC = () => {
 
     console.log('[ThreeCanvas] Starting animation loop');
 
-  // Don't capture .current at effect start — read them each frame to handle
-  // hot-reloads or late initialization without throwing on `.current` reads.
   const clock = new THREE.Clock();
   let currentFrameIndex = 0;
   let lastLoggedProgress = -1;
@@ -238,9 +249,6 @@ const ThreeCanvas: React.FC = () => {
       const elapsedTime = clock.getElapsedTime();
       const audioTime = audioRef.current?.currentTime || 0;
 
-      // Read audio duration inside the frame to avoid capturing a possibly
-      // uninitialized `audioRef.current` at effect start. Fall back to a
-      // duration derived from the track length when audio metadata isn't ready.
       const audioDuration = audioRef.current?.duration;
       const duration = (audioDuration && isFinite(audioDuration))
         ? audioDuration
@@ -251,7 +259,6 @@ const ThreeCanvas: React.FC = () => {
       const visualEffects = visualEffectsRef.current;
 
       if (!sceneManager || !rideCamera || !visualEffects) {
-        // If a component hasn't been initialized yet, skip this frame.
         return;
       }
 

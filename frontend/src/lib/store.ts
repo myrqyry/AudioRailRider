@@ -44,7 +44,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     actions: {
     setGenerationOptions: (opts: import('shared/types').GenerationOptions | null) => set({ generationOptions: opts }),
         setStatus: (status: AppStatus, message?: string) => set({ status, statusMessage: message || '', error: null }),
-        setTrackData: (data: TrackData | null) => set({ trackData: data }),
+        setTrackData: (data: TrackData | null) => {
+            const currentStatus = get().status;
+            if (data === null && (currentStatus === AppStatus.Riding || currentStatus === AppStatus.Ready)) {
+                set({ trackData: null, status: AppStatus.Idle, statusMessage: 'Track data was cleared, returning to start.' });
+            } else {
+                set({ trackData: data });
+            }
+        },
         setError: (error: ErrorState | null) => set({ error, status: error ? AppStatus.Error : get().status }),
         setAudioFile: (file: File) => {
             // Clear any previously-generated skybox when starting a new audio file
