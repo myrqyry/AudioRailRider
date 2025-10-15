@@ -15,6 +15,7 @@ export default {
     },
   },
   testPathIgnorePatterns: [
-    "<rootDir>/tests/playwright/"
+    "<rootDir>/tests/playwright/",
+    "<rootDir>/dist/"
   ],
 };
