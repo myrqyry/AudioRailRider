@@ -1,22 +1,35 @@
 import { FrameAnalysis, seconds } from 'shared/types';
 
-// Progressive streamer that creates an HTMLAudioElement, plays it muted,
-// and uses AnalyserNode to sample audio for quick UI feedback. This is a
-// pragmatic approach for long files where full decode via decodeAudioData
-// can be slow.
-
+/**
+ * Options for configuring the audio streamer.
+ */
 export interface StreamerOptions {
+  /** The size of the FFT (Fast Fourier Transform) to use for frequency analysis. */
   fftSize?: number;
+  /** A value from 0 to 1 that averages the analyser's output with the previous output. */
   smoothingTimeConstant?: number;
-  sampleIntervalMs?: number; // how often to sample for UI
+  /** The interval in milliseconds at which to sample the audio and dispatch frame data. */
+  sampleIntervalMs?: number;
 }
 
+/**
+ * Default configuration for the audio streamer.
+ */
 export const defaultOptions: StreamerOptions = {
   fftSize: 2048,
   smoothingTimeConstant: 0.8,
   sampleIntervalMs: 100,
 };
 
+/**
+ * Creates an audio streamer for real-time analysis of an audio file.
+ * This uses an HTMLAudioElement and an AnalyserNode to provide low-latency
+ * audio features without decoding the entire file at once.
+ * @param {File} file - The audio file to stream.
+ * @param {Partial<StreamerOptions>} [opts] - Optional configuration for the streamer.
+ * @returns {{ audioEl: HTMLAudioElement; start: (onFrame: (f: FrameAnalysis) => void) => Promise<void>; stop: () => Promise<void>; }}
+ * An object containing the audio element and methods to start and stop the analysis.
+ */
 export const createStreamer = (file: File, opts?: Partial<StreamerOptions>) => {
   const options = { ...defaultOptions, ...(opts || {}) };
   const audioEl = new Audio();

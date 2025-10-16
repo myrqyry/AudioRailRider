@@ -1,5 +1,11 @@
 import React, { useEffect, useState } from 'react';
 
+/**
+ * Checks if the WebGL renderer is likely a software implementation.
+ * @param {string | null} renderer - The renderer string from WebGL debug info.
+ * @param {string | null} vendor - The vendor string from WebGL debug info.
+ * @returns {boolean} True if the renderer is likely software-based, false otherwise.
+ */
 const isSoftwareRenderer = (renderer: string | null, vendor: string | null) => {
   if (!renderer && !vendor) return false;
   const r = (renderer || '').toLowerCase();
@@ -9,6 +15,11 @@ const isSoftwareRenderer = (renderer: string | null, vendor: string | null) => {
   return false;
 };
 
+/**
+ * A component that displays a warning message if the application is using a
+ * software-based WebGL renderer, which may result in poor performance.
+ * @returns {React.ReactElement | null} The rendered warning component or null if not needed.
+ */
 const RendererWarning: React.FC = () => {
   const [visible, setVisible] = useState(false);
   const [renderer, setRenderer] = useState<string | null>(null);

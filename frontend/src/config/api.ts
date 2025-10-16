@@ -120,6 +120,11 @@ export const FILE_UPLOAD_CONFIG: RequestInit = {
 /**
  * Validates API configuration on startup
  */
+/**
+ * Validates the current API configuration to ensure essential values are set.
+ * Throws an error if the configuration is invalid.
+ * In development mode, it logs the configuration for debugging purposes.
+ */
 export function validateApiConfig(): void {
   if (!apiConfig.baseURL) {
     throw new Error('API baseURL is required. Please check your environment configuration.');
@@ -149,6 +154,12 @@ export function validateApiConfig(): void {
 /**
  * Creates a timeout promise for API requests
  */
+/**
+ * Creates a promise that rejects after a specified timeout.
+ * This can be used with `Promise.race` to implement request timeouts.
+ * @param {number} timeoutMs - The timeout period in milliseconds.
+ * @returns {Promise<never>} A promise that rejects with a timeout error.
+ */
 export function createTimeoutPromise(timeoutMs: number): Promise<never> {
   return new Promise((_, reject) => {
     setTimeout(() => {
@@ -159,6 +170,15 @@ export function createTimeoutPromise(timeoutMs: number): Promise<never> {
 
 /**
  * Retry utility for API calls
+ */
+/**
+ * A higher-order function that wraps a promise-returning function with retry logic.
+ * @template T The type of the promise's resolution value.
+ * @param {() => Promise<T>} fn - The function to execute.
+ * @param {number} [maxAttempts=apiConfig.retry.maxAttempts] - The maximum number of attempts.
+ * @param {number} [delay=apiConfig.retry.delay] - The initial delay between retries.
+ * @param {number} [backoffMultiplier=apiConfig.retry.backoffMultiplier] - The multiplier for exponential backoff.
+ * @returns {Promise<T>} A promise that resolves with the result of the function or rejects after all attempts fail.
  */
 export async function withRetry<T>(
   fn: () => Promise<T>,
@@ -189,6 +209,12 @@ export async function withRetry<T>(
 /**
  * Validates API response
  */
+/**
+ * Validates an API response and throws an error if the response is not `ok`.
+ * The error object is augmented with the response status and status text.
+ * @param {Response} response - The API response object.
+ * @throws {Error} Throws an error if the response status is not in the 200-299 range.
+ */
 export function validateApiResponse(response: Response): void {
   if (!response.ok) {
     const error = new Error(`API request failed: ${response.status} ${response.statusText}`);
@@ -215,6 +241,12 @@ export const API_ERROR_MESSAGES = {
 
 /**
  * Gets appropriate error message based on status code
+ */
+/**
+ * Returns a user-friendly error message based on an HTTP status code.
+ * @param {number} status - The HTTP status code.
+ * @param {string} [defaultMessage] - A default message to return if the status is not recognized.
+ * @returns {string} The corresponding error message.
  */
 export function getErrorMessage(status: number, defaultMessage?: string): string {
   switch (status) {

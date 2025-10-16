@@ -2,8 +2,14 @@ import * as THREE from 'three';
 import { TrackData } from 'shared/types';
 import { RIDE_CONFIG } from 'shared/constants';
 
+/**
+ * Manages the camera's position and orientation along a predefined 3D path.
+ * It simulates a "ride" experience by moving the camera along a curve,
+ * handling look-ahead, up-vector stabilization, and dynamic field-of-view adjustments.
+ */
 export class RideCamera {
     private static readonly WORLD_UP = new THREE.Vector3(0, 1, 0);
+    /** The Three.js camera object being controlled. */
     readonly camera: THREE.PerspectiveCamera;
     private curve: THREE.CatmullRomCurve3;
     private trackData: TrackData;
@@ -21,20 +27,37 @@ export class RideCamera {
     private readonly _smoothedUp = new THREE.Vector3(0, 1, 0);
     private _trackRadius: number = 0.35;
 
+    /**
+     * The current position the camera is looking at.
+     * @type {THREE.Vector3}
+     */
     public get lookAtPos(): THREE.Vector3 {
         return this._lookAtPos;
     }
 
+    /**
+     * Sets the radius of the track, used for calculating camera offset.
+     * @param {number} r - The new track radius.
+     */
     public setTrackRadius(r: number) {
         if (typeof r === 'number' && isFinite(r) && r > 0) this._trackRadius = r;
     }
 
+    /**
+     * Creates an instance of RideCamera.
+     * @param {THREE.PerspectiveCamera} camera - The camera to control.
+     * @param {TrackData} trackData - The data defining the track path and properties.
+     */
     constructor(camera: THREE.PerspectiveCamera, trackData: TrackData) {
         this.camera = camera;
         this.trackData = trackData;
         this.curve = new THREE.CatmullRomCurve3(trackData.path, false, 'catmullrom', 0.5);
     }
 
+    /**
+     * Updates the camera's position and orientation based on the progress along the track.
+     * @param {number} progress - A value from 0 to 1 representing the position along the curve.
+     */
     update(progress: number) {
         const u = THREE.MathUtils.clamp(progress, 0, 1);
     this.curve.getPointAt(u, this._pos);

@@ -150,6 +150,11 @@ function preloadAudioContext(): void {
  * Start preloading all resources
  * This should be called as early as possible in the app lifecycle
  */
+/**
+ * Initiates the preloading of all critical resources.
+ * This function should be called as early as possible in the application's lifecycle.
+ * It is safe to call this function multiple times; it will only run once.
+ */
 export function startPreload(): void {
   if (preloadStarted) return;
   preloadStarted = true;
@@ -176,6 +181,11 @@ export function startPreload(): void {
 /**
  * Wait for preload to complete (useful for components that need preloaded resources)
  */
+/**
+ * Returns a promise that resolves when all asynchronous preload operations have completed.
+ * This is useful for components or modules that depend on preloaded resources.
+ * @returns {Promise<void>} A promise that resolves when preloading is finished.
+ */
 export async function waitForPreload(): Promise<void> {
   if (preloadCompleted) return;
   await Promise.allSettled(preloadPromises);
@@ -185,12 +195,21 @@ export async function waitForPreload(): Promise<void> {
 /**
  * Get cached shader source
  */
+/**
+ * Retrieves a preloaded shader source from the cache.
+ * @param {string} path - The path of the shader file.
+ * @returns {string | null} The shader source code, or `null` if not found in the cache.
+ */
 export function getCachedShader(path: string): string | null {
   return cache.shaders.get(path) || null;
 }
 
 /**
  * Get cached LYGIA resolver
+ */
+/**
+ * Retrieves the preloaded LYGIA shader resolver function from the cache.
+ * @returns {any | null} The resolver function, or `null` if not preloaded.
  */
 export function getCachedLygiaResolver(): any | null {
   return cache.lygiaResolver;
@@ -199,6 +218,11 @@ export function getCachedLygiaResolver(): any | null {
 /**
  * Get the preloaded AudioContext (may be suspended)
  */
+/**
+ * Retrieves the pre-initialized `AudioContext` from the cache.
+ * Note: The context may be in a 'suspended' state and require user interaction to resume.
+ * @returns {AudioContext | null} The cached `AudioContext`, or `null` if not preloaded.
+ */
 export function getCachedAudioContext(): AudioContext | null {
   return cache.audioContext;
 }
@@ -206,12 +230,20 @@ export function getCachedAudioContext(): AudioContext | null {
 /**
  * Check if preload has been started
  */
+/**
+ * Checks if the preloading process has been initiated.
+ * @returns {boolean} `true` if `startPreload` has been called, `false` otherwise.
+ */
 export function isPreloadStarted(): boolean {
   return preloadStarted;
 }
 
 /**
  * Check if preload has completed
+ */
+/**
+ * Checks if all preload operations have finished.
+ * @returns {boolean} `true` if all asynchronous preloading has completed, `false` otherwise.
  */
 export function isPreloadCompleted(): boolean {
   return preloadCompleted;

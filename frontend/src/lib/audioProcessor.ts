@@ -35,6 +35,17 @@ declare global {
  * @returns A promise that resolves to an AudioFeatures object.
  * @throws An error if the audio file cannot be decoded.
  */
+/**
+ * Analyzes an audio file to extract a comprehensive set of audio features.
+ * This includes basic features like duration and BPM, as well as detailed
+ * frame-by-frame analysis and higher-level structural information.
+ * It uses the Web Audio API and the Meyda.js library for analysis.
+ *
+ * @param {File} audioFile - The audio file to be analyzed.
+ * @returns {Promise<AudioFeatures>} A promise that resolves to an `AudioFeatures` object
+ * containing the analysis results.
+ * @throws {Error} If the audio file cannot be decoded or processed.
+ */
 export const analyzeAudio = async (audioFile: File): Promise<AudioFeatures> => {
   const audioContext = new AudioContext();
   // Try registering and using the AudioWorklet (best-effort). In test env this will be a no-op.
@@ -332,6 +343,15 @@ export const analyzeAudio = async (audioFile: File): Promise<AudioFeatures> => {
 
 // Create a live worklet-based analyzer attached to the provided AudioContext.
 // The onFrame callback receives FrameAnalysis objects created from worklet messages.
+/**
+ * Creates and configures an `AudioWorkletNode` for real-time audio analysis.
+ * This function registers the necessary worklet and creates an analyzer node
+ * that can be connected to an audio graph.
+ *
+ * @param {AudioContext} audioContext - The `AudioContext` to which the worklet will be added.
+ * @returns {Promise<AudioWorkletNode | null>} A promise that resolves to the created
+ * `AudioWorkletNode`, or `null` if audio worklets are not supported or fail to initialize.
+ */
 export const createWorkletAnalyzerForContext = async (
   audioContext: AudioContext
 ): Promise<AudioWorkletNode | null> => {

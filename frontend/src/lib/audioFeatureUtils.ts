@@ -1,5 +1,12 @@
 import { FrameAnalysis, Seconds, seconds } from 'shared/types';
 
+/**
+ * Calculates the average of a slice of a number array.
+ * @param {ArrayLike<number>} arr - The input array.
+ * @param {number} start - The starting index of the slice.
+ * @param {number} end - The ending index of the slice.
+ * @returns {number} The average of the slice.
+ */
 export const averageSlice = (arr: ArrayLike<number>, start: number, end: number): number => {
   const boundedStart = Math.max(0, Math.min(start, arr.length));
   const boundedEnd = Math.max(boundedStart, Math.min(end, arr.length));
@@ -15,6 +22,12 @@ export const averageSlice = (arr: ArrayLike<number>, start: number, end: number)
   return count > 0 ? sum / count : 0;
 };
 
+/**
+ * Smoothes a curve using a moving average window.
+ * @param {Float32Array} input - The input curve data.
+ * @param {number} window - The size of the moving average window.
+ * @returns {Float32Array} The smoothed curve.
+ */
 export const smoothCurve = (input: Float32Array, window: number): Float32Array => {
   if (window <= 1) {
     return input.slice() as Float32Array;
@@ -36,6 +49,11 @@ export const smoothCurve = (input: Float32Array, window: number): Float32Array =
   return output;
 };
 
+/**
+ * Finds the maximum value in a Float32Array.
+ * @param {Float32Array} arr - The input array.
+ * @returns {number} The maximum value in the array.
+ */
 export const getMax = (arr: Float32Array): number => {
   let max = 0;
   for (let i = 0; i < arr.length; i++) {
@@ -57,6 +75,15 @@ export const DEFAULT_BEAT_CONFIG: BeatDetectionConfig = {
   defaultBpm: 120,
 };
 
+/**
+ * Detects beats in an audio signal based on energy and spectral features.
+ * @param {Float32Array} energyCurve - The curve representing the energy of the audio.
+ * @param {Float32Array} spectralCentroidCurve - The curve representing the spectral centroid.
+ * @param {Float32Array} perceptualSharpnessCurve - The curve representing perceptual sharpness.
+ * @param {number} hopSeconds - The time in seconds between each frame of the curves.
+ * @param {BeatDetectionConfig} [config=DEFAULT_BEAT_CONFIG] - Configuration for beat detection.
+ * @returns {{ beats: number[]; tempo: number }} An object containing the detected beat timestamps and the estimated tempo.
+ */
 export const detectBeats = (
   energyCurve: Float32Array,
   spectralCentroidCurve: Float32Array,
@@ -149,6 +176,15 @@ export const DEFAULT_STRUCTURE_CONFIG: StructuralBoundaryConfig = {
   minSpacingSeconds: 4,
 };
 
+/**
+ * Detects structural boundaries in an audio signal, such as the start of a chorus or verse.
+ * @param {Float32Array} energyCurve - The curve representing the energy of the audio.
+ * @param {Float32Array} spectralRolloffCurve - The curve representing the spectral rolloff.
+ * @param {Float32Array} zeroCrossingRateCurve - The curve representing the zero-crossing rate.
+ * @param {number} hopSeconds - The time in seconds between each frame of the curves.
+ * @param {StructuralBoundaryConfig} [config=DEFAULT_STRUCTURE_CONFIG] - Configuration for boundary detection.
+ * @returns {number[]} An array of timestamps for the detected boundaries.
+ */
 export const detectStructuralBoundaries = (
   energyCurve: Float32Array,
   spectralRolloffCurve: Float32Array,
@@ -182,6 +218,12 @@ export const detectStructuralBoundaries = (
   return boundaries;
 };
 
+/**
+ * Creates a `FrameAnalysis` object suitable for dispatching in a custom event.
+ * @param {number} timestampSeconds - The timestamp of the frame in seconds.
+ * @param {Omit<FrameAnalysis, 'timestamp'>} values - An object containing all frame analysis values except the timestamp.
+ * @returns {FrameAnalysis} The complete frame analysis object.
+ */
 export const createFrameForDispatch = (
   timestampSeconds: number,
   values: Omit<FrameAnalysis, 'timestamp'>

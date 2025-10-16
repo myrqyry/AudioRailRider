@@ -4,8 +4,13 @@ import structlog
 
 def setup_logging(log_level: str = "INFO"):
     """
-    Configures logging for the application using structlog for structured,
-    context-aware logging.
+    Configures logging for the application using structlog.
+
+    This setup provides structured, context-aware logging that is easy to read
+    in development and can be parsed by logging systems in production.
+
+    Args:
+        log_level: The minimum log level to output (e.g., "INFO", "DEBUG").
     """
     # Convert log level string to logging enum
     numeric_level = getattr(logging, log_level.upper(), logging.INFO)

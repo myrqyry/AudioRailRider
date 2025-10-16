@@ -48,7 +48,14 @@ async def analyze_audio(audio_bytes: bytes):
         raise
 
 class GeminiService:
+    """
+    A service class to interact with the Gemini API for generating ride blueprints and skyboxes.
+    It includes caching for blueprints and a context manager for handling file uploads.
+    """
     def __init__(self):
+        """
+        Initializes the GeminiService, setting up the Gemini client and a cache.
+        """
         # Initialize the Gemini client
         if genai and settings.GEMINI_API_KEY:
             try:
@@ -157,6 +164,20 @@ class GeminiService:
     def generate_prompt_text(self, duration: float, bpm: float, energy: float,
                              spectral_centroid: float, spectral_flux: float,
                              options: dict | None = None) -> str:
+        """
+        Generates the text prompt for the Gemini API to create a ride blueprint.
+
+        Args:
+            duration: The duration of the audio in seconds.
+            bpm: The beats per minute of the audio.
+            energy: The energy level of the audio.
+            spectral_centroid: The spectral centroid of the audio.
+            spectral_flux: The spectral flux of the audio.
+            options: Optional dictionary with user-selected generation options.
+
+        Returns:
+            A formatted string to be used as the prompt.
+        """
         opt_lines = []
         if options:
             if options.get('worldTheme'):
@@ -249,6 +270,24 @@ Always output strictly valid JSON. Push creativity to the MAXIMUM while respecti
         return hasher.hexdigest()
 
     async def generate_blueprint(self, audio_bytes: bytes, content_type: str, options: dict | None = None):
+        """
+        Generates a ride blueprint by analyzing the audio and querying the Gemini API.
+
+        This method orchestrates the audio analysis, prompt generation, and API call.
+        It uses caching to avoid re-processing identical requests and includes a
+        procedural fallback if the API call fails.
+
+        Args:
+            audio_bytes: The raw bytes of the audio file.
+            content_type: The MIME type of the audio file.
+            options: Optional dictionary with user-selected generation options.
+
+        Returns:
+            A dictionary containing the generated blueprint and the extracted audio features.
+
+        Raises:
+            HTTPException: If the initial audio analysis fails and no fallback can be generated.
+        """
         # Generate a cache key based on the audio content and generation options
         cache_key = self._generate_cache_key(audio_bytes, options)
 
@@ -426,6 +465,17 @@ Always output strictly valid JSON. Push creativity to the MAXIMUM while respecti
         }
 
     def generate_skybox_prompt(self, prompt: str, blueprint_data: dict | None = None, options: dict | None = None) -> str:
+        """
+        Generates a detailed, contextual prompt for the skybox image generation.
+
+        Args:
+            prompt: The base prompt or mood description.
+            blueprint_data: Optional full blueprint for additional context.
+            options: Optional hints that further constrain the skybox aesthetics.
+
+        Returns:
+            A rich, formatted string to be used as the prompt for image generation.
+        """
         # Build a rich, contextual prompt using blueprint data if available
         if blueprint_data:
             ride_name = blueprint_data.get('rideName', 'Unknown Ride')
@@ -505,13 +555,20 @@ OUTPUT: A skybox that transforms a ride into a journey through living emotion ma
 
     async def generate_skybox(self, prompt: str, blueprint_data: dict | None = None, options: dict | None = None):
         """
-        Generate a skybox image using Gemini 2.5 Flash Image Preview model.
-        This model excels at creative image generation with rich context understanding.
+        Generates a skybox image using the Gemini API.
+
+        This method constructs a detailed prompt and calls the image generation model.
 
         Args:
-            prompt: The mood/theme description from the blueprint
-            blueprint_data: Optional full blueprint for additional context
-            options: Optional hints that further constrain the skybox aesthetics
+            prompt: The base prompt (mood/theme) for the image.
+            blueprint_data: Optional full blueprint for additional context.
+            options: Optional hints that further constrain the skybox aesthetics.
+
+        Returns:
+            A dictionary containing the `imageUrl` of the generated skybox.
+
+        Raises:
+            HTTPException: If the Gemini client is unavailable or if the API call fails.
         """
         # Check if Gemini client is available
         if not self.client:

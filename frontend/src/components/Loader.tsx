@@ -1,10 +1,21 @@
 
 import React, { memo } from 'react';
 
+/**
+ * Props for the Loader component.
+ */
 export interface LoaderProps {
+  /** The message to display below the spinner. */
   message: string;
 }
 
+/**
+ * A loading indicator component that displays a spinning animation and a message.
+ * It is used to inform the user that an operation is in progress.
+ * @param {LoaderProps} props - The properties for the loader component.
+ * @param {string} props.message - The message to display.
+ * @returns {React.ReactElement} The rendered loader component.
+ */
 function LoaderComponent({ message }: LoaderProps) {
   return (
     <div
@@ -25,4 +36,7 @@ function LoaderComponent({ message }: LoaderProps) {
   );
 }
 
+/**
+ * A memoized version of the LoaderComponent for performance optimization.
+ */
 export const Loader = memo(LoaderComponent);

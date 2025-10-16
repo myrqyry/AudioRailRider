@@ -2,13 +2,25 @@ import * as THREE from 'three';
 import { RIDE_CONFIG } from 'shared/constants';
 import { FPSMeter } from './fpsMeter';
 
+/**
+ * Manages the core Three.js scene, camera, renderer, and lighting.
+ * It handles initialization, resizing, and disposal of the 3D environment.
+ * It also includes functionality for updating the skybox and handling WebGL context loss.
+ */
 export class SceneManager {
+    /** The main Three.js scene. */
     readonly scene: THREE.Scene;
+    /** The perspective camera for the scene. */
     readonly camera: THREE.PerspectiveCamera;
+    /** The WebGL renderer. */
     readonly renderer: THREE.WebGLRenderer;
     private container: HTMLElement;
     private skyboxTexture?: THREE.Texture;
 
+    /**
+     * Creates an instance of SceneManager.
+     * @param {HTMLElement} container - The HTML element to mount the canvas into.
+     */
     constructor(container: HTMLElement) {
         this.container = container;
         this.scene = new THREE.Scene();
@@ -22,6 +34,10 @@ export class SceneManager {
         this.init();
     }
 
+    /**
+     * Initializes the renderer, lighting, and event listeners.
+     * @private
+     */
     private init() {
         const width = this.container.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 1);
         const height = this.container.clientHeight || (typeof window !== 'undefined' ? window.innerHeight : 1);
@@ -74,6 +90,10 @@ export class SceneManager {
         }
     }
 
+    /**
+     * Updates the scene's background and environment with a new skybox image.
+     * @param {string} imageUrl - The URL of the equirectangular skybox image.
+     */
     public updateSkybox(imageUrl: string): void {
         if (this.skyboxTexture) {
             this.skyboxTexture.dispose();
@@ -96,6 +116,10 @@ export class SceneManager {
         );
     }
 
+    /**
+     * Handles the window resize event to update the camera and renderer.
+     * @private
+     */
     private handleResize = (): void => {
         const containerWidth = this.container.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 1);
         const containerHeight = this.container.clientHeight || (typeof window !== 'undefined' ? window.innerHeight : 1);
@@ -107,12 +131,21 @@ export class SceneManager {
         this.renderer.setSize(containerWidth, containerHeight);
     };
 
+    /**
+     * Handles the WebGL context lost event.
+     * @private
+     * @param {Event} event - The WebGL context lost event.
+     */
     private handleContextLost = (event: Event): void => {
         event.preventDefault();
         console.warn('[SceneManager] WebGL context lost. Notifying application.');
         window.dispatchEvent(new CustomEvent('audiorailrider:webglcontextlost'));
     }
 
+    /**
+     * Handles the WebGL context restored event.
+     * @private
+     */
     private handleContextRestored = (): void => {
         console.log('[SceneManager] WebGL context restored. Notifying application to rebuild.');
         // We don't need to do much here because the application will be notified
@@ -120,6 +153,9 @@ export class SceneManager {
         window.dispatchEvent(new CustomEvent('audiorailrider:webglcontextrestored'));
     }
 
+    /**
+     * Renders the scene. It also ticks an FPS meter and can adjust rendering quality based on performance.
+     */
     render(): void {
         // Update adaptive hints before rendering
         try {
@@ -140,6 +176,9 @@ export class SceneManager {
         this.renderer.render(this.scene, this.camera);
     }
 
+    /**
+     * Cleans up resources and removes event listeners.
+     */
     dispose(): void {
         if (typeof window !== 'undefined') {
             window.removeEventListener('resize', this.handleResize);

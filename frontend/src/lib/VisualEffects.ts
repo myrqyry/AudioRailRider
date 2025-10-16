@@ -35,6 +35,10 @@ const TRACK_DEFAULT_OPACITY = 0.92; // initial material opacity
 const TRACK_OPACITY_LERP_SPEED = 6.0; // how quickly opacity transitions
 const TRACK_INSIDE_SAMPLES = 48; // how many samples along curve to estimate proximity
 
+/**
+ * Manages all visual effects for the ride, including the track, particles,
+ * and other dynamic elements that respond to audio and ride progress.
+ */
 export class VisualEffects {
   private static readonly UP_VECTOR = new THREE.Vector3(0, 1, 0);
   private scene: THREE.Scene;
@@ -71,6 +75,13 @@ export class VisualEffects {
 
   // Compute curve points offset underneath the camera using the track's per-point up vectors
   // This keeps the rails below the camera even during rolls and inversions.
+  /**
+   * Computes a new set of curve points offset below the original path.
+   * This is used to position the track geometry so the camera appears to ride above it.
+   * @private
+   * @param {THREE.Vector3[]} points - The original points of the track path.
+   * @returns {THREE.Vector3[]} A new array of points offset from the originals.
+   */
   private computeOffsetCurvePoints(points: THREE.Vector3[]): THREE.Vector3[] {
     const ups = this.trackData?.upVectors;
     const n = points.length;
@@ -100,6 +111,13 @@ export class VisualEffects {
 
   // Estimate whether the provided camera position is inside the track tube.
   // We sample points along the track curve and check the minimum distance.
+  /**
+   * Estimates whether the camera is currently inside the track's tube geometry.
+   * This is used to adjust track opacity for better visibility.
+   * @private
+   * @param {THREE.Vector3} cameraPosition - The current position of the camera.
+   * @returns {boolean} True if the camera is likely inside the track, false otherwise.
+   */
   private isCameraInsideTrack(cameraPosition: THREE.Vector3): boolean {
     if (this._forceInside) return true;
     // Prefer a BVH-based closest-point test against the track mesh when available
@@ -128,6 +146,17 @@ export class VisualEffects {
   }
 
   // Called by DevPanel/ThreeCanvas when track-related settings change
+  /**
+   * Updates runtime-configurable track settings, often from a developer panel.
+   * This can trigger a rebuild of the track geometry if necessary.
+   * @param {object} settings - The new settings to apply.
+   * @param {boolean} [settings.placeUnderCamera] - Whether to offset the track below the camera path.
+   * @param {number} [settings.verticalOffset] - The vertical offset distance.
+   * @param {number} [settings.defaultOpacity] - The default opacity of the track.
+   * @param {number} [settings.insideOpacity] - The track's opacity when the camera is inside it.
+   * @param {number} [settings.opacityLerpSpeed] - The speed of opacity transitions.
+   * @param {number} [settings.trackRadius] - The radius of the track tube.
+   */
   public setTrackSettings(settings: { placeUnderCamera?: boolean; verticalOffset?: number; defaultOpacity?: number; insideOpacity?: number; opacityLerpSpeed?: number; trackRadius?: number; }) {
     try {
       let needsRebuild = false;
@@ -167,6 +196,10 @@ export class VisualEffects {
     }
   }
 
+  /**
+   * Forces the track to render as if the camera is inside it, for debugging.
+   * @param {boolean} force - True to force the "inside" state, false to disable.
+   */
   public forceTrackInside(force: boolean) {
     this._forceInside = !!force;
     try {
@@ -179,6 +212,10 @@ export class VisualEffects {
   }
 
   // Build or rebuild the track geometry and ghost ribbon using runtime fields
+  /**
+   * Rebuilds the 3D geometry for the track and the associated ghost ribbon.
+   * This is called when track parameters like radius or quality level change.
+   */
   public rebuildTrackGeometry() {
     try {
       if (!this.trackPathPoints || this.trackPathPoints.length === 0) return;
@@ -337,6 +374,12 @@ export class VisualEffects {
     return true;
   }
 
+  /**
+   * Creates an instance of VisualEffects.
+   * @param {THREE.Scene} scene - The main Three.js scene.
+   * @param {TrackData} trackData - The data defining the track and its properties.
+   * @param {THREE.Camera} camera - The main camera.
+   */
   constructor(scene: THREE.Scene, trackData: TrackData, camera: THREE.Camera) {
     this.scene = scene;
     this.camera = camera;
@@ -583,6 +626,11 @@ vSpeedLines = speedLines_vs * rideSpeed * 0.3;
     return { points: deduped, issues };
   }
 
+  /**
+   * Validates a TrackData object to ensure it meets the minimum requirements for visualization.
+   * @param {*} data - The data to validate.
+   * @returns {{ valid: boolean; issues: string[] }} An object indicating if the data is valid and a list of any issues found.
+   */
   public static validateTrackData(data: any): { valid: boolean; issues: string[] } {
     const issues: string[] = [];
     if (!data) {
@@ -645,6 +693,10 @@ vSpeedLines = speedLines_vs * rideSpeed * 0.3;
     this.particles.seedAmbientField(this.pathCurve, sampleCount, spread, nowSeconds, this.audioFeatures, 0.9);
   }
 
+  /**
+   * Initializes the GPU-accelerated components of the visual effects, primarily the particle system.
+   * @param {THREE.WebGLRenderer} renderer - The main WebGL renderer.
+   */
   public async initGPU(renderer: THREE.WebGLRenderer) {
     await this.particles.initGPU(renderer, {
       curlStrength: this.curlStrength,
@@ -664,6 +716,10 @@ vSpeedLines = speedLines_vs * rideSpeed * 0.3;
     });
   }
 
+  /**
+   * Sets the current audio features, which drive many of the real-time visual effects.
+   * @param {Record<string, number> | null | undefined} features - A map of feature names to their values (typically 0-1).
+   */
   public setAudioFeatures(features: Record<string, number> | null | undefined) {
     if (!features || typeof features !== 'object') return;
     try {
@@ -1172,10 +1228,24 @@ void main() {
     return this.segmentIntensityBoost;
   }
 
+  /**
+   * Registers or updates the configuration for a visual effect tied to a specific audio feature.
+   * @param {string} featureName - The name of the audio feature (e.g., 'bass', 'sparkle').
+   * @param {Partial<FeatureVisualConfig>} cfg - The configuration for the visual effect.
+   */
   public registerFeatureVisual(featureName: string, cfg: Partial<FeatureVisualConfig>) {
     this.particles.registerFeatureVisual(featureName, cfg);
   }
 
+  /**
+   * The main update loop for all visual effects.
+   * This should be called once per frame from the main animation loop.
+   * @param {number} elapsedTime - The total elapsed time since the start of the animation.
+   * @param {FrameAnalysis | null} currentFrame - The audio analysis data for the current time.
+   * @param {THREE.Vector3} cameraPosition - The current position of the camera.
+   * @param {THREE.Vector3} lookAtPosition - The position the camera is looking at.
+   * @param {number} rideProgress - The progress along the ride path (0-1).
+   */
   public update(elapsedTime: number, currentFrame: FrameAnalysis | null, cameraPosition: THREE.Vector3, lookAtPosition: THREE.Vector3, rideProgress: number) {
     try {
       this.particles.beginFrame(); // Reset per-frame particle spawn counter
@@ -1349,18 +1419,34 @@ void main() {
     }
   }
 
+  /**
+   * Sets the raw audio force value, which is used to drive GPU particle effects.
+   * @param {number} value - The raw audio force value.
+   */
   public setAudioForce(value: number) {
     const clamped = Math.max(0, value);
     this.rawAudioForce = clamped;
     this.gpuAudioForce = clamped * this.segmentIntensityBoost;
   }
 
+  /**
+   * Sets the parameters for the curl noise field used by the particle system.
+   * @param {object} params - The curl noise parameters.
+   * @param {number} [params.curlStrength] - The strength of the curl noise.
+   * @param {number} [params.noiseScale] - The scale of the noise.
+   * @param {number} [params.noiseSpeed] - The speed of the noise evolution.
+   */
   public setCurlParams({ curlStrength, noiseScale, noiseSpeed }: { curlStrength?: number; noiseScale?: number; noiseSpeed?: number; }) {
     if (typeof curlStrength === 'number') this.curlStrength = curlStrength;
     if (typeof noiseScale === 'number') this.noiseScale = noiseScale;
     if (typeof noiseSpeed === 'number') this.noiseSpeed = noiseSpeed;
   }
 
+  /**
+   * Applies a value to a specific shader uniform in the particle system.
+   * @param {string} name - The name of the uniform.
+   * @param {*} value - The new value for the uniform.
+   */
   public applyShaderUniform(name: string, value: any) {
     if (name === 'curlStrength') {
       this.curlStrength = value;
@@ -1372,6 +1458,10 @@ void main() {
     this.particles.applyShaderUniform(name, value);
   }
 
+  /**
+   * Applies a set of shader uniforms from a manifest file.
+   * @param {Record<string, any>} manifest - The shader uniform manifest.
+   */
   public setShaderUniformsFromManifest(manifest: Record<string, any>) {
     if (!manifest || typeof manifest !== 'object') return;
     for (const [name, entry] of Object.entries(manifest)) {
@@ -1393,6 +1483,12 @@ void main() {
     }
   }
 
+  /**
+   * Spawns a specified number of particles at a given origin.
+   * @param {number} count - The number of particles to spawn.
+   * @param {THREE.Vector3} origin - The position from which to spawn the particles.
+   * @param {string} [feature] - An optional audio feature to associate with the particles.
+   */
   public spawnParticles(count: number, origin: THREE.Vector3, feature?: string) {
     this.particles.spawnParticles(count, {
       origin,
@@ -1403,6 +1499,12 @@ void main() {
     });
   }
 
+  /**
+   * Spawns a burst of particles associated with a specific audio feature.
+   * @param {string} featureName - The name of the audio feature.
+   * @param {number} intensity - The intensity of the burst (0-1).
+   * @param {THREE.Vector3} origin - The position of the burst.
+   */
   public spawnFeatureBurst(featureName: string, intensity: number, origin: THREE.Vector3) {
     this.particles.spawnFeatureBurst(featureName, intensity, origin, this.audioFeatures, this.segmentIntensityBoost, performance.now() / 1000);
   }
@@ -1621,6 +1723,10 @@ void main() {
     this.createSpeedStreakSystem();
   }
 
+  /**
+   * Switches the visual effects to high quality mode.
+   * This increases the detail of the track and particle effects.
+   */
   public switchToHighQuality() {
     if (this.highQualityMode) return;
     this.highQualityMode = true;
@@ -1639,6 +1745,10 @@ void main() {
     this.createSpeedStreakSystem();
   }
 
+  /**
+   * Cleans up and disposes of all resources created by the VisualEffects class.
+   * This includes geometries, materials, and particle systems.
+   */
   public dispose() {
     if (this.trackMesh) {
       this.scene.remove(this.trackMesh);

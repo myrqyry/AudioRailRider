@@ -7,6 +7,12 @@
  * Prefetch a resource using the browser's prefetch mechanism
  * This is lower priority than preload but still useful for non-critical resources
  */
+/**
+ * Hints the browser to prefetch a resource that might be needed for a future navigation.
+ * This is a low-priority hint.
+ * @param {string} url - The URL of the resource to prefetch.
+ * @param {'script' | 'fetch' | 'style'} [type='fetch'] - The type of content being prefetched.
+ */
 export function prefetchResource(url: string, type: 'script' | 'fetch' | 'style' = 'fetch'): void {
   const link = document.createElement('link');
   link.rel = 'prefetch';
@@ -18,6 +24,12 @@ export function prefetchResource(url: string, type: 'script' | 'fetch' | 'style'
 
 /**
  * Preload a resource with high priority
+ */
+/**
+ * Hints the browser to preload a resource that is needed for the current page.
+ * This is a high-priority hint.
+ * @param {string} url - The URL of the resource to preload.
+ * @param {'script' | 'fetch' | 'style' | 'image'} [type='fetch'] - The type of content being preloaded.
  */
 export function preloadResource(url: string, type: 'script' | 'fetch' | 'style' | 'image' = 'fetch'): void {
   const link = document.createElement('link');
@@ -31,6 +43,11 @@ export function preloadResource(url: string, type: 'script' | 'fetch' | 'style' 
 /**
  * Establish early connection to a domain
  */
+/**
+ * Hints the browser to establish an early connection to a domain, including DNS lookup,
+ * TCP handshake, and TLS negotiation.
+ * @param {string} url - The URL of the domain to connect to.
+ */
 export function preconnectDomain(url: string): void {
   const link = document.createElement('link');
   link.rel = 'preconnect';
@@ -42,6 +59,10 @@ export function preconnectDomain(url: string): void {
 /**
  * Batch prefetch multiple resources
  */
+/**
+ * Prefetches multiple resources in a batch.
+ * @param {Array<{ url: string; type?: 'script' | 'fetch' | 'style' }>} resources - An array of resource objects to prefetch.
+ */
 export function batchPrefetch(resources: Array<{ url: string; type?: 'script' | 'fetch' | 'style' }>): void {
   resources.forEach(({ url, type = 'fetch' }) => {
     prefetchResource(url, type);
@@ -52,15 +73,29 @@ export function batchPrefetch(resources: Array<{ url: string; type?: 'script' | 
  * Prefetch resources with priority queue
  * Higher priority resources are fetched first
  */
+/**
+ * A class for prefetching resources based on a priority queue.
+ * Higher priority items are fetched first.
+ */
 export class PriorityPrefetcher {
   private queue: Array<{ url: string; priority: number; type: 'script' | 'fetch' | 'style' }> = [];
   private loading = false;
 
+  /**
+   * Adds a resource to the prefetch queue.
+   * @param {string} url - The URL of the resource.
+   * @param {number} [priority=0] - The priority of the resource (higher numbers are fetched first).
+   * @param {'script' | 'fetch' | 'style'} [type='fetch'] - The type of resource.
+   */
   add(url: string, priority: number = 0, type: 'script' | 'fetch' | 'style' = 'fetch'): void {
     this.queue.push({ url, priority, type });
     this.queue.sort((a, b) => b.priority - a.priority);
   }
 
+  /**
+   * Starts processing the prefetch queue.
+   * @returns {Promise<void>} A promise that resolves when the queue is empty.
+   */
   async start(): Promise<void> {
     if (this.loading || this.queue.length === 0) return;
     this.loading = true;
@@ -84,10 +119,17 @@ export class PriorityPrefetcher {
     this.loading = false;
   }
 
+  /**
+   * Clears the prefetch queue.
+   */
   clear(): void {
     this.queue = [];
   }
 
+  /**
+   * Gets the current number of items in the queue.
+   * @returns {number} The length of the queue.
+   */
   getQueueLength(): number {
     return this.queue.length;
   }
@@ -95,6 +137,11 @@ export class PriorityPrefetcher {
 
 /**
  * Image preloader with promise-based API
+ */
+/**
+ * Preloads a single image.
+ * @param {string} src - The source URL of the image.
+ * @returns {Promise<HTMLImageElement>} A promise that resolves with the loaded image element or rejects on error.
  */
 export function preloadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -108,12 +155,22 @@ export function preloadImage(src: string): Promise<HTMLImageElement> {
 /**
  * Preload multiple images in parallel
  */
+/**
+ * Preloads multiple images in parallel.
+ * @param {string[]} srcs - An array of image source URLs.
+ * @returns {Promise<HTMLImageElement[]>} A promise that resolves with an array of the loaded image elements.
+ */
 export async function preloadImages(srcs: string[]): Promise<HTMLImageElement[]> {
   return Promise.all(srcs.map(preloadImage));
 }
 
 /**
  * Check if a resource is already cached
+ */
+/**
+ * Checks if a resource is already available in the browser's Cache Storage.
+ * @param {string} url - The URL of the resource to check.
+ * @returns {Promise<boolean>} A promise that resolves to `true` if the resource is cached, `false` otherwise.
  */
 export async function isResourceCached(url: string): Promise<boolean> {
   if (!('caches' in window)) return false;
@@ -129,6 +186,10 @@ export async function isResourceCached(url: string): Promise<boolean> {
 
 /**
  * Adaptive prefetching based on network conditions
+ */
+/**
+ * A class that provides adaptive prefetching capabilities, enabling or disabling
+ * prefetching based on the user's network conditions (e.g., 'save-data' mode).
  */
 export class AdaptivePrefetcher {
   private enabled: boolean = true;
@@ -155,10 +216,19 @@ export class AdaptivePrefetcher {
     }
   }
 
+  /**
+   * Checks if prefetching is currently enabled based on network conditions.
+   * @returns {boolean} `true` if prefetching is enabled, `false` otherwise.
+   */
   shouldPrefetch(): boolean {
     return this.enabled;
   }
 
+  /**
+   * Fetches a resource only if adaptive prefetching is currently enabled.
+   * @param {string} url - The URL of the resource to prefetch.
+   * @returns {Promise<void>} A promise that resolves when the fetch is complete or if prefetching is disabled.
+   */
   async prefetchIfEnabled(url: string): Promise<void> {
     if (!this.enabled) return;
     
@@ -176,10 +246,17 @@ export const adaptivePrefetcher = new AdaptivePrefetcher();
 /**
  * Idle time prefetcher - loads resources during browser idle time
  */
+/**
+ * A class that prefetches resources during browser idle time using `requestIdleCallback`.
+ */
 export class IdlePrefetcher {
   private queue: string[] = [];
   private loading = false;
 
+  /**
+   * Adds a URL to the idle prefetch queue.
+   * @param {string} url - The URL of the resource to prefetch.
+   */
   add(url: string): void {
     if (!this.queue.includes(url)) {
       this.queue.push(url);
@@ -220,6 +297,9 @@ export class IdlePrefetcher {
     this.scheduleLoad();
   }
 
+  /**
+   * Clears the idle prefetch queue.
+   */
   clear(): void {
     this.queue = [];
     this.loading = false;

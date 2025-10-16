@@ -20,8 +20,21 @@ audio_analysis_executor = ThreadPoolExecutor(max_workers=WORKERS)
 
 def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
     """
-    Synchronous implementation of audio analysis. This function is designed
-    to be run in a separate thread to avoid blocking the asyncio event loop.
+    Performs synchronous audio analysis on a byte stream.
+
+    This function uses librosa to extract features like duration, BPM, and a
+    series of frame-by-frame analyses. It's designed to be run in a separate
+    thread to avoid blocking the main asyncio event loop.
+
+    Args:
+        audio_bytes: The raw bytes of the audio file.
+
+    Returns:
+        A dictionary containing the extracted audio features.
+
+    Raises:
+        HTTPException: If audio processing fails due to a known `librosa`
+                       error (400) or an unexpected error (500).
     """
     try:
         audio_stream = io.BytesIO(audio_bytes)
@@ -117,8 +130,17 @@ def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
 
 async def analyze_audio(audio_bytes: bytes) -> Dict[str, Any]:
     """
-    Asynchronously analyze audio by running the synchronous, CPU-bound
-    `_analyze_audio_sync` function in a separate thread from a bounded executor.
+    Asynchronously analyzes an audio byte stream.
+
+    This function offloads the CPU-bound `_analyze_audio_sync` function to a
+    separate thread pool to avoid blocking the main asyncio event loop, ensuring
+    the server remains responsive.
+
+    Args:
+        audio_bytes: The raw bytes of the audio file.
+
+    Returns:
+        A dictionary containing the extracted audio features.
     """
     loop = asyncio.get_event_loop()
     # Use a specific, bounded executor to prevent resource exhaustion

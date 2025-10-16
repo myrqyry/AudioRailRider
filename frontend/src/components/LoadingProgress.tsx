@@ -1,10 +1,21 @@
 import React from 'react';
 
+/**
+ * Props for the LoadingProgress component.
+ */
 interface LoadingProgressProps {
+  /** The current stage of the loading process. */
   stage: 'analyzing' | 'generating' | 'building' | 'loading';
+  /** The progress of the current stage, as a percentage (0-100). */
   progress?: number;
 }
 
+/**
+ * A component that displays the progress of the multi-stage loading process.
+ * It shows the current stage with a title, description, and icon, along with an optional progress bar.
+ * @param {LoadingProgressProps} props - The properties for the component.
+ * @returns {React.ReactElement} The rendered loading progress component.
+ */
 export const LoadingProgress: React.FC<LoadingProgressProps> = ({ stage, progress }) => {
   const stages = {
     analyzing: {

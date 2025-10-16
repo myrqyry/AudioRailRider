@@ -5,6 +5,17 @@ import { validateAndRefineBlueprint } from './trackValidator';
 import { buildTrackData } from './trackBuilder';
 import { AppStatus } from 'shared/types';
 
+/**
+ * Orchestrates the end-to-end workflow for processing an audio file and generating a ride.
+ * This includes sending the audio to the backend, receiving a blueprint, refining it,
+ * building the 3D track data, and updating the application state at each step.
+ *
+ * @param {File} file - The audio file to process.
+ * @param {object} [options] - Optional parameters for the workflow.
+ * @param {AbortSignal} [options.signal] - An external AbortSignal to cancel the workflow.
+ * @param {Record<string, any>} [options.generationOptions] - User-selected options to influence generation.
+ * @returns {Promise<void>} A promise that resolves when the workflow is complete or aborted.
+ */
 export const runAudioProcessingWorkflow = async (
   file: File,
   options?: { signal?: AbortSignal; generationOptions?: Record<string, any> }

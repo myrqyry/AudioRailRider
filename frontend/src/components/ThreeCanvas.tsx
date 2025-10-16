@@ -9,6 +9,13 @@ import { VisualEffects } from '../lib/VisualEffects';
 // Skybox generation is now initiated by the workflow; ThreeCanvas will apply
 // the resulting image URL from the global store when it becomes available.
 
+/**
+ * The main component for rendering the 3D scene using Three.js.
+ * It manages the scene, camera, visual effects, and the animation loop.
+ * It also handles WebGL context loss and restoration, and responds to
+ * application state changes from the global store.
+ * @returns {React.ReactElement} The rendered div element that hosts the canvas.
+ */
 const ThreeCanvas: React.FC = () => {
   const status = useAppStore((state) => state.status);
   const trackData = useAppStore((state) => state.trackData);

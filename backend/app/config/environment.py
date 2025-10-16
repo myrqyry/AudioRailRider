@@ -10,7 +10,10 @@ from functools import lru_cache
 
 
 class EnvironmentSettings(BaseSettings):
-    """Environment configuration settings with validation"""
+    """
+    Defines the application's environment settings, loaded from environment
+    variables and a .env file. It uses Pydantic for validation.
+    """
 
     # Application settings
     ENVIRONMENT: str = "development"
@@ -61,7 +64,7 @@ class EnvironmentSettings(BaseSettings):
 
     @validator("ENVIRONMENT")
     def validate_environment(cls, v):
-        """Validate environment value"""
+        """Validates that the ENVIRONMENT variable is one of the allowed values."""
         valid_environments = ["development", "production", "test"]
         if v not in valid_environments:
             raise ValueError(f"Environment must be one of: {valid_environments}")
@@ -69,7 +72,7 @@ class EnvironmentSettings(BaseSettings):
 
     @validator("CORS_ORIGINS", pre=True)
     def assemble_cors_origins(cls, v):
-        """Parse CORS origins from environment variable or use defaults"""
+        """Parses a comma-separated string of CORS origins into a list."""
         if isinstance(v, str):
             # Split comma-separated string
             return [origin.strip() for origin in v.split(",")]
@@ -77,21 +80,21 @@ class EnvironmentSettings(BaseSettings):
 
     @validator("DEBUG")
     def validate_debug(cls, v, values):
-        """Set debug based on environment if not explicitly set"""
+        """Ensures DEBUG is False when in the production environment."""
         if "ENVIRONMENT" in values and values["ENVIRONMENT"] == "production":
             return False
         return v
 
     @validator("RELOAD")
     def validate_reload(cls, v, values):
-        """Disable reload in production"""
+        """Ensures RELOAD is False when in the production environment."""
         if "ENVIRONMENT" in values and values["ENVIRONMENT"] == "production":
             return False
         return v
 
     @validator("GEMINI_API_KEY")
     def validate_gemini_api_key(cls, v):
-        """Validate Gemini API key is present"""
+        """Validates that the GEMINI_API_KEY is provided."""
         if not v:
             raise ValueError(
                 "GEMINI_API_KEY is required. Please set it in your environment variables."
@@ -101,7 +104,14 @@ class EnvironmentSettings(BaseSettings):
 
 @lru_cache()
 def get_settings() -> EnvironmentSettings:
-    """Get cached settings instance"""
+    """
+    Retrieves the application settings.
+
+    This function is cached to ensure that settings are loaded only once.
+
+    Returns:
+        An instance of EnvironmentSettings.
+    """
     return EnvironmentSettings()
 
 
@@ -110,27 +120,37 @@ settings = get_settings()
 
 
 def is_development() -> bool:
-    """Check if running in development environment"""
+    """Checks if the current environment is 'development'."""
     return settings.ENVIRONMENT == "development"
 
 
 def is_production() -> bool:
-    """Check if running in production environment"""
+    """Checks if the current environment is 'production'."""
     return settings.ENVIRONMENT == "production"
 
 
 def is_test() -> bool:
-    """Check if running in test environment"""
+    """Checks if the current environment is 'test'."""
     return settings.ENVIRONMENT == "test"
 
 
 def get_cors_origins() -> List[str]:
-    """Get CORS origins for the current environment"""
+    """
+    Returns the list of allowed CORS origins for the current environment.
+
+    Returns:
+        A list of strings representing the allowed origins.
+    """
     return settings.CORS_ORIGINS
 
 
 def get_server_config() -> dict:
-    """Get server configuration for uvicorn"""
+    """
+    Returns the server configuration for uvicorn.
+
+    Returns:
+        A dictionary with server host, port, reload, and log level settings.
+    """
     return {
         "host": settings.HOST,
         "port": settings.PORT,
@@ -140,7 +160,12 @@ def get_server_config() -> dict:
 
 
 def validate_environment_variables() -> None:
-    """Validate all required environment variables are present"""
+    """
+    Validates that all required environment variables are present.
+
+    Raises:
+        ValueError: If any required environment variables are missing.
+    """
     missing_vars = []
 
     # Check for required variables
@@ -155,7 +180,7 @@ def validate_environment_variables() -> None:
 
 
 def print_environment_info() -> None:
-    """Print environment information for debugging"""
+    """Prints environment configuration information for debugging purposes."""
     if is_development():
         print("🔧 Development Environment Configuration:")
         print(f"   Environment: {settings.ENVIRONMENT}")

@@ -14,6 +14,13 @@ import ReadyUI from './components/views/ReadyUI';
 import FinishedUI from './components/views/FinishedUI';
 import ErrorUI from './components/views/ErrorUI';
 
+/**
+ * The main application component.
+ * It orchestrates the overall UI and state transitions based on the application status.
+ * It renders the appropriate UI view (Idle, Ready, Finished, Error) or the 3D canvas
+ * for the ride visualization.
+ * @returns {React.ReactElement} The rendered App component.
+ */
 const App: React.FC = () => {
     const status = useAppStore((state) => state.status);
     const statusMessage = useAppStore((state) => state.statusMessage);

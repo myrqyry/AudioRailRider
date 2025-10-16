@@ -2,6 +2,14 @@ from pydantic import Field, validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
+    """
+    Defines application settings, loading them from environment variables or a .env file.
+    Uses Pydantic for validation and type casting.
+
+    Attributes:
+        GEMINI_API_KEY: The API key for the Gemini service.
+        MAX_FILE_SIZE: The maximum allowed file size for audio uploads in bytes.
+    """
     # Gemini API Key with validation
     GEMINI_API_KEY: str = Field(..., min_length=10) # Basic check for presence and reasonable length
 
@@ -15,6 +23,15 @@ class Settings(BaseSettings):
         """
         Validates that the Gemini API key has a plausible format.
         This is not a foolproof check but prevents common mistakes.
+
+        Args:
+            v: The value of the GEMINI_API_KEY.
+
+        Returns:
+            The validated API key.
+
+        Raises:
+            ValueError: If the API key seems too short.
         """
         # Basic length check for plausibility
         if len(v) < 30:

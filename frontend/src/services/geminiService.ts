@@ -37,6 +37,15 @@ function detectMimeFromName(filename: string) {
  * Prepare an audio part suitable for sending to an AI API. Small files are inlined
  * as base64, large files are uploaded via the provided AI client's files.upload.
  */
+/**
+ * Prepares an audio file to be sent to the Gemini API.
+ * Small files are inlined as base64 strings, while larger files are uploaded
+ * via the AI client's file service.
+ * @param {*} ai - The AI client instance (e.g., from `@google/genai`).
+ * @param {File} file - The audio file to prepare.
+ * @returns {Promise<object>} A promise that resolves to an object suitable for the Gemini API request.
+ * @throws {Error} If the audio file's MIME type is not supported.
+ */
 export const prepareAudioPart = async (ai: any, file: File) => {
   const rawType = (file.type && file.type.trim() !== '') ? file.type : detectMimeFromName(file.name);
   const mime = typeof rawType === 'string' ? rawType.split(';')[0].trim() : rawType;
@@ -74,6 +83,20 @@ export const prepareAudioPart = async (ai: any, file: File) => {
 /**
  * Test-friendly generator that uses the GoogleGenAI client to generate a ride blueprint
  * from audio metadata. This mirrors the behavior tests expect (they mock GoogleGenAI).
+ */
+/**
+ * Generates a ride blueprint using a direct call to the Google GenAI client.
+ * This function is primarily intended for testing and development, allowing for
+ * direct interaction with the AI model without going through the backend service.
+ *
+ * @param {File} audioFile - The audio file to be analyzed.
+ * @param {number} duration - The duration of the audio in seconds.
+ * @param {number} bpm - The beats per minute of the audio.
+ * @param {number} energy - The energy level of the audio.
+ * @param {number} spectralCentroid - The spectral centroid of the audio.
+ * @param {number} spectralFlux - The spectral flux of the audio.
+ * @returns {Promise<Blueprint>} A promise that resolves to the generated ride blueprint.
+ * @throws {Error} If the AI returns malformed data.
  */
 export const generateRideBlueprintWithAI = async (
   audioFile: File,
@@ -113,6 +136,17 @@ export const generateRideBlueprintWithAI = async (
  * Backend-based generator: upload the audio file to our backend which will
  * perform analysis + blueprint generation and return both the blueprint and
  * extracted audio features. This is the runtime path used by the web app.
+ */
+/**
+ * Generates a ride blueprint by sending the audio file to the backend service.
+ * The backend handles the audio analysis and blueprint generation.
+ *
+ * @param {File} audioFile - The audio file to process.
+ * @param {AbortSignal} [signal] - An optional AbortSignal to cancel the request.
+ * @param {Record<string, any>} [options] - Optional generation options to send to the backend.
+ * @returns {Promise<{ blueprint: Blueprint; features: any }>} A promise that resolves to an object
+ * containing both the generated blueprint and the extracted audio features.
+ * @throws {Error} If the backend request fails or returns an invalid payload.
  */
 export const generateRideBlueprint = async (
   audioFile: File,
@@ -163,6 +197,14 @@ export const generateRideBlueprint = async (
  * @param prompt A descriptive prompt for the skybox image.
  * @param blueprint Optional blueprint data for richer context.
  * @returns A promise that resolves to a base64-encoded data URL of the image.
+ */
+/**
+ * Generates a skybox image by sending a prompt and optional context to the backend.
+ *
+ * @param {string} prompt - A descriptive prompt for the skybox image.
+ * @param {*} [blueprint] - Optional blueprint data to provide richer context for the image generation.
+ * @returns {Promise<string>} A promise that resolves to the URL of the generated image.
+ * @throws {Error} If the image generation fails or is not supported by the backend.
  */
 export const generateSkyboxImage = async (prompt: string, blueprint?: any): Promise<string> => {
   try {

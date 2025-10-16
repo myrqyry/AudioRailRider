@@ -4,11 +4,24 @@ import { createWorkletAnalyzerForContext } from './audioProcessor';
 import { getLatestFrame } from './audioWorkletState';
 import { createFrameForDispatch } from './audioFeatureUtils';
 
+/**
+ * Props for the `useAudioAnalysis` hook.
+ */
 interface UseAudioAnalysisProps {
+  /** The audio file to be analyzed and played. */
   audioFile: File | null;
+  /** The current status of the application, which controls the hook's behavior. */
   status: string;
 }
 
+/**
+ * A React hook that manages the real-time analysis of an audio file during playback.
+ * It sets up an `AudioContext` and an `AudioWorklet` to process audio frames,
+ * and dispatches custom events for beats, tempo changes, and structural changes.
+ *
+ * @param {UseAudioAnalysisProps} props - The properties for the hook.
+ * @returns {{ audioRef: React.RefObject<HTMLAudioElement | null> }} An object containing a ref to the `HTMLAudioElement`.
+ */
 export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const animationFrameId = useRef<number | null>(null);

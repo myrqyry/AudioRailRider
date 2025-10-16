@@ -24,6 +24,13 @@ export interface EnvironmentConfig {
 /**
  * Validates that a required environment variable is present
  */
+/**
+ * Validates that a required environment variable is present.
+ * @param {keyof EnvironmentConfig} name - The name of the environment variable.
+ * @param {string | undefined} value - The value of the environment variable.
+ * @returns {string} The validated environment variable value.
+ * @throws {Error} If the environment variable is not set.
+ */
 function validateRequiredEnvVar(name: keyof EnvironmentConfig, value: string | undefined): string {
   if (!value) {
     throw new Error(`Missing required environment variable: ${name}. Please check your .env file.`);
@@ -34,6 +41,13 @@ function validateRequiredEnvVar(name: keyof EnvironmentConfig, value: string | u
 /**
  * Validates and parses boolean environment variables
  */
+/**
+ * Validates and parses a boolean environment variable.
+ * @param {keyof EnvironmentConfig} name - The name of the environment variable.
+ * @param {string | undefined} value - The value of the environment variable.
+ * @param {boolean} [defaultValue=false] - The default value to return if the variable is not set.
+ * @returns {boolean} The parsed boolean value.
+ */
 function validateBooleanEnvVar(name: keyof EnvironmentConfig, value: string | undefined, defaultValue: boolean = false): boolean {
   if (!value) return defaultValue;
   return value.toLowerCase() === 'true';
@@ -41,6 +55,13 @@ function validateBooleanEnvVar(name: keyof EnvironmentConfig, value: string | un
 
 // Safe environment accessor: prefer Vite's import.meta.env in browser builds,
 // but fall back to Node's process.env when available (e.g., during SSR/test).
+/**
+ * Safely access environment variables in a way that is compatible with both
+ * Vite/browser environments (using `import.meta.env` or a global) and Node.js/Jest
+ * environments (using `process.env`).
+ * @param {string} name - The name of the environment variable to access.
+ * @returns {string | undefined} The value of the environment variable, or undefined if not found.
+ */
 function safeEnv(name: string): string | undefined {
   // Avoid using `import.meta` here so the file can be parsed by Node/Jest
   // (which do not understand the import.meta syntax). Prefer process.env
@@ -97,6 +118,11 @@ const ENVIRONMENTS = {
 /**
  * Detects the current environment from NODE_ENV or Vite's mode
  */
+/**
+ * Detects the current application environment ('development', 'production', or 'test').
+ * It checks `NODE_ENV` and Vite's `MODE` variable, defaulting to 'development'.
+ * @returns {Environment} The detected environment.
+ */
 function detectEnvironment(): Environment {
   // Vite exposes mode via import.meta.env.MODE at build time; however we avoid
   // referencing import.meta here so tests and Node can parse this file. The
@@ -115,6 +141,11 @@ function detectEnvironment(): Environment {
 
 /**
  * Gets the current environment configuration
+ */
+/**
+ * Constructs the final environment configuration object by layering
+ * environment-specific defaults with actual environment variables.
+ * @returns {EnvironmentConfig} The complete environment configuration object.
  */
 function getEnvironmentConfig(): EnvironmentConfig {
   const currentEnv = detectEnvironment();
@@ -142,9 +173,13 @@ export const env = getEnvironmentConfig();
 /**
  * Utility functions for environment checks
  */
+/** Checks if the current environment is development. */
 export const isDevelopment = (): boolean => env.NODE_ENV === 'development';
+/** Checks if the current environment is production. */
 export const isProduction = (): boolean => env.NODE_ENV === 'production';
+/** Checks if the current environment is test. */
 export const isTest = (): boolean => env.NODE_ENV === 'test';
+/** Checks if debug mode is enabled via the VITE_DEBUG environment variable. */
 export const isDebugEnabled = (): boolean => validateBooleanEnvVar('VITE_DEBUG', env.VITE_DEBUG, false);
 
 /**

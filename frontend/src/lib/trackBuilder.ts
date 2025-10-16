@@ -115,6 +115,16 @@ const AUDIO_WARP_BLEND = 0.55;
 const DEFAULT_WARP_BLEND = 0.4;
 const ROLL_CLAMP = Math.PI / 4;
 
+/**
+ * Constructs the 3D track data from a high-level `Blueprint`.
+ * This involves converting abstract segments (like 'climb', 'turn') into a
+ * series of 3D points and up-vectors that define the rollercoaster's path.
+ * It also applies procedural "warping" to the track based on audio features.
+ *
+ * @param {Blueprint} blueprint - The high-level ride description.
+ * @param {AudioFeatures} [audioFeatures] - The analyzed features of the audio track.
+ * @returns {TrackData} The processed, render-ready track data.
+ */
 export const buildTrackData = (blueprint: Blueprint, audioFeatures?: AudioFeatures): TrackData => {
     const SPEED_MULTIPLIER = 1.25;
     const points: THREE.Vector3[] = [];
