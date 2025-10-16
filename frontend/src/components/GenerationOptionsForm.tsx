@@ -10,11 +10,22 @@ const DETAIL_LEVELS: DetailLevel[] = ['low', 'medium', 'high'];
 const EVENT_PRESETS: EventPreset[] = ['fog', 'fireworks', 'starshow', 'lightBurst', 'sparkRing', 'confetti'];
 
 
+/**
+ * A form component for configuring the generation options for the visualization.
+ * It allows users to select track style, world theme, visual style, detail level,
+ * and preferred event presets.
+ * @returns {React.ReactElement} The rendered form component.
+ */
 const GenerationOptionsForm: React.FC = () => {
     const generationOptions = useAppStore(state => state.generationOptions);
     const setGenerationOptions = useAppStore(state => state.actions.setGenerationOptions);
 
-    // Type-safe handler for select changes
+    /**
+     * Handles changes to select input elements in a type-safe manner.
+     * @template T
+     * @param {T} key - The key of the generation option to update.
+     * @param {GenerationOptions[T] | undefined} value - The new value for the option.
+     */
     const handleSelectChange = <T extends keyof GenerationOptions>(key: T, value: GenerationOptions[T] | undefined) => {
         setGenerationOptions({
             ...generationOptions,
@@ -22,7 +33,11 @@ const GenerationOptionsForm: React.FC = () => {
         });
     };
 
-    // Type-safe handler for checkbox changes
+    /**
+     * Handles changes to checkbox input elements for event presets.
+     * @param {React.ChangeEvent<HTMLInputElement>} event - The change event from the checkbox.
+     * @param {EventPreset} preset - The event preset associated with the checkbox.
+     */
     const handleCheckboxChange = (event: React.ChangeEvent<HTMLInputElement>, preset: EventPreset) => {
         const currentPresets = generationOptions?.preferredEventPresets || [];
         const newPresets = event.target.checked

@@ -3,6 +3,11 @@ import { useAppStore } from '../../lib/store';
 import { UploadIcon } from '../Icon';
 import GenerationOptionsForm from '../GenerationOptionsForm';
 
+/**
+ * The initial user interface component when the application is idle.
+ * It provides a file input for uploading an audio file and displays the main title.
+ * @returns {React.ReactElement} The rendered idle UI.
+ */
 const IdleUI: React.FC = () => {
     const { setAudioFile, setError } = useAppStore((state) => state.actions);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -14,6 +19,11 @@ const IdleUI: React.FC = () => {
         }
     }, []);
 
+    /**
+     * Handles the file input change event.
+     * It validates the selected file's type and size before updating the application state.
+     * @param {React.ChangeEvent<HTMLInputElement>} event - The file input change event.
+     */
     const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         if (!file) return;

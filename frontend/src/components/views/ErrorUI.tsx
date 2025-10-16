@@ -2,6 +2,11 @@ import React from 'react';
 import { useAppStore } from '../../lib/store';
 import { AlertTriangleIcon } from '../Icon';
 
+/**
+ * A user interface component displayed when an error occurs in the application.
+ * It shows the error title and message, and provides a button to reset the application.
+ * @returns {React.ReactElement | null} The rendered error UI, or null if there is no error.
+ */
 const ErrorUI: React.FC = () => {
     const error = useAppStore((state) => state.error);
     const resetApp = useAppStore((state) => state.actions.resetApp);

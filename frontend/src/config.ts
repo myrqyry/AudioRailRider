@@ -1,5 +1,10 @@
 import { HarmCategory, HarmBlockThreshold } from "@google/genai";
 
+/**
+ * Reads the Gemini API key from the environment variables.
+ * @returns {string} The Gemini API key.
+ * @throws {Error} If the API key is not configured.
+ */
 function readApiKey(): string {
   const key = import.meta.env.VITE_GEMINI_API_KEY;
   if (typeof key !== "string" || key.trim() === "") {
@@ -9,8 +14,14 @@ function readApiKey(): string {
   return key;
 }
 
+/**
+ * A frozen configuration object containing settings for the Gemini API and other services.
+ */
 export const config = Object.freeze({
-  // API key management
+  /**
+   * Getter for the Gemini API key.
+   * @returns {string} The API key.
+   */
   get apiKey(): string {
     return readApiKey();
   },

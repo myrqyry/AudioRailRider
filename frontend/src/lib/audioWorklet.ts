@@ -20,6 +20,10 @@ export interface WorkletAnalysisResult {
 
 export type WorkletAvailable = boolean;
 
+/**
+ * Checks if the current browser environment supports `AudioWorklet`.
+ * @returns {boolean} `true` if supported, `false` otherwise.
+ */
 export const isWorkletSupported = (): boolean => {
   try {
     return typeof (globalThis as any).AudioWorkletNode !== 'undefined';
@@ -123,6 +127,13 @@ const getInlineProcessorSourceString = (): string => {
 // placeholder that forwards raw PCM frames (as Float32 arrays) to the
 // main thread via port messages. A production implementation would
 // perform the heavy lifting in the processor for lower latency.
+/**
+ * Registers the audio analyzer worklet processor with the given `AudioContext`.
+ * It first tries to load the processor from a static path, falling back to an
+ * inline blob if the static load fails.
+ * @param {AudioContext} audioContext - The audio context to register the worklet with.
+ * @returns {Promise<void>} A promise that resolves when the worklet is registered.
+ */
 export const registerWorklet = async (audioContext: AudioContext): Promise<void> => {
   if (!isWorkletSupported()) return Promise.resolve();
   // Prefer loading a static worklet module from the dev server / production
@@ -156,6 +167,11 @@ export const registerWorklet = async (audioContext: AudioContext): Promise<void>
 
 // Create an AudioWorkletNode wired to the given context and return its port
 // for messages. The caller should connect a source to this node.
+/**
+ * Creates an `AudioWorkletNode` using the registered processor.
+ * @param {AudioContext} audioContext - The audio context to create the node in.
+ * @returns {AudioWorkletNode | null} The created node, or `null` if worklets are not supported or creation fails.
+ */
 export const createWorkletNode = (audioContext: AudioContext): AudioWorkletNode | null => {
   try {
     if (!isWorkletSupported()) return null;

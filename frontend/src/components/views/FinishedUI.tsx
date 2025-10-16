@@ -1,6 +1,11 @@
 import React from 'react';
 import { useAppStore } from '../../lib/store';
 
+/**
+ * A user interface component displayed when the ride has finished.
+ * It provides options to ride again or to upload a new song.
+ * @returns {React.ReactElement} The rendered finished UI.
+ */
 const FinishedUI: React.FC = () => {
     const audioFile = useAppStore((state) => state.audioFile);
     const { startRideAgain, resetApp } = useAppStore((state) => state.actions);

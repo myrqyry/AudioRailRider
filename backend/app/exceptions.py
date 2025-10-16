@@ -9,7 +9,16 @@ from fastapi import HTTPException
 
 async def http_exception_handler(request: Request, exc: HTTPException):
     """
-    Handles FastAPI HTTPExceptions by returning a structured JSON response.
+    Custom exception handler for FastAPI's HTTPException.
+
+    This handler logs the exception and returns a standardized JSON error response.
+
+    Args:
+        request: The incoming request object.
+        exc: The HTTPException instance.
+
+    Returns:
+        A JSONResponse with the appropriate status code and error detail.
     """
     logger.error(
         "HTTP Exception",
@@ -26,8 +35,17 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 
 async def generic_exception_handler(request: Request, exc: Exception):
     """
-    Handles all other exceptions, logging them and returning a generic
-    500 Internal Server Error to the client.
+    Catch-all exception handler for any unhandled exceptions.
+
+    This prevents sensitive error details from leaking to the client and ensures
+    all critical errors are logged.
+
+    Args:
+        request: The incoming request object.
+        exc: The Exception instance.
+
+    Returns:
+        A JSONResponse with a generic 500 Internal Server Error message.
     """
     logger.critical(
         "Unhandled Exception",

@@ -1,37 +1,66 @@
 import { create } from 'zustand';
 import { AppStatus, Blueprint, TrackData } from 'shared/types';
 
+/**
+ * Defines the structure for representing an error state in the application.
+ */
 interface ErrorState {
+    /** The title of the error. */
     title: string;
+    /** A descriptive message for the error. */
     message: string;
 }
 
+/**
+ * Defines the complete state of the application, including status, data, and actions.
+ */
 interface AppState {
+    /** The current status of the application. */
     status: AppStatus;
+    /** The current error state, or null if there is no error. */
     error: ErrorState | null;
+    /** A message describing the current status. */
     statusMessage: string;
+    /** The user-uploaded audio file. */
     audioFile: File | null;
+    /** The generated track data for the visualization. */
     trackData: TrackData | null;
     /** URL of the generated skybox image (if available) */
     skyboxUrl: string | null;
-    // User-selected generation options used to influence AI generation
+    /** User-selected options that influence the generation process. */
     generationOptions?: import('shared/types').GenerationOptions | null;
+    /** The progress of the current workflow (e.g., audio analysis, generation). */
     workflowProgress: number;
+    /** A collection of actions to modify the application state. */
     actions: {
-    setGenerationOptions: (opts: import('shared/types').GenerationOptions | null) => void;
+        /** Sets the user-defined generation options. */
+        setGenerationOptions: (opts: import('shared/types').GenerationOptions | null) => void;
+        /** Sets the application's status and an optional message. */
         setStatus: (status: AppStatus, message?: string) => void;
+        /** Sets the track data for the visualization. */
         setTrackData: (data: TrackData | null) => void;
+        /** Sets or clears the application's error state. */
         setError: (error: ErrorState | null) => void;
+        /** Sets the audio file to be processed. */
         setAudioFile: (file: File) => void;
+        /** Sets the progress of the current workflow. */
         setWorkflowProgress: (progress: number) => void;
-    setSkyboxUrl: (url: string | null) => void;
+        /** Sets the URL for the generated skybox image. */
+        setSkyboxUrl: (url: string | null) => void;
+        /** Resets the application to its initial idle state. */
         resetApp: () => void;
+        /** Starts the ride visualization. */
         startRide: () => void;
+        /** Handles the completion of the ride. */
         handleRideFinish: () => void;
+        /** Starts the ride again with the same track. */
         startRideAgain: () => void;
     };
 }
 
+/**
+ * The Zustand store for managing the application's global state.
+ */
 export const useAppStore = create<AppState>((set, get) => ({
     status: AppStatus.Idle,
     error: null,

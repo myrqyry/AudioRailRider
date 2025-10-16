@@ -2,6 +2,11 @@ import React from 'react';
 import { useAppStore } from '../../lib/store';
 import { PlayIcon, SparkleIcon } from '../Icon';
 
+/**
+ * A user interface component displayed when the application is ready to start the ride.
+ * It shows a confirmation message and a button to begin the visualization.
+ * @returns {React.ReactElement} The rendered ready UI.
+ */
 const ReadyUI: React.FC = () => {
     const { audioFile } = useAppStore((state) => state);
     const { startRide } = useAppStore((state) => state.actions);

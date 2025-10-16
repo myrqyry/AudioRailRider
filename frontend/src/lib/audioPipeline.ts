@@ -1,15 +1,32 @@
 import { AudioFeatures, FrameAnalysis, seconds } from 'shared/types';
 
-// Plugin interface: each plugin accepts a raw Float32Array frame and returns partial frame analysis
+/**
+ * A function that processes a single frame of audio data and returns a partial analysis.
+ * @param {Float32Array} frame - The raw audio data for the frame.
+ * @param {number} sampleRate - The sample rate of the audio.
+ * @param {*} [prev] - The state from the previous frame's execution of this plugin.
+ * @returns {Partial<FrameAnalysis> | null} A partial frame analysis object, or null if no analysis is produced.
+ */
 export type FramePlugin = (frame: Float32Array, sampleRate: number, prev?: any) => Partial<FrameAnalysis> | null;
 
-// Pipeline config
+/**
+ * Configuration for the audio processing pipeline.
+ */
 export interface PipelineConfig {
+  /** The size of each audio frame buffer to be processed. */
   bufferSize: number;
+  /** An array of plugins to be run on each frame. */
   plugins: FramePlugin[];
 }
 
-// Runs a simple synchronous frame-based pipeline over channel data
+/**
+ * Runs a synchronous, frame-based audio processing pipeline over the provided channel data.
+ * It processes the audio in chunks and applies a series of plugins to each chunk.
+ * @param {Float32Array} channelData - The raw audio data for a single channel.
+ * @param {number} sampleRate - The sample rate of the audio data.
+ * @param {PipelineConfig} config - The configuration for the pipeline.
+ * @returns {FrameAnalysis[]} An array of frame analysis objects, one for each processed frame.
+ */
 export const runPipeline = (
   channelData: Float32Array,
   sampleRate: number,

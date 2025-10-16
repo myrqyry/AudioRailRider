@@ -6,10 +6,21 @@ const DEFAULTS = { curlStrength: 0.12, noiseScale: 2.0, noiseSpeed: 0.12 };
 const STORAGE_KEY = 'audiorailrider:dev:curlParams';
 const VIS_KEY = 'audiorailrider:dev:visible';
 
+/**
+ * A development panel that provides real-time controls for visual and track parameters.
+ * It is only rendered in development mode when the debug flag is enabled.
+ * The panel allows for tweaking curl noise, track settings, and shader uniforms,
+ * with capabilities for saving, loading, and sharing presets.
+ * @returns {React.ReactElement | null} The rendered DevPanel component or null.
+ */
 const DevPanel: React.FC = () => {
   // Only render when development + debug enabled
   if (!isDevelopment() || !isDebugEnabled()) return null;
 
+  /**
+   * Loads curl parameters from localStorage.
+   * @returns {object} The saved parameters or default values.
+   */
   const load = () => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -53,6 +64,10 @@ const DevPanel: React.FC = () => {
     opacityLerpSpeed: 6.0,
     trackRadius: 0.35,
   };
+  /**
+   * Loads track settings from localStorage.
+   * @returns {object} The saved track settings or default values.
+   */
   const loadTrackSettings = () => {
     try {
       const raw = localStorage.getItem(TRACK_SETTINGS_KEY);
@@ -152,6 +167,9 @@ const DevPanel: React.FC = () => {
     return () => { mounted = false; };
   }, []);
 
+  /**
+   * Resets the curl parameters to their default values and clears them from localStorage.
+   */
   const reset = () => {
     setCurlStrength(DEFAULTS.curlStrength);
     setNoiseScale(DEFAULTS.noiseScale);
@@ -159,6 +177,9 @@ const DevPanel: React.FC = () => {
     try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
   };
 
+  /**
+   * Fetches the shader uniforms manifest from the server and updates the component's state.
+   */
   const loadUniforms = async () => {
     try {
       const resp = await fetch('/shaders/shader-uniforms.json');
@@ -170,6 +191,9 @@ const DevPanel: React.FC = () => {
     } catch (e) { console.error(e); }
   };
 
+  /**
+   * Applies the default curl parameter values to the visualizer.
+   */
   const applyCurlDefaults = () => {
     // dispatch a few likely uniform updates so users can see immediate effect
     window.dispatchEvent(new CustomEvent('audiorailrider:dev:applyUniform', { detail: { name: 'curlStrength', value: DEFAULTS.curlStrength } }));
@@ -177,13 +201,22 @@ const DevPanel: React.FC = () => {
     window.dispatchEvent(new CustomEvent('audiorailrider:dev:applyUniform', { detail: { name: 'noiseSpeed', value: DEFAULTS.noiseSpeed } }));
   };
 
+  /**
+   * Applies a new value to a specified shader uniform.
+   * @param {string} name - The name of the uniform to update.
+   * @param {*} value - The new value for the uniform.
+   */
   const applyUniform = (name: string, value: any) => {
     // keep local state in sync
     setUniformValues(prev => ({ ...prev, [name]: value }));
     window.dispatchEvent(new CustomEvent('audiorailrider:dev:applyUniform', { detail: { name, value } }));
   };
 
-  // Helpers for preset export/import and URL sharing
+  /**
+   * Encodes an object into a URL-safe Base64 string.
+   * @param {any} obj - The object to encode.
+   * @returns {string} The Base64 encoded string.
+   */
   const base64Encode = (obj: any) => {
     try {
       return btoa(unescape(encodeURIComponent(JSON.stringify(obj)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -191,6 +224,12 @@ const DevPanel: React.FC = () => {
       return '';
     }
   };
+
+  /**
+   * Decodes a URL-safe Base64 string into an object.
+   * @param {string} s - The Base64 encoded string.
+   * @returns {any | null} The decoded object or null if decoding fails.
+   */
   const base64Decode = (s: string) => {
     try {
       s = s.replace(/-/g, '+').replace(/_/g, '/');
@@ -202,6 +241,12 @@ const DevPanel: React.FC = () => {
     }
   };
 
+  /**
+   * Clamps a numeric value within the defined min/max range for a uniform.
+   * @param {string} name - The name of the uniform.
+   * @param {*} value - The value to clamp.
+   * @returns {*} The clamped value.
+   */
   const clamp = (name: string, value: any) => {
     const def = uniformLookup[name];
     if (!def) return value;
@@ -211,6 +256,12 @@ const DevPanel: React.FC = () => {
     return value;
   };
 
+  /**
+   * Validates and coerces a value according to a uniform's definition.
+   * @param {string} name - The name of the uniform.
+   * @param {*} value - The value to validate and coerce.
+   * @returns {*} The validated and coerced value.
+   */
   const validateAndCoerce = (name: string, value: any) => {
     const def = uniformLookup[name];
     if (!def) return value;
@@ -235,6 +286,11 @@ const DevPanel: React.FC = () => {
     return value;
   };
 
+  /**
+   * Triggers a browser download for a JSON object.
+   * @param {any} obj - The object to download as JSON.
+   * @param {string} [filename='preset.json'] - The name of the downloaded file.
+   */
   const downloadJSON = (obj: any, filename = 'preset.json') => {
     const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -247,6 +303,11 @@ const DevPanel: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
+  /**
+   * Copies text to the user's clipboard.
+   * @param {string} text - The text to copy.
+   * @returns {Promise<boolean>} A promise that resolves to true if successful, false otherwise.
+   */
   const copyToClipboard = async (text: string) => {
     if ((navigator as any).clipboard && (navigator as any).clipboard.writeText) {
       try { await (navigator as any).clipboard.writeText(text); return true; } catch (e) { /* fallthrough */ }
@@ -254,8 +315,10 @@ const DevPanel: React.FC = () => {
     try { document.execCommand('copy'); return true; } catch (e) { return false; }
   };
 
-  // when not using provider, addToast is a noop fallback handled above
-
+  /**
+   * Saves the current settings as a new preset.
+   * @param {string} name - The name for the new preset.
+   */
   const savePreset = (name: string) => {
     const data: Record<string, any> = {};
     // snapshot current uniform values from React state
@@ -278,10 +341,18 @@ const DevPanel: React.FC = () => {
     try { localStorage.setItem(PRESET_KEY, JSON.stringify(newPresets)); } catch (e) {}
   };
 
+  /**
+   * Exports a preset to a JSON file.
+   * @param {Record<string, any>} p - The preset data to export.
+   */
   const exportPreset = (p: Record<string, any>) => {
     downloadJSON(p, `audiorailrider-preset-${Date.now()}.json`);
   };
 
+  /**
+   * Generates a shareable URL for a preset and copies it to the clipboard.
+   * @param {Record<string, any>} p - The preset data to share.
+   */
   const sharePresetUrl = (p: Record<string, any>) => {
     const code = base64Encode(p);
     const url = `${location.origin}${location.pathname}?preset=${code}`;
@@ -291,6 +362,10 @@ const DevPanel: React.FC = () => {
     });
   };
 
+  /**
+   * Imports a preset from a user-selected JSON file.
+   * @param {File | null} file - The file to import.
+   */
   const importPresetFromFile = async (file: File | null) => {
     if (!file) return;
     try {
@@ -331,6 +406,10 @@ const DevPanel: React.FC = () => {
     } catch (e) {}
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /**
+   * Loads a preset's data into the current state and applies it to the visuals.
+   * @param {Record<string, any>} p - The preset data to load.
+   */
   const loadPreset = (p: Record<string, any>) => {
     // apply preset values into state and dispatch to visuals
     for (const k of Object.keys(p)) {

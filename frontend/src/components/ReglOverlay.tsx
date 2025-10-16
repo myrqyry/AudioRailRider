@@ -2,10 +2,20 @@ import React, { useRef, useEffect, useState } from 'react';
 import createREGL from 'regl';
 import { AudioFeatures } from 'shared/types';
 
+/**
+ * Props for the ReglOverlay component.
+ */
 interface ReglOverlayProps {
+  /** The audio features to visualize. */
   audioFeatures: AudioFeatures | null;
 }
 
+/**
+ * A React component that uses `regl` to render a high-performance WebGL overlay.
+ * This is currently used to display a waveform of the audio energy.
+ * @param {ReglOverlayProps} props - The component props.
+ * @returns {React.ReactElement} The rendered canvas element for the overlay.
+ */
 const ReglOverlay: React.FC<ReglOverlayProps> = ({ audioFeatures }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // Using refs to hold regl-related objects that shouldn't trigger re-renders

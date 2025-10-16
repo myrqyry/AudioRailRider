@@ -10,6 +10,7 @@ ALLOWED_MIME_TYPES = ["audio/mpeg", "audio/wav", "audio/ogg", "audio/flac"]
 
 @router.get("/")
 async def root():
+    """Root endpoint to check if the backend is running."""
     return {"message": "AudioRailRider Backend is running!", "status": "healthy"}
 
 @router.post("/api/generate-blueprint")
@@ -20,6 +21,22 @@ async def generate_blueprint(
     options: str | None = Form(None),
     service: GeminiService = Depends(lambda: gemini_service)
 ):
+    """
+    Generates a ride blueprint from an audio file.
+
+    Args:
+        request: The incoming request object.
+        audio_file: The uploaded audio file.
+        options: Optional JSON string with generation parameters.
+        service: The GeminiService dependency.
+
+    Returns:
+        A JSON object containing the generated blueprint and audio features.
+
+    Raises:
+        HTTPException: If the file type is invalid, file size exceeds the limit,
+                       or the options JSON is malformed.
+    """
     if not audio_file.content_type or audio_file.content_type.lower() not in ALLOWED_MIME_TYPES:
         raise HTTPException(status_code=400, detail=f"Invalid file type: {audio_file.content_type}. Must be one of {ALLOWED_MIME_TYPES}")
 
@@ -46,12 +63,32 @@ async def generate_skybox(
     req_body: SkyboxRequest,
     service: GeminiService = Depends(lambda: gemini_service)
 ):
+    """
+    Generates a skybox image based on a prompt and blueprint context.
+
+    Args:
+        request: The incoming request object.
+        req_body: The request body containing the prompt and blueprint.
+        service: The GeminiService dependency.
+
+    Returns:
+        A JSON object with the URL of the generated skybox image.
+    """
     return await service.generate_skybox(req_body.prompt, req_body.blueprint, req_body.options)
 
 
 @router.get('/api/generation-presets')
 @limiter.limit('60/minute')
 async def generation_presets(request: Request):
+    """
+    Provides the frontend with a list of available generation presets.
+
+    Args:
+        request: The incoming request object.
+
+    Returns:
+        A JSON object containing lists of presets for different categories.
+    """
     # Mirror shared/types GenerationOptions presets so the frontend can present choices
     presets = {
         'trackStyles': ['classic', 'extreme', 'flowing', 'technical', 'experimental'],

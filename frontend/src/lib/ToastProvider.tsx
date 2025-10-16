@@ -1,21 +1,56 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
 
-type Toast = { id: string; message: string; type?: 'success' | 'error' | 'info'; visible?: boolean };
+/**
+ * Defines the structure of a single toast notification.
+ */
+type Toast = {
+  /** A unique identifier for the toast. */
+  id: string;
+  /** The message to be displayed. */
+  message: string;
+  /** The type of the toast, affecting its color and icon. */
+  type?: 'success' | 'error' | 'info';
+  /** Whether the toast is currently visible (used for animations). */
+  visible?: boolean;
+};
 
-type ToastContextValue = { addToast: (message: string, type?: Toast['type'], ttl?: number) => void };
+/**
+ * Defines the value provided by the ToastContext.
+ */
+type ToastContextValue = {
+  /**
+   * Adds a new toast notification.
+   * @param {string} message - The message to display.
+   * @param {Toast['type']} [type] - The type of the toast.
+   * @param {number} [ttl] - The time-to-live for the toast in milliseconds.
+   */
+  addToast: (message: string, type?: Toast['type'], ttl?: number) => void;
+};
 
 const ToastContext = createContext<ToastContextValue | null>(null);
 
+/**
+ * A hook to access the toast context.
+ * Provides a function to add new toasts.
+ * @returns {ToastContextValue} The toast context value.
+ * @throws {Error} If used outside of a ToastProvider.
+ */
 export const useToast = () => {
   const ctx = useContext(ToastContext);
   if (!ctx) throw new Error('useToast must be used within a ToastProvider');
   return ctx;
 };
 
+/**
+ * A provider component that manages the state of toast notifications
+ * and makes the `addToast` function available to its children.
+ * @param {object} props - The component props.
+ * @param {React.ReactNode} props.children - The child components.
+ * @returns {React.ReactElement} The rendered provider with the toast container.
+ */
 export const ToastProvider: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
-  // Immediately mark toast invisible then remove after animation duration
   const remove = useCallback((id: string) => {
     // mark invisible
     setToasts(prev => prev.map(t => t.id === id ? { ...t, visible: false } : t));
