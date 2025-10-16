@@ -1,13 +1,13 @@
 import React from 'react';
 import { useAppStore } from '../lib/store';
-import { GenerationOptions, TrackStyle, WorldTheme, VisualStyle, DetailLevel } from '../../../shared/types';
+import { GenerationOptions, TrackStyle, WorldTheme, VisualStyle, DetailLevel, EventPreset } from '../../../shared/types';
 
 // Preset options are now self-contained in this component
 const TRACK_STYLES: TrackStyle[] = ['classic', 'extreme', 'flowing', 'technical', 'experimental'];
 const WORLD_THEMES: WorldTheme[] = ['fantasy', 'cyberpunk', 'aurora', 'desert', 'space', 'underwater', 'noir'];
 const VISUAL_STYLES: VisualStyle[] = ['photorealistic', 'stylized', 'painterly', 'lowpoly', 'retro'];
 const DETAIL_LEVELS: DetailLevel[] = ['low', 'medium', 'high'];
-const EVENT_PRESETS = ['fog', 'fireworks', 'starshow', 'lightBurst', 'sparkRing', 'confetti'];
+const EVENT_PRESETS: EventPreset[] = ['fog', 'fireworks', 'starshow', 'lightBurst', 'sparkRing', 'confetti'];
 
 
 const GenerationOptionsForm: React.FC = () => {
@@ -23,7 +23,7 @@ const GenerationOptionsForm: React.FC = () => {
     };
 
     // Type-safe handler for checkbox changes
-    const handleCheckboxChange = (event: React.ChangeEvent<HTMLInputElement>, preset: string) => {
+    const handleCheckboxChange = (event: React.ChangeEvent<HTMLInputElement>, preset: EventPreset) => {
         const currentPresets = generationOptions?.preferredEventPresets || [];
         const newPresets = event.target.checked
             ? Array.from(new Set([...currentPresets, preset]))
@@ -31,7 +31,7 @@ const GenerationOptionsForm: React.FC = () => {
 
         setGenerationOptions({
             ...generationOptions,
-            preferredEventPresets: newPresets as any, // TODO: Fix this 'any' in the next phase
+            preferredEventPresets: newPresets,
         });
     };
 
