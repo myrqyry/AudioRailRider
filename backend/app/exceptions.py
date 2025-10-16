@@ -5,7 +5,9 @@ from fastapi import status
 
 logger = structlog.get_logger(__name__)
 
-async def http_exception_handler(request: Request, exc: Exception):
+from fastapi import HTTPException
+
+async def http_exception_handler(request: Request, exc: HTTPException):
     """
     Handles FastAPI HTTPExceptions by returning a structured JSON response.
     """
