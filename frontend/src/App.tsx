@@ -45,7 +45,7 @@ const App: React.FC = () => {
         [AppStatus.Riding]: null,
     };
 
-    const ContentComponent = statusToComponent[status];
+    const ContentComponent = statusToComponent[status] || ErrorUI;
 
     return (
         <main className="relative w-full h-screen bg-black overflow-hidden flex items-center justify-center">

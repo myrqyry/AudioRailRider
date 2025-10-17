@@ -41,14 +41,14 @@ def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
         # Resample to a lower sample rate to speed up STFT and feature extraction.
         target_sr = 22050
         y, sr = librosa.load(audio_stream, sr=target_sr, mono=True)
+        duration = float(librosa.get_duration(y=y, sr=sr))
 
         # Cap analysis length to avoid long processing times (seconds)
         MAX_ANALYZE_SECONDS = 120
-        duration = float(librosa.get_duration(y=y, sr=sr))
         if duration > MAX_ANALYZE_SECONDS:
             max_samples = int(MAX_ANALYZE_SECONDS * sr)
             y = y[:max_samples]
-            duration = float(librosa.get_duration(y=y, sr=sr))
+            duration = MAX_ANALYZE_SECONDS  # Use the limit directly
 
         # BPM estimation (fast path)
         tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
@@ -71,14 +71,14 @@ def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
 
         # Vectorized band energy per frame
         # handle empty bin cases defensively
-        maxS = np.max(S) if S.size > 0 else 1.0
+        maxS = max(np.max(S), 1e-10) if S.size > 0 else 1e-10
         bass_energy = S[bass_bins, :].mean(axis=0) if bass_bins.size > 0 else np.zeros(S.shape[1])
         mid_energy = S[mid_bins, :].mean(axis=0) if mid_bins.size > 0 else np.zeros(S.shape[1])
         high_energy = S[high_bins, :].mean(axis=0) if high_bins.size > 0 else np.zeros(S.shape[1])
 
-        bass = np.clip(bass_energy / (maxS + 1e-6), 0, 1)
-        mid = np.clip(mid_energy / (maxS + 1e-6), 0, 1)
-        high = np.clip(high_energy / (maxS + 1e-6), 0, 1)
+        bass = np.clip(bass_energy / maxS, 0, 1)
+        mid = np.clip(mid_energy / maxS, 0, 1)
+        high = np.clip(high_energy / maxS, 0, 1)
 
         times = librosa.frames_to_time(np.arange(S.shape[1]), sr=sr, hop_length=hop_length)
         rms_frames = librosa.feature.rms(S=S, frame_length=n_fft, hop_length=hop_length)[0]

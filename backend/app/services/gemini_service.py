@@ -2,6 +2,7 @@ import json
 import structlog
 import pathlib
 import tempfile
+import asyncio
 from io import BytesIO
 from contextlib import asynccontextmanager
 
@@ -74,6 +75,9 @@ class GeminiService:
         # Initialize a time-to-live (TTL) cache
         # Caches up to 100 blueprints for 1 hour (3600 seconds)
         self.blueprint_cache = TTLCache(maxsize=100, ttl=3600)
+        self._cache_lock = asyncio.Lock()
+        self._cache_hits = 0
+        self._cache_misses = 0
     @asynccontextmanager
     async def _managed_file_upload(self, audio_bytes: bytes, content_type: str):
         """Context manager for uploading and cleaning up temporary files.
@@ -88,6 +92,7 @@ class GeminiService:
 
         tmp_path: str | None = None
         uploaded_file = None
+        buffer = None
         try:
             logger.info(
                 "Uploading file to Gemini",
@@ -141,6 +146,8 @@ class GeminiService:
             uploaded_file = await self.client.aio.files.upload(**upload_kwargs)
             yield uploaded_file
         finally:
+            if buffer:
+                buffer.close()
             # Attempt to delete the uploaded remote file if present
             if uploaded_file:
                 try:
@@ -292,13 +299,18 @@ Always output strictly valid JSON. Push creativity to the MAXIMUM while respecti
         cache_key = self._generate_cache_key(audio_bytes, options)
 
         # Check if a valid result is already in the cache
-        if cache_key in self.blueprint_cache:
-            logger.info("Blueprint found in cache.", cache_key=cache_key)
-            return self.blueprint_cache[cache_key]
+        async with self._cache_lock:
+            if cache_key in self.blueprint_cache:
+                self._cache_hits += 1
+                logger.info("Blueprint cache hit",
+                           cache_key=cache_key,
+                           hit_rate=f"{self._cache_hits/(self._cache_hits + self._cache_misses):.2%}")
+                return self.blueprint_cache[cache_key]
 
         audio_features = {}
         try:
-            logger.info("Generating new blueprint (not found in cache).", cache_key=cache_key)
+            self._cache_misses += 1
+            logger.info("Blueprint cache miss", cache_key=cache_key)
             # Asynchronously analyze audio first. If this fails, we can't proceed.
             audio_features = await analyze_audio(audio_bytes)
 
@@ -334,15 +346,7 @@ Always output strictly valid JSON. Push creativity to the MAXIMUM while respecti
             blueprint_obj = response.parsed if hasattr(response, 'parsed') else json.loads(response.text)
             
             # Convert Pydantic model to dict for consistent JSON serialization
-            if blueprint_obj and hasattr(blueprint_obj, 'model_dump'):
-                # Pydantic v2 style
-                blueprint = blueprint_obj.model_dump(mode='json')
-            elif blueprint_obj and hasattr(blueprint_obj, 'dict'):
-                # Pydantic v1 style
-                blueprint = blueprint_obj.dict()
-            else:
-                # Already a dict
-                blueprint = blueprint_obj
+            blueprint = self._convert_to_dict(blueprint_obj)
             
             # Add generation options to the blueprint dict
             if blueprint and isinstance(blueprint, dict):
@@ -351,7 +355,8 @@ Always output strictly valid JSON. Push creativity to the MAXIMUM while respecti
             result = {"blueprint": blueprint, "features": audio_features}
 
             # Store the successful result in the cache
-            self.blueprint_cache[cache_key] = result
+            async with self._cache_lock:
+                self.blueprint_cache[cache_key] = result
             logger.info("Stored new blueprint in cache.", cache_key=cache_key)
 
             return result
@@ -377,6 +382,18 @@ Always output strictly valid JSON. Push creativity to the MAXIMUM while respecti
         except Exception as e:
             logger.error("Procedural fallback failed", error=str(e), exc_info=True)
             raise HTTPException(status_code=500, detail=f"Failed to generate fallback blueprint: {e}")
+
+    def _convert_to_dict(self, blueprint_obj):
+        """Convert Pydantic model to dictionary consistently."""
+        if hasattr(blueprint_obj, 'model_dump'):
+            return blueprint_obj.model_dump(mode='json')
+        elif hasattr(blueprint_obj, 'dict'):
+            return blueprint_obj.dict()
+        elif isinstance(blueprint_obj, dict):
+            return blueprint_obj
+        else:
+            # Fallback for unexpected types
+            return dict(blueprint_obj) if hasattr(blueprint_obj, '__dict__') else {}
 
     def _procedural_fallback(self, features: dict) -> dict:
         """

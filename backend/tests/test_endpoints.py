@@ -33,7 +33,7 @@ def test_generate_blueprint_invalid_mime_type(mock_gemini_service):
     files = {'audio_file': ('test.txt', audio_content, 'text/plain')}
     response = client.post("/api/generate-blueprint", files=files)
     assert response.status_code == 400
-    assert "Invalid file type" in response.json()["detail"]
+    assert "Unsupported file format" in response.json()["detail"]
 
 def test_generate_blueprint_file_too_large(mock_gemini_service):
     """
@@ -61,4 +61,4 @@ def test_generate_blueprint_removed_mp3_mimetype(mock_gemini_service):
     files = {'audio_file': ('test.mp3', audio_content, 'audio/mp3')}
     response = client.post("/api/generate-blueprint", files=files)
     assert response.status_code == 400
-    assert "Invalid file type" in response.json()["detail"]
+    assert "Unsupported file format" in response.json()["detail"]
