@@ -88,6 +88,20 @@ class SynestheticLayer(BaseModel):
     atmosphere: Optional[SynestheticAtmosphere] = None
 
 
+class SegmentDefinition(BaseModel):
+    """High-level definition for a single track segment."""
+    segment_type: Literal['climb', 'drop', 'turn', 'loop', 'barrelRoll'] = Field(..., description="The type of track segment.")
+    duration_percentage: float = Field(..., ge=1, le=50, description="The percentage of the total track duration this segment should occupy.")
+    intensity: float = Field(..., ge=0, le=100, description="The intensity of this segment.")
+
+class TrackLayout(BaseModel):
+    """High-level layout of the entire track, composed of segment definitions."""
+    ride_name: str = Field(..., description="A creative and fitting name for the ride.")
+    mood_description: str = Field(..., description="A detailed, evocative description of the ride's mood and atmosphere.")
+    palette: List[str] = Field(..., min_items=3, max_items=5, description="An array of 3 to 5 hex color codes.")
+    segments: conlist(SegmentDefinition, min_length=5, max_length=20) = Field(..., description="A list of high-level segment definitions.")
+
+
 class Blueprint(BaseModel):
     """
     The root object describing a generated rollercoaster ride.
