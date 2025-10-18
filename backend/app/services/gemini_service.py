@@ -36,7 +36,7 @@ except ImportError as e:
 import hashlib
 from cachetools import TTLCache
 from ..config.settings import settings
-from ..schema.blueprint import Blueprint
+from ..schema.blueprint import Blueprint, TrackLayout, SegmentDefinition, ClimbSegment, DropSegment, TurnSegment, LoopSegment, BarrelRollSegment
 
 # Lazily import the audio analysis implementation to avoid importing librosa at module import time.
 async def analyze_audio(audio_bytes: bytes):
@@ -50,14 +50,12 @@ async def analyze_audio(audio_bytes: bytes):
 
 class GeminiService:
     """
-    A service class to interact with the Gemini API for generating ride blueprints and skyboxes.
-    It includes caching for blueprints and a context manager for handling file uploads.
+    A service class to interact with the Gemini API.
     """
     def __init__(self):
         """
-        Initializes the GeminiService, setting up the Gemini client and a cache.
+        Initializes the GeminiService, setting up the Gemini client.
         """
-        # Initialize the Gemini client
         if genai and settings.GEMINI_API_KEY:
             try:
                 self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
@@ -72,119 +70,7 @@ class GeminiService:
                 logger.warning("Gemini client not initialized: GEMINI_API_KEY not set")
             self.client = None
 
-        # Initialize a time-to-live (TTL) cache
-        # Caches up to 100 blueprints for 1 hour (3600 seconds)
-        self.blueprint_cache = TTLCache(maxsize=100, ttl=3600)
-        self._cache_lock = asyncio.Lock()
-        self._cache_hits = 0
-        self._cache_misses = 0
-    @asynccontextmanager
-    async def _managed_file_upload(self, audio_bytes: bytes, content_type: str):
-        """Context manager for uploading and cleaning up temporary files.
-
-        Strategy:
-        1. Try to upload the bytes stream directly (most SDKs accept file-like objects).
-        2. If stream upload fails, fall back to writing a temporary file and uploading by path.
-        3. Ensure remote file is deleted after use and local temp file is removed.
-        """
-        if not self.client:
-            raise HTTPException(status_code=503, detail="Gemini client not available for file upload.")
-
-        tmp_path: str | None = None
-        uploaded_file = None
-        buffer = None
-        try:
-            logger.info(
-                "Uploading file to Gemini",
-                size_kb=round(len(audio_bytes) / 1024, 1),
-                upload_type="stream"
-            )
-            # First try stream upload using an in-memory buffer.
-            try:
-                buffer = BytesIO(audio_bytes)
-                # Some SDK versions accept a mime_type kwarg; others accept an UploadFileConfig.
-                if types and hasattr(types, 'UploadFileConfig') and content_type:
-                    try:
-                        upload_config = types.UploadFileConfig(mime_type=content_type)
-                        uploaded_file = await self.client.aio.files.upload(file=buffer, config=upload_config)
-                    except Exception:
-                        uploaded_file = await self.client.aio.files.upload(file=buffer, mime_type=content_type or "audio/mpeg")
-                else:
-                    uploaded_file = await self.client.aio.files.upload(file=buffer, mime_type=content_type or "audio/mpeg")
-                yield uploaded_file
-                return
-            except Exception as e:
-                logger.debug(
-                    "Stream upload failed, falling back to tempfile-based upload.",
-                    error=str(e),
-                    exc_info=True
-                )
-
-            # Fallback: persist to a temporary file and upload by path
-            mime_map = {
-                'audio/mpeg': '.mp3',
-                'audio/mp3': '.mp3',
-                'audio/wav': '.wav',
-                'audio/x-wav': '.wav',
-                'audio/flac': '.flac',
-                'audio/aac': '.aac',
-                'audio/ogg': '.ogg',
-            }
-            suffix = mime_map.get((content_type or '').lower(), '.mp3')
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                tmp.write(audio_bytes)
-                tmp_path = tmp.name
-
-            upload_kwargs: dict[str, object] = {'file': tmp_path}
-            if types and hasattr(types, 'UploadFileConfig') and content_type:
-                try:
-                    upload_kwargs['config'] = types.UploadFileConfig(mime_type=content_type)
-                except Exception:
-                    # Some SDK versions may not expose UploadFileConfig; continue without it.
-                    pass
-
-            uploaded_file = await self.client.aio.files.upload(**upload_kwargs)
-            yield uploaded_file
-        finally:
-            if buffer:
-                buffer.close()
-            # Attempt to delete the uploaded remote file if present
-            if uploaded_file:
-                try:
-                    if hasattr(uploaded_file, 'name'):
-                        await self.client.aio.files.delete(name=uploaded_file.name)
-                except Exception as e:
-                    logger.warning(
-                        "Failed to delete uploaded remote file",
-                        file_name=getattr(uploaded_file, 'name', 'unknown'),
-                        error=str(e),
-                        exc_info=True
-                    )
-
-            # Remove local temporary file if we created one
-            if tmp_path:
-                try:
-                    pathlib.Path(tmp_path).unlink(missing_ok=True)  # type: ignore[arg-type]
-                except Exception as e:
-                    logger.debug("Failed to remove temporary file", path=tmp_path, error=str(e), exc_info=True)
-
-    def generate_prompt_text(self, duration: float, bpm: float, energy: float,
-                             spectral_centroid: float, spectral_flux: float,
-                             options: dict | None = None) -> str:
-        """
-        Generates the text prompt for the Gemini API to create a ride blueprint.
-
-        Args:
-            duration: The duration of the audio in seconds.
-            bpm: The beats per minute of the audio.
-            energy: The energy level of the audio.
-            spectral_centroid: The spectral centroid of the audio.
-            spectral_flux: The spectral flux of the audio.
-            options: Optional dictionary with user-selected generation options.
-
-        Returns:
-            A formatted string to be used as the prompt.
-        """
+    def generate_layout_prompt(self, audio_features: dict, options: dict | None = None) -> str:
         opt_lines = []
         if options:
             if options.get('worldTheme'):
@@ -197,289 +83,99 @@ class GeminiService:
 
         return f"""
 🎵 AUDIO ESSENCE 🎵
-Duration: {duration:.0f}s | BPM: {bpm:.0f} | Energy: {energy:.2f}/1.0
-Spectral Centroid: {spectral_centroid:.0f}Hz | Spectral Flux: {spectral_flux:.3f}
+Duration: {audio_features.get('duration', 0):.0f}s | BPM: {audio_features.get('bpm', 0):.0f} | Energy: {audio_features.get('energy', 0):.2f}/1.0
 {option_block}
 
-🎢 CREATIVE MISSION 🎢
-You are a synesthetic architect designing an IMPOSSIBLY IMAGINATIVE rollercoaster experience. 
-This is not a normal ride - it's a journey through sound made visible, where physics bends to emotion and geometry dances with rhythm.
+🎢 CREATIVE MISSION: HIGH-LEVEL LAYOUT 🎢
+You are a master rollercoaster designer, planning the overall emotional journey of a ride based on a song's essence.
+Your task is to define the high-level structure of the ride by creating a sequence of segment definitions.
 
-DESIGN PHILOSOPHY:
-• Let the audio's personality guide WILD, UNEXPECTED segment combinations
-• If the energy is high, consider explosive drops into tight barrel rolls, loops that defy gravity, climbs that pierce dimensional barriers
-• If the BPM is fast, weave rapid turns and quick transitions that feel like controlled chaos
-• If spectral flux is high, introduce jarring contrasts: serene climbs suddenly collapsing into vertiginous drops
-• AVOID predictable patterns - surprise the rider with impossible transitions
-• Think of segments as emotional beats: joy, terror, wonder, transcendence, euphoria
-• Use 24-40 segments (MORE SEGMENTS = MORE EVENTS = MORE EXCITEMENT)
-• Mix segment types creatively for dynamic flow
-• Vary segment lengths (8-20) to create rhythm and pacing
+DESIGN PRINCIPLES:
+- Translate the song's structure into a sequence of 5-20 high-level track segments.
+- Each segment should have a type, a duration percentage, and an intensity score.
+- The sum of all `duration_percentage` values should be 100.
+- Use the audio features to inform your design choices. High energy might suggest drops and loops, while lower energy sections might be turns or climbs.
+- Create a compelling emotional arc with peaks and valleys of intensity.
 
-SEGMENT CREATIVITY GUIDELINES:
-• climbs: Can be gentle ascents or desperate clawing toward light/chaos
-• drops: From gentle descents to reality-shattering plunges  
-• turns: Sharp hairpins, sweeping curves, spiral descents through dimensions
-• loops: Single perfect circles or dizzying multi-rotation vortexes
-• barrelRolls: Quick twists or prolonged tumbling through space-time
+OUTPUT: Return ONLY valid JSON matching the TrackLayout schema.
+"""
 
-EXCITING COMBINATIONS:
-• Alternate between different segment types to create variety
-• Mix sharp maneuvers with flowing transitions
-• Use loops and barrel rolls as dramatic punctuation
-• Create crescendos and releases in intensity
+    def generate_segment_prompt(self, segment_definition: dict) -> str:
+        segment_type = segment_definition.get('segment_type', 'turn')
+        intensity = segment_definition.get('intensity', 50)
 
-SYNESTHETIC LAYER (CRUCIAL):
-• geometry.wireframeDensity (0-1): How much the track dissolves into pure energy
-• geometry.impossiblePhysics (bool): Track segments that couldn't exist in reality
-• geometry.organicBreathing (0-1): Track pulses with music, as if alive
-• particles.connectionDensity (0-1): Intensity of particle swarms connecting to the track
-• particles.resonanceThreshold (0-1): How aggressively particles react to audio peaks
-• atmosphere.skyMood: "transcendent-euphoria", "menacing-void", "crystalline-serenity", "chaotic-ecstasy"
-• atmosphere.turbulenceBias (-1 to 1): Negative = smooth, positive = chaotic
-• atmosphere.passionIntensity (0+): Emotional intensity of atmospheric effects
+        return f"""
+🎢 SEGMENT DESIGN MISSION: {segment_type.upper()} 🎢
+Intensity: {intensity:.2f}/100
 
-NAMING & MOOD:
-• rideName: Should be EVOCATIVE and MEMORABLE - examples: "Fracture Point", "The Ascending Scream", "Dopamine Cascade", "Temporal Vertigo"
-• moodDescription: Paint a vivid 50-200 word picture of the emotional/sensory journey
-• palette: 3-5 hex colors that capture the audio's emotional temperature (vibrant, muted, neon, organic, etc.)
+Based on the high-level segment definition and the overall audio essence, design a detailed track segment.
 
-OUTPUT: Return ONLY valid JSON matching the Blueprint schema. Be MAXIMALLY CREATIVE while respecting schema constraints.
+- For turns, specify direction, angle, and radius.
+- For drops and climbs, specify length and angle.
+- For loops, specify radius and rotations.
+- For barrel rolls, specify rotations and length.
+
+Be creative and ensure the segment's parameters reflect the specified intensity.
+A higher intensity should result in more extreme values (e.g., sharper turns, steeper drops).
+
+OUTPUT: Return ONLY a single valid JSON object matching the {segment_type.capitalize()}Segment schema.
 """
 
     SYSTEM_INSTRUCTION = """
 You are a synesthetic architect and impossible geometry artist specializing in audio-reactive experiences.
 Your designs transcend conventional rollercoaster logic, creating rides that exist at the intersection of sound, emotion, and surreal physics.
-
-CORE PRINCIPLES:
-1. Audio is your blueprint - every frequency, every rhythm shift, every dynamic surge should manifest in track geometry
-2. Embrace the impossible - tracks can breathe, dissolve, defy gravity, fold through dimensions
-3. Emotional storytelling - each segment transition tells a story of transformation
-4. Surprise and delight - avoid predictable patterns, create moments of unexpected wonder
-5. Synesthetic integration - deeply specify the synesthetic layer to create immersive, impossible beauty
-
-CREATIVE MANTRAS:
-• "What would this sound look like if geometry could dream?"
-• "How does this rhythm want to move through space?"
-• "What emotion is hiding in this frequency range?"
-
 Always output strictly valid JSON. Push creativity to the MAXIMUM while respecting the schema.
 """
 
-    def _generate_cache_key(self, audio_bytes: bytes, options: dict | None) -> str:
-        """Generates a stable cache key from audio content and options."""
-        hasher = hashlib.sha256()
-        hasher.update(audio_bytes)
-        if options:
-            # Serialize options in a consistent order
-            serialized_options = json.dumps(options, sort_keys=True).encode('utf-8')
-            hasher.update(serialized_options)
-        return hasher.hexdigest()
+    async def generate_layout(self, audio_features: dict, options: dict | None = None) -> dict:
+        if not self.client or not types:
+            raise RuntimeError("Gemini SDK is not configured.")
 
-    async def generate_blueprint(self, audio_bytes: bytes, content_type: str, options: dict | None = None):
-        """
-        Generates a ride blueprint by analyzing the audio and querying the Gemini API.
+        prompt = self.generate_layout_prompt(audio_features, options)
+        generation_config = types.GenerateContentConfig(
+            response_mime_type='application/json', response_schema=TrackLayout,
+            system_instruction=self.SYSTEM_INSTRUCTION, temperature=1.2,
+        )
+        response = await self.client.aio.models.generate_content(
+            model='gemini-2.0-flash', contents=[prompt], config=generation_config,
+        )
+        return self._convert_to_dict(response.parsed if hasattr(response, 'parsed') else json.loads(response.text))
 
-        This method orchestrates the audio analysis, prompt generation, and API call.
-        It uses caching to avoid re-processing identical requests and includes a
-        procedural fallback if the API call fails.
-
-        Args:
-            audio_bytes: The raw bytes of the audio file.
-            content_type: The MIME type of the audio file.
-            options: Optional dictionary with user-selected generation options.
-
-        Returns:
-            A dictionary containing the generated blueprint and the extracted audio features.
-
-        Raises:
-            HTTPException: If the initial audio analysis fails and no fallback can be generated.
-        """
-        # Generate a cache key based on the audio content and generation options
-        cache_key = self._generate_cache_key(audio_bytes, options)
-
-        # Check if a valid result is already in the cache
-        async with self._cache_lock:
-            if cache_key in self.blueprint_cache:
-                self._cache_hits += 1
-                logger.info("Blueprint cache hit",
-                           cache_key=cache_key,
-                           hit_rate=f"{self._cache_hits/(self._cache_hits + self._cache_misses):.2%}")
-                return self.blueprint_cache[cache_key]
-
-        audio_features = {}
-        try:
-            self._cache_misses += 1
-            logger.info("Blueprint cache miss", cache_key=cache_key)
-            # Asynchronously analyze audio first. If this fails, we can't proceed.
-            audio_features = await analyze_audio(audio_bytes)
-
-            prompt = self.generate_prompt_text(
-                audio_features["duration"], audio_features["bpm"], audio_features["energy"],
-                audio_features["spectralCentroid"], audio_features["spectralFlux"], options
-            )
-
-            if not self.client or not types:
-                raise RuntimeError("Gemini SDK is not configured. Install google-genai and set GEMINI_API_KEY.")
-
-            # Choose an upload strategy based on payload size:
-            # - Inline Part for small payloads (keeps everything in one request)
-            # - Files API upload for larger payloads (persist to disk for streaming)
-            SIZE_THRESHOLD = 2 * 1024 * 1024  # 2 MB
-            if len(audio_bytes) <= SIZE_THRESHOLD:
-                audio_part = types.Part.from_bytes(data=audio_bytes, mime_type=content_type or "audio/mpeg")
-                contents = [prompt, audio_part]
-            else:
-                async with self._managed_file_upload(audio_bytes, content_type) as uploaded_file:
-                    contents = [prompt, uploaded_file]
-
-            generation_config = types.GenerateContentConfig(
-                response_mime_type='application/json', response_schema=Blueprint,
-                system_instruction=self.SYSTEM_INSTRUCTION, temperature=1.2,
-            )
-
-            response = await self.client.aio.models.generate_content(
-                model='gemini-2.0-flash', contents=contents, config=generation_config,
-            )
-
-            # Get the blueprint data, preferring parsed Pydantic model
-            blueprint_obj = response.parsed if hasattr(response, 'parsed') else json.loads(response.text)
+    async def generate_detailed_segment(self, segment_definition: dict) -> dict:
+        if not self.client or not types:
+            raise RuntimeError("Gemini SDK is not configured.")
             
-            # Convert Pydantic model to dict for consistent JSON serialization
-            blueprint = self._convert_to_dict(blueprint_obj)
-            
-            # Add generation options to the blueprint dict
-            if blueprint and isinstance(blueprint, dict):
-                blueprint['generationOptions'] = options
+        prompt = self.generate_segment_prompt(segment_definition)
+        segment_type_name = segment_definition.get('segment_type', 'turn').capitalize()
+        SegmentSchema = {
+            'Climb': ClimbSegment,
+            'Drop': DropSegment,
+            'Turn': TurnSegment,
+            'Loop': LoopSegment,
+            'BarrelRoll': BarrelRollSegment,
+        }.get(segment_type_name, TurnSegment)
 
-            result = {"blueprint": blueprint, "features": audio_features}
+        generation_config = types.GenerateContentConfig(
+            response_mime_type='application/json', response_schema=SegmentSchema,
+            system_instruction=self.SYSTEM_INSTRUCTION, temperature=1.0,
+        )
+        response = await self.client.aio.models.generate_content(
+            model='gemini-2.0-flash', contents=[prompt], config=generation_config,
+        )
+        return self._convert_to_dict(response.parsed if hasattr(response, 'parsed') else json.loads(response.text))
 
-            # Store the successful result in the cache
-            async with self._cache_lock:
-                self.blueprint_cache[cache_key] = result
-            logger.info("Stored new blueprint in cache.", cache_key=cache_key)
-
-            return result
-
-        except (APIError, BadResponseError) as e:
-            logger.error("Gemini API error during blueprint generation", error=str(e), exc_info=True)
-            # Fall through to procedural fallback
-        except json.JSONDecodeError as e:
-            logger.error("Gemini returned invalid JSON", error=str(e), exc_info=True)
-            # Fall through to procedural fallback
-        except Exception as e:
-            # Catch other exceptions (e.g., from audio analysis) and attempt fallback
-            logger.error("Unexpected error during blueprint generation", error=str(e), exc_info=True)
-            # If audio features are missing, we cannot run fallback.
-            if not audio_features:
-                raise HTTPException(status_code=500, detail=f"Failed to generate blueprint due to an initial error: {e}")
-
-        # Fallback path
-        try:
-            logger.warning("Falling back to procedural blueprint generation.")
-            fb = self._procedural_fallback(audio_features)
-            return {"blueprint": fb, "features": audio_features}
-        except Exception as e:
-            logger.error("Procedural fallback failed", error=str(e), exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Failed to generate fallback blueprint: {e}")
-
-    def _convert_to_dict(self, blueprint_obj):
-        """Convert Pydantic model to dictionary consistently."""
-        if hasattr(blueprint_obj, 'model_dump'):
-            return blueprint_obj.model_dump(mode='json')
-        elif hasattr(blueprint_obj, 'dict'):
-            return blueprint_obj.dict()
-        elif isinstance(blueprint_obj, dict):
-            return blueprint_obj
-        else:
-            # Fallback for unexpected types
-            return dict(blueprint_obj) if hasattr(blueprint_obj, '__dict__') else {}
-
-    def _procedural_fallback(self, features: dict) -> dict:
-        """
-        Generate a simple procedural blueprint when Gemini API is unavailable.
-        Creates a basic but valid track structure based on audio features.
-        """
-        import math
-        
-        duration = features.get('duration', 120)
-        bpm = features.get('bpm', 120)
-        energy = features.get('energy', 0.5)
-        
-        # Calculate number of segments based on duration (aim for ~8-12 seconds per segment)
-        num_segments = max(12, min(30, int(duration / 8)))
-        
-        # Create a simple track with variety
-        track = []
-        segment_types = ['climb', 'drop', 'turn', 'loop', 'barrelRoll']
-        
-        for i in range(num_segments):
-            # Vary intensity based on position and energy
-            intensity = 30 + (energy * 40) + (20 * math.sin(i * math.pi / num_segments))
-            
-            # Choose segment type based on intensity and position
-            if intensity > 70:
-                if i % 5 == 0:
-                    segment = {
-                        'component': 'loop',
-                        'radius': 50 + (intensity * 0.5),
-                        'intensity': intensity,
-                    }
-                elif i % 3 == 0:
-                    segment = {
-                        'component': 'barrelRoll',
-                        'rotations': 1,
-                        'length': 80,
-                        'intensity': intensity,
-                    }
-                else:
-                    segment = {
-                        'component': 'drop',
-                        'length': 60 + (intensity * 0.8),
-                        'angle': -30 - (intensity * 0.3),
-                        'intensity': intensity,
-                    }
-            elif intensity > 45:
-                if i % 2 == 0:
-                    segment = {
-                        'component': 'turn',
-                        'length': 70,
-                        'direction': 'left' if i % 4 == 0 else 'right',
-                        'angle': 45 + (intensity * 0.5),
-                        'radius': 100,
-                        'intensity': intensity,
-                    }
-                else:
-                    segment = {
-                        'component': 'climb',
-                        'length': 60,
-                        'angle': 20 + (intensity * 0.2),
-                        'intensity': intensity,
-                    }
-            else:
-                segment = {
-                    'component': 'climb',
-                    'length': 50,
-                    'angle': 10,
-                    'intensity': intensity,
-                }
-            
-            track.append(segment)
-        
-        # Generate a simple color palette based on energy
-        if energy > 0.7:
-            palette = ['#FF6B6B', '#FFA500', '#FFD700']  # Warm, energetic
-        elif energy > 0.4:
-            palette = ['#4ECDC4', '#45B7D1', '#96CEB4']  # Cool, balanced
-        else:
-            palette = ['#9B59B6', '#8E44AD', '#E8DAEF']  # Purple, calm
-        
-        return {
-            'rideName': 'Procedural Ride',
-            'moodDescription': f'A procedurally generated ride with {num_segments} segments, matching the audio\'s energy level of {energy:.2f}.',
-            'palette': palette,
-            'track': track,
-        }
+    def _convert_to_dict(self, obj):
+        if hasattr(obj, 'model_dump'):
+            return obj.model_dump(mode='json')
+        elif isinstance(obj, str):
+            try:
+                return json.loads(obj)
+            except json.JSONDecodeError:
+                logger.error("Failed to decode JSON string from Gemini", detail=obj)
+                return {}
+        elif isinstance(obj, dict):
+            return obj
+        return {}
 
     def generate_skybox_prompt(self, prompt: str, blueprint_data: dict | None = None, options: dict | None = None) -> str:
         """
@@ -632,5 +328,79 @@ OUTPUT: A skybox that transforms a ride into a journey through living emotion ma
         except Exception as e:
             logger.error("Skybox generation error", error=str(e), exc_info=True)
             raise HTTPException(status_code=500, detail=f"An unexpected error occurred during image generation: {e}")
+
+class TrackGeneratorService:
+    def __init__(self, gemini_service: GeminiService):
+        self.gemini_service = gemini_service
+        self.blueprint_cache = TTLCache(maxsize=100, ttl=3600)
+        self._cache_lock = asyncio.Lock()
+
+    def _generate_cache_key(self, audio_bytes: bytes, options: dict | None) -> str:
+        hasher = hashlib.sha256()
+        hasher.update(audio_bytes)
+        if options:
+            serialized_options = json.dumps(options, sort_keys=True).encode('utf-8')
+            hasher.update(serialized_options)
+        return hasher.hexdigest()
+
+    async def generate_full_blueprint(self, audio_bytes: bytes, content_type: str, options: dict | None = None):
+        cache_key = self._generate_cache_key(audio_bytes, options)
+        async with self._cache_lock:
+            if cache_key in self.blueprint_cache:
+                return self.blueprint_cache[cache_key]
+
+        audio_features = await analyze_audio(audio_bytes)
+
+        try:
+            layout = await self.gemini_service.generate_layout(audio_features, options)
+
+            detailed_segments = []
+            for segment_def in layout.get('segments', []):
+                detailed_segment = await self.gemini_service.generate_detailed_segment(segment_def)
+                detailed_segments.append(detailed_segment)
+
+            blueprint = {
+                "rideName": layout.get('ride_name'),
+                "moodDescription": layout.get('mood_description'),
+                "palette": layout.get('palette'),
+                "track": detailed_segments,
+                "generationOptions": options,
+                "synesthetic": None
+            }
+
+            result = {"blueprint": blueprint, "features": audio_features}
+
+            async with self._cache_lock:
+                self.blueprint_cache[cache_key] = result
+            return result
+
+        except Exception as e:
+            logger.error("Blueprint generation failed, falling back to procedural.", error=str(e), exc_info=True)
+            fb = self._procedural_fallback(audio_features)
+            return {"blueprint": fb, "features": audio_features}
+
+    def _procedural_fallback(self, features: dict) -> dict:
+        import math
+        duration = features.get('duration', 120)
+        num_segments = max(12, min(30, int(duration / 8)))
+        track = []
+        for i in range(num_segments):
+            intensity = 50 + (25 * math.sin(i * math.pi / num_segments))
+            if intensity > 70:
+                segment = {'component': 'drop', 'length': 80, 'angle': -45}
+            elif intensity > 55:
+                segment = {'component': 'turn', 'direction': 'left' if i%2 else 'right', 'angle': 90, 'radius': 100, 'length': 100}
+            else:
+                segment = {'component': 'climb', 'length': 60, 'angle': 20}
+            track.append(segment)
+
+        palette = ['#FF6B6B', '#FFA500', '#FFD700']
+
+        return {
+            'rideName': 'Procedural Fallback Ride',
+            'moodDescription': 'A procedurally generated ride created as a fallback.',
+            'palette': palette,
+            'track': track,
+        }
 
 gemini_service = GeminiService()

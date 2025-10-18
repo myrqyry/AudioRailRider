@@ -1,68 +1,56 @@
 import asyncio
 import pytest
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 from app.services.gemini_service import GeminiService
 
 
-class DummyResponse:
-    def __init__(self, text=None, parsed=None):
-        self.text = text
-        self.parsed = parsed
+@pytest.fixture
+def mock_gemini_client():
+    """Mocks the Gemini client."""
+    client = SimpleNamespace(
+        aio=SimpleNamespace(
+            models=SimpleNamespace(generate_content=AsyncMock()),
+            files=SimpleNamespace(upload=AsyncMock())
+        )
+    )
+    return client
 
-
-def test_generate_blueprint_inline(monkeypatch):
+@pytest.mark.anyio
+async def test_generate_layout(mock_gemini_client):
+    """Tests the generate_layout method."""
     svc = GeminiService()
+    svc.client = mock_gemini_client
 
-    # mock analyze_audio to produce small features
-    async def fake_analyze_audio(b):
-        return {
-            'duration': 60.0, 'bpm': 120.0, 'energy': 0.5, 'spectralCentroid': 1500.0, 'spectralFlux': 0.02
-        }
-    monkeypatch.setattr('app.services.gemini_service.analyze_audio', fake_analyze_audio)
+    audio_features = {'duration': 60.0, 'bpm': 120.0, 'energy': 0.5}
+    options = {'worldTheme': 'cyberpunk'}
 
-    # Mock client.aio.models.generate_content to return parsed blueprint
-    async def fake_generate_content(model, contents, config):
-        parsed = {
-            'rideName': 'Unit Test Ride',
-            'moodDescription': 'Test',
-            'palette': ['#000', '#111', '#222'],
-            'track': [],
-            'synesthetic': {
-                'geometry': {'wireframeDensity': 0.5, 'impossiblePhysics': False, 'organicBreathing': 0.4, 'breathingDriver': 'energy'},
-                'particles': {'connectionDensity': 0.4, 'resonanceThreshold': 0.3, 'lifespanSeconds': 3.0, 'persistence': 0.5},
-                'atmosphere': {'skyMood': 'test', 'turbulenceBias': 1.0, 'passionIntensity': 1.2, 'tint': '#333333'}
-            }
-        }
-        return DummyResponse(text='{}', parsed=parsed)
+    mock_gemini_client.aio.models.generate_content.return_value = SimpleNamespace(
+        parsed={"ride_name": "Test Ride", "segments": []}
+    )
 
-    svc.client = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=fake_generate_content), files=SimpleNamespace(upload=lambda *a, **k: None)))
+    layout = await svc.generate_layout(audio_features, options)
 
-    res = asyncio.run(svc.generate_blueprint(b'FAKE', 'audio/mpeg'))
-    assert 'blueprint' in res and 'features' in res
+    assert layout['ride_name'] == "Test Ride"
+    mock_gemini_client.aio.models.generate_content.assert_called_once()
 
-
-def test_generate_blueprint_fallback(monkeypatch):
+@pytest.mark.anyio
+async def test_generate_detailed_segment(mock_gemini_client):
+    """Tests the generate_detailed_segment method."""
     svc = GeminiService()
+    svc.client = mock_gemini_client
 
-    # force analyze_audio to succeed
-    async def fake_analyze_audio_success(b):
-        return {
-            'duration': 120.0, 'bpm': 100.0, 'energy': 0.3, 'spectralCentroid': 800.0, 'spectralFlux': 0.01
-        }
-    monkeypatch.setattr('app.services.gemini_service.analyze_audio', fake_analyze_audio_success)
+    segment_def = {'segment_type': 'climb', 'intensity': 75}
 
-    # force generate_content to raise APIError
-    async def fake_generate_content_error(*a, **k):
-        raise Exception('api failure')
+    mock_gemini_client.aio.models.generate_content.return_value = SimpleNamespace(
+        parsed={"component": "climb", "length": 100, "angle": 20}
+    )
 
-    svc.client = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=fake_generate_content_error), files=SimpleNamespace(upload=lambda *a, **k: None)))
+    segment = await svc.generate_detailed_segment(segment_def)
 
-    res = asyncio.run(svc.generate_blueprint(b'FAKE', 'audio/mpeg'))
-    assert 'blueprint' in res and 'features' in res
-    # blueprint should be a Blueprint instance or dict
-    b = res['blueprint']
-    assert hasattr(b, 'rideName') or isinstance(b, dict)
+    assert segment['component'] == "climb"
+    mock_gemini_client.aio.models.generate_content.assert_called_once()
 
 def test_generate_skybox_prompt_with_partial_palette():
     """

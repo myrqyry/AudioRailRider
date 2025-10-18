@@ -28,11 +28,7 @@ export interface FrameAnalysis {
   timestamp: Seconds;
   energy: number;
   spectralCentroid: number;
-  spectralRolloff: number;
-  spectralFlatness: number;
   spectralFlux: number;
-  harmonicEnergy: number;
-  percussiveEnergy: number;
   bass: number;
   mid: number;
   high: number;
@@ -76,25 +72,12 @@ export interface EnhancedAudioFeatures {
   structuralBoundaries: number[];
 }
 
-export interface TempoAnalysis {
-  timestamp: Seconds;
-  tempo: number;
-}
-
 export interface AudioFeatures {
   duration: Seconds;
   bpm: number;
-  key: string;
   energy: number;
-  harmonicEnergy: number;
-  percussiveEnergy: number;
   spectralCentroid: number;
-  spectralRolloff: number;
-  spectralFlatness: number;
   spectralFlux: number;
-  onsetTimes: Seconds[];
-  tempoCurve: TempoAnalysis[];
-  structuralSegments: Seconds[];
   frameAnalyses: FrameAnalysis[];
   enhanced?: EnhancedAudioFeatures | null;
 }
