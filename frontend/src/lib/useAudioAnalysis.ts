@@ -1,6 +1,6 @@
 import { useRef, useEffect } from 'react';
 import { AppStatus, FrameAnalysis, secondsToNumber } from 'shared/types';
-import { createWorkletAnalyzerForContext } from './audioProcessor';
+import { LiveAudioProcessor } from './audioProcessor';
 import { getLatestFrame } from './audioWorkletState';
 import { createFrameForDispatch } from './audioFeatureUtils';
 
@@ -25,23 +25,33 @@ interface UseAudioAnalysisProps {
 export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const animationFrameId = useRef<number | null>(null);
+  const liveProcessorRef = useRef<LiveAudioProcessor | null>(null);
 
   useEffect(() => {
     console.log('[useAudioAnalysis] Effect triggered', { status, hasAudioFile: !!audioFile });
 
-    if (status !== AppStatus.Riding || !audioFile) {
+    const cleanup = () => {
       if (animationFrameId.current) {
         cancelAnimationFrame(animationFrameId.current);
         animationFrameId.current = null;
       }
       if (audioRef.current) {
-        console.log('[useAudioAnalysis] Cleaning up audio');
+        console.log('[useAudioAnalysis] Cleaning up audio element');
         audioRef.current.pause();
         if (audioRef.current.src.startsWith('blob:')) {
           URL.revokeObjectURL(audioRef.current.src);
         }
         audioRef.current = null;
       }
+      if (liveProcessorRef.current) {
+        console.log('[useAudioAnalysis] Disposing LiveAudioProcessor');
+        liveProcessorRef.current.dispose();
+        liveProcessorRef.current = null;
+      }
+    };
+
+    if (status !== AppStatus.Riding || !audioFile) {
+      cleanup();
       return;
     }
 
@@ -57,8 +67,6 @@ export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) =
 
     audioRef.current = audio;
 
-    let audioCtx: AudioContext | null = null;
-    let workletNode: AudioWorkletNode | null = null;
     const energyHistory: number[] = [];
     const centroidHistory: number[] = [];
     const fluxHistory: number[] = [];
@@ -148,67 +156,39 @@ export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) =
       }
     };
 
-    (async () => {
+    const setupAudioProcessing = async () => {
       try {
-        audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        try {
-          await audioCtx.resume();
-        } catch (resumeError) {
-          console.warn('[useAudioAnalysis] AudioContext.resume failed', resumeError);
-        }
-        const src = audioCtx.createMediaElementSource(audio);
-        workletNode = await createWorkletAnalyzerForContext(audioCtx);
-        if (workletNode) {
-          src.connect(workletNode);
-          workletNode.connect(audioCtx.destination);
+        const processor = new LiveAudioProcessor();
+        liveProcessorRef.current = processor;
+        await processor.initialize(audio);
 
-          const processFrames = () => {
-            const latestFrameData = getLatestFrame();
-            if (latestFrameData) {
-              const frame = createFrameForDispatch(latestFrameData.timestamp, latestFrameData);
-              handleFrame(frame);
-              try {
-                const ev = new CustomEvent('audiorailrider:frame', { detail: frame });
-                window.dispatchEvent(ev);
-              } catch {}
-            }
-            animationFrameId.current = requestAnimationFrame(processFrames);
-          };
-          processFrames();
+        const processFrames = () => {
+          const latestFrameData = getLatestFrame();
+          if (latestFrameData) {
+            const frame = createFrameForDispatch(latestFrameData.timestamp, latestFrameData);
+            handleFrame(frame);
+            try {
+              const ev = new CustomEvent('audiorailrider:frame', { detail: frame });
+              window.dispatchEvent(ev);
+            } catch {}
+          }
+          animationFrameId.current = requestAnimationFrame(processFrames);
+        };
+        processFrames();
 
-        } else {
-          src.connect(audioCtx.destination);
-        }
       } catch (e) {
-        console.warn('[useAudioAnalysis] worklet setup failed', e);
-        try { audio.play(); } catch {}
+        console.warn('[useAudioAnalysis] Audio processing setup failed, playing audio directly.', e);
       }
-    })();
 
-    console.log('[useAudioAnalysis] Starting audio playback');
-    audio.play()
-      .then(() => console.log('[useAudioAnalysis] Audio playing successfully'))
-      .catch(e => console.error("[useAudioAnalysis] Audio playback failed:", e));
-
-    return () => {
-      if (animationFrameId.current) {
-        cancelAnimationFrame(animationFrameId.current);
-      }
-      if (audioRef.current) {
-        audioRef.current.pause();
-        if (audioRef.current.src.startsWith('blob:')) {
-          URL.revokeObjectURL(audioRef.current.src);
-        }
-      }
-      try {
-        if (workletNode) {
-          try { workletNode.disconnect(); } catch {}
-        }
-        if (audioCtx) {
-          audioCtx.close().catch(() => {});
-        }
-      } catch {}
+      console.log('[useAudioAnalysis] Starting audio playback');
+      audio.play()
+        .then(() => console.log('[useAudioAnalysis] Audio playing successfully'))
+        .catch(e => console.error("[useAudioAnalysis] Audio playback failed:", e));
     };
+
+    setupAudioProcessing();
+
+    return cleanup;
   }, [audioFile, status]);
 
   return { audioRef };

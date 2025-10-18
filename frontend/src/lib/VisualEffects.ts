@@ -286,6 +286,7 @@ export class VisualEffects {
   private tunnelRushMesh: THREE.Mesh | null = null;
   private lastMotionPosition: THREE.Vector3 = new THREE.Vector3();
   private hasMotionHistory: boolean = false;
+  private _animationFrameHandles: number[] = [];
   private previousTrackModelViewMatrix: THREE.Matrix4 = new THREE.Matrix4();
   private rideSpeedSmoothed: number = 0;
   private hasPreviousModelViewMatrix: boolean = false;
@@ -1562,10 +1563,12 @@ void main() {
             if (flash.intensity <= 0.01) {
               try { this.scene.remove(flash); } catch (e) {}
             } else {
-              requestAnimationFrame(fade);
+              const handle = requestAnimationFrame(fade);
+              this._animationFrameHandles.push(handle);
             }
           };
-          requestAnimationFrame(fade);
+          const handle = requestAnimationFrame(fade);
+          this._animationFrameHandles.push(handle);
         } catch (e) {}
         break;
       }
@@ -1581,19 +1584,25 @@ void main() {
               const tNorm = Math.min(1, (now - start) / 0.6);
               this.scene.fog.density = THREE.MathUtils.lerp(base, target, tNorm);
               if (now - start < dur) {
-                requestAnimationFrame(anim);
+                const handle = requestAnimationFrame(anim);
+                this._animationFrameHandles.push(handle);
               } else {
                 const fadeStart = performance.now() / 1000;
                 const fade = () => {
                   const then = performance.now() / 1000;
                   const ft = Math.min(1, (then - fadeStart) / 2.0);
                   this.scene.fog.density = THREE.MathUtils.lerp(target, base, ft);
-                  if (ft < 1) requestAnimationFrame(fade);
+                  if (ft < 1) {
+                    const handle = requestAnimationFrame(fade);
+                    this._animationFrameHandles.push(handle);
+                  }
                 };
-                requestAnimationFrame(fade);
+                const handle = requestAnimationFrame(fade);
+                this._animationFrameHandles.push(handle);
               }
             };
-            requestAnimationFrame(anim);
+            const handle = requestAnimationFrame(anim);
+            this._animationFrameHandles.push(handle);
           }
         } catch (e) {}
         for (let i = 0; i < Math.max(2, Math.round(4 * inten)); i++) {
@@ -1795,5 +1804,8 @@ void main() {
         }
       } catch(e) {}
     }
+
+    this._animationFrameHandles.forEach(handle => cancelAnimationFrame(handle));
+    this._animationFrameHandles = [];
   }
 }

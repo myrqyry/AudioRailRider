@@ -378,3 +378,70 @@ const flattenFrameMatrix = (frames: number[][], defaultBins: number): { flatArra
   }
   return { flatArray: flat, binCount };
 };
+
+export class LiveAudioProcessor {
+  private audioContext: AudioContext | null = null;
+  private workletNode: AudioWorkletNode | null = null;
+  private sourceNode: MediaElementAudioSourceNode | null = null;
+
+  async initialize(audioElement: HTMLAudioElement): Promise<void> {
+    if (this.audioContext) {
+      await this.dispose();
+    }
+
+    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    this.audioContext = audioContext;
+
+    try {
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume();
+      }
+
+      const sourceNode = audioContext.createMediaElementSource(audioElement);
+      this.sourceNode = sourceNode;
+
+      const workletNode = await createWorkletAnalyzerForContext(audioContext);
+      this.workletNode = workletNode;
+
+      if (workletNode) {
+        sourceNode.connect(workletNode);
+        workletNode.connect(audioContext.destination);
+      } else {
+        sourceNode.connect(audioContext.destination);
+      }
+    } catch (error) {
+      console.error('[LiveAudioProcessor] Initialization failed:', error);
+      await this.dispose();
+      throw error;
+    }
+  }
+
+  async dispose(): Promise<void> {
+    if (this.workletNode) {
+      try {
+        this.workletNode.disconnect();
+      } catch (e) {
+        console.warn('[LiveAudioProcessor] Error disconnecting worklet node:', e);
+      }
+      this.workletNode = null;
+    }
+
+    if (this.sourceNode) {
+      try {
+        this.sourceNode.disconnect();
+      } catch (e) {
+        console.warn('[LiveAudioProcessor] Error disconnecting source node:', e);
+      }
+      this.sourceNode = null;
+    }
+
+    if (this.audioContext && this.audioContext.state !== 'closed') {
+      try {
+        await this.audioContext.close();
+      } catch (e) {
+        console.warn('[LiveAudioProcessor] Error closing AudioContext:', e);
+      }
+    }
+    this.audioContext = null;
+  }
+}
