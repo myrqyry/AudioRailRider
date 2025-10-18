@@ -11,6 +11,13 @@ from fastapi import HTTPException
 # Configure logging
 logger = structlog.get_logger(__name__)
 
+# --- Constants for Audio Analysis ---
+# Key detection profiles (Krumhansl-Schmuckler)
+MAJOR_PROFILE = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
+MINOR_PROFILE = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
+# Target number of segments for structural analysis
+STRUCTURAL_SEGMENT_COUNT = 10
+
 # Create a bounded thread pool executor for CPU-bound audio analysis tasks.
 # Using os.cpu_count() is a good practice for CPU-bound tasks.
 # Default to 4 if cpu_count() is not available or to have a baseline.
@@ -54,9 +61,6 @@ def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
         tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
         bpm = float(tempo) if tempo else 120.0
 
-        # Harmonic/Percussive Separation
-        y_harmonic, y_percussive = librosa.effects.hpss(y)
-
         # --- Frame-by-Frame Analysis (vectorized) ---
         # Use smaller FFT to reduce cost
         n_fft = 1024
@@ -90,9 +94,8 @@ def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
         spectral_flatness_frames = librosa.feature.spectral_flatness(S=S)[0]
         spectral_flux = np.abs(np.diff(spectral_centroid_frames, prepend=spectral_centroid_frames[0]))
 
-        # Analyze harmonic and percussive components
-        S_harmonic = np.abs(librosa.stft(y_harmonic, n_fft=n_fft, hop_length=hop_length))
-        S_percussive = np.abs(librosa.stft(y_percussive, n_fft=n_fft, hop_length=hop_length))
+        # Analyze harmonic and percussive components using spectral-domain HPSS
+        S_harmonic, S_percussive = librosa.effects.hpss(S)
         harmonic_energy_frames = librosa.feature.rms(S=S_harmonic, frame_length=n_fft, hop_length=hop_length)[0]
         percussive_energy_frames = librosa.feature.rms(S=S_percussive, frame_length=n_fft, hop_length=hop_length)[0]
 
@@ -132,11 +135,8 @@ def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
         # Sum chroma features across time for a global estimate
         chroma_sum = np.sum(chroma, axis=1)
         # Simple correlation-based key detection
-        major_profile = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
-        minor_profile = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
-
-        major_correlations = np.array([np.corrcoef(chroma_sum, np.roll(major_profile, i))[0, 1] for i in range(12)])
-        minor_correlations = np.array([np.corrcoef(chroma_sum, np.roll(minor_profile, i))[0, 1] for i in range(12)])
+        major_correlations = np.array([np.corrcoef(chroma_sum, np.roll(MAJOR_PROFILE, i))[0, 1] for i in range(12)])
+        minor_correlations = np.array([np.corrcoef(chroma_sum, np.roll(MINOR_PROFILE, i))[0, 1] for i in range(12)])
 
         best_major_key_idx = np.argmax(major_correlations)
         best_minor_key_idx = np.argmax(minor_correlations)
@@ -151,19 +151,18 @@ def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
         onset_times = librosa.frames_to_time(onset_frames, sr=sr).tolist()
 
         # Time-varying tempo
-        tempogram = librosa.feature.tempogram(y=y, sr=sr, hop_length=hop_length)
         tempo_curve = librosa.feature.tempo(y=y, sr=sr, hop_length=hop_length, aggregate=None)
 
         tempo_analyses: List[Dict[str, float]] = []
         for i, tempo_value in enumerate(tempo_curve):
             tempo_analyses.append({
-                "timestamp": float(times[i]),
+                "timestamp": float(times[i]) if i < len(times) else 0.0,
                 "tempo": float(tempo_value),
             })
 
         # Structural segmentation
         chroma_for_segmentation = librosa.feature.chroma_cqt(y=y, sr=sr)
-        segment_boundaries = librosa.segment.agglomerative(chroma_for_segmentation, k=10) # k is a target number of segments
+        segment_boundaries = librosa.segment.agglomerative(chroma_for_segmentation, k=STRUCTURAL_SEGMENT_COUNT)
         segment_times = librosa.frames_to_time(segment_boundaries, sr=sr).tolist()
 
 
