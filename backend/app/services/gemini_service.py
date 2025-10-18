@@ -37,6 +37,11 @@ import hashlib
 from cachetools import TTLCache
 from ..config.settings import settings
 from ..schema.blueprint import Blueprint, TrackLayout, SegmentDefinition, ClimbSegment, DropSegment, TurnSegment, LoopSegment, BarrelRollSegment
+from ..models.behavior_tree import (
+    BehaviorTreeStatus, Blackboard, Context, Node,
+    Sequence, Selector, Inverter,
+    IsEnergyAbove, IsTempoInRange, SelectGeneratorAction
+)
 
 # Lazily import the audio analysis implementation to avoid importing librosa at module import time.
 async def analyze_audio(audio_bytes: bytes):
@@ -334,6 +339,39 @@ class TrackGeneratorService:
         self.gemini_service = gemini_service
         self.blueprint_cache = TTLCache(maxsize=100, ttl=3600)
         self._cache_lock = asyncio.Lock()
+        self.behavior_tree = self._build_behavior_tree()
+
+    def _build_behavior_tree(self) -> Node:
+        """Constructs the behavior tree for track generation."""
+        # High-energy sections
+        high_energy_sequence = Sequence(children=[
+            IsEnergyAbove(threshold=0.6),
+            Selector(children=[
+                Sequence(children=[
+                    IsTempoInRange(min_tempo=140, max_tempo=300),
+                    SelectGeneratorAction(generator_name='drop')
+                ]),
+                SelectGeneratorAction(generator_name='loop')
+            ])
+        ])
+
+        # Medium-energy sections
+        medium_energy_sequence = Sequence(children=[
+            IsEnergyAbove(threshold=0.4),
+            SelectGeneratorAction(generator_name='curve')
+        ])
+
+        # Low-energy sections (default)
+        low_energy_action = SelectGeneratorAction(generator_name='climb')
+
+        # Root of the tree
+        root = Selector(children=[
+            high_energy_sequence,
+            medium_energy_sequence,
+            low_energy_action
+        ])
+
+        return root
 
     def _generate_cache_key(self, audio_bytes: bytes, options: dict | None) -> str:
         hasher = hashlib.sha256()
@@ -355,7 +393,15 @@ class TrackGeneratorService:
             layout = await self.gemini_service.generate_layout(audio_features, options)
 
             detailed_segments = []
+            blackboard = Blackboard()
             for segment_def in layout.get('segments', []):
+                context = Context(blackboard, audio_features)
+                self.behavior_tree.tick(context)
+                generator_name = blackboard.get('selected_generator', 'climb')
+
+                # Update the segment_def with the generator selected by the behavior tree
+                segment_def['segment_type'] = generator_name
+
                 detailed_segment = await self.gemini_service.generate_detailed_segment(segment_def)
                 detailed_segments.append(detailed_segment)
 
