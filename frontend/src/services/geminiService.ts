@@ -110,8 +110,10 @@ export const generateRideBlueprintWithAI = async (
 
   const prompt = `Generate a ride blueprint JSON for an audio track with duration=${duration}, bpm=${bpm}, energy=${energy}, spectralCentroid=${spectralCentroid}, spectralFlux=${spectralFlux}`;
 
-  const response = await (ai.models as any).generateContent({ input: prompt });
-  const text = response.text;
+  const model = ai.getGenerativeModel({ model: "gemini-pro" });
+  const result = await model.generateContent(prompt);
+  const response = await result.response;
+  const text = response.text();
   try {
     const parsed = JSON.parse(text);
     return parsed as Blueprint;

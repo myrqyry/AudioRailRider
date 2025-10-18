@@ -59,8 +59,6 @@ async def generate_blueprint(
                 raise HTTPException(status_code=400, detail='Options must be a JSON object')
         except json.JSONDecodeError as e:
             raise HTTPException(status_code=400, detail=f'Invalid JSON in options field: {str(e)}')
-        except Exception as e:
-            raise HTTPException(status_code=400, detail='Failed to parse options field')
 
     # This single call now handles analysis and generation, returning both.
     return await service.generate_blueprint(audio_bytes, audio_file.content_type, parsed_options)

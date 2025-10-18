@@ -120,6 +120,8 @@ export const useAppStore = create<AppState>((set, get) => ({
                 error: null,
                 statusMessage: '',
                 audioFile: null,
+                blueprint: null,
+                audioFeatures: null,
                 trackData: null,
                 workflowProgress: 0,
                 skyboxUrl: null,

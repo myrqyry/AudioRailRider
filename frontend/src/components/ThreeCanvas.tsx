@@ -332,6 +332,7 @@ const ThreeCanvas: React.FC = () => {
     return () => {
       if (animationFrameId.current) {
         cancelAnimationFrame(animationFrameId.current);
+        animationFrameId.current = null;
       }
     };
   }, [status, trackData, audioFile, onRideFinish, audioRef]);

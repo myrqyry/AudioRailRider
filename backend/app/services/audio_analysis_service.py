@@ -126,7 +126,7 @@ def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
     except Exception as e:
         logger.error("Unexpected error during audio analysis", error=str(e), exc_info=True)
         # For unexpected errors, it's better to return a 500 Internal Server Error
-        raise HTTPException(status_code=500, detail="An unexpected error occurred during audio analysis.")
+        raise
 
 async def analyze_audio(audio_bytes: bytes) -> Dict[str, Any]:
     """
