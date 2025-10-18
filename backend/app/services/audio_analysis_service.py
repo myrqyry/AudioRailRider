@@ -157,7 +157,7 @@ def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
         tempo_analyses: List[Dict[str, float]] = []
         for i, tempo_value in enumerate(tempo_curve):
             tempo_analyses.append({
-                "timestamp": float(times[i]) if i < len(times) else 0.0,
+                "timestamp": float(times[i]),
                 "tempo": float(tempo_value),
             })
 
