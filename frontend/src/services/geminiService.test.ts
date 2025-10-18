@@ -81,7 +81,9 @@ describe('geminiService', () => {
     describe('generateRideBlueprintWithAI', () => {
         it('should generate a ride blueprint successfully', async () => {
             const mockBlueprint = { rideName: 'Test Ride', track: [], palette: ['#ffffff', '#ffffff', '#ffffff'], moodDescription: 'A test ride' };
-            mockGenerateContent.mockResolvedValue({ text: JSON.stringify(mockBlueprint) });
+            mockGenerateContent.mockResolvedValue({
+                response: { text: () => JSON.stringify(mockBlueprint) },
+            });
 
             const file = new File([''], 'test.mp3', { type: 'audio/mpeg' });
             const blueprint = await generateRideBlueprintWithAI(file, 120, 120, 0.5, 1500, 0.2);
@@ -91,7 +93,9 @@ describe('geminiService', () => {
         });
 
         it('should throw an error for invalid JSON response', async () => {
-            mockGenerateContent.mockResolvedValue({ text: 'invalid json' });
+            mockGenerateContent.mockResolvedValue({
+                response: { text: () => 'invalid json' },
+            });
             const file = new File([''], 'test.mp3', { type: 'audio/mpeg' });
             await expect(generateRideBlueprintWithAI(file, 120, 120, 0.5, 1500, 0.2)).rejects.toThrow('The AI returned malformed data.');
         });

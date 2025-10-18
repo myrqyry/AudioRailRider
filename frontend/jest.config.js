@@ -14,6 +14,7 @@ export default {
       useESM: true,
     },
   },
+  setupFilesAfterEnv: ['@testing-library/jest-dom'],
   setupFiles: ['jest-canvas-mock'],
   modulePathIgnorePatterns: ["<rootDir>/public/lygia"],
   testPathIgnorePatterns: [
