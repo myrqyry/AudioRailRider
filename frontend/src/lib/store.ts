@@ -23,6 +23,10 @@ interface AppState {
     statusMessage: string;
     /** The user-uploaded audio file. */
     audioFile: File | null;
+    /** The generated blueprint for the ride. */
+    blueprint: Blueprint | null;
+    /** The extracted audio features. */
+    audioFeatures: AudioFeatures | null;
     /** The generated track data for the visualization. */
     trackData: TrackData | null;
     /** URL of the generated skybox image (if available) */
@@ -37,6 +41,10 @@ interface AppState {
         setGenerationOptions: (opts: import('shared/types').GenerationOptions | null) => void;
         /** Sets the application's status and an optional message. */
         setStatus: (status: AppStatus, message?: string) => void;
+        /** Sets the blueprint for the ride. */
+        setBlueprint: (blueprint: Blueprint | null) => void;
+        /** Sets the extracted audio features. */
+        setAudioFeatures: (features: AudioFeatures | null) => void;
         /** Sets the track data for the visualization. */
         setTrackData: (data: TrackData | null) => void;
         /** Sets or clears the application's error state. */
@@ -66,6 +74,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     error: null,
     statusMessage: '',
     audioFile: null,
+    blueprint: null,
+    audioFeatures: null,
     trackData: null,
     workflowProgress: 0,
     skyboxUrl: null,
@@ -73,6 +83,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     actions: {
     setGenerationOptions: (opts: import('shared/types').GenerationOptions | null) => set({ generationOptions: opts }),
         setStatus: (status: AppStatus, message?: string) => set({ status, statusMessage: message || '', error: null }),
+        setBlueprint: (blueprint: Blueprint | null) => set({ blueprint }),
+        setAudioFeatures: (features: AudioFeatures | null) => set({ audioFeatures: features }),
         setTrackData: (data: TrackData | null) => {
             const currentStatus = get().status;
             if (data === null && (currentStatus === AppStatus.Riding || currentStatus === AppStatus.Ready)) {

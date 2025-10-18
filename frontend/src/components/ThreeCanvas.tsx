@@ -6,6 +6,7 @@ import { useAppStore } from '../lib/store';
 import { SceneManager } from '../lib/SceneManager';
 import { RideCamera } from '../lib/RideCamera';
 import { VisualEffects } from '../lib/VisualEffects';
+import { TrackComposer } from '../lib/procedural/TrackComposer';
 // Skybox generation is now initiated by the workflow; ThreeCanvas will apply
 // the resulting image URL from the global store when it becomes available.
 
@@ -18,6 +19,8 @@ import { VisualEffects } from '../lib/VisualEffects';
  */
 const ThreeCanvas: React.FC = () => {
   const status = useAppStore((state) => state.status);
+  const blueprint = useAppStore((state) => state.blueprint);
+  const audioFeatures = useAppStore((state) => state.audioFeatures);
   const trackData = useAppStore((state) => state.trackData);
   const audioFile = useAppStore((state) => state.audioFile);
   const onRideFinish = useAppStore((state) => state.actions.handleRideFinish);
@@ -77,33 +80,39 @@ const ThreeCanvas: React.FC = () => {
     };
   }, []);
 
+  const setTrackData = useAppStore((state) => state.actions.setTrackData);
+  // Effect for composing the track from the blueprint
+  useEffect(() => {
+    if (!blueprint || !audioFeatures) return;
+    const composer = new TrackComposer();
+    const newTrackData = composer.compose(blueprint, audioFeatures);
+    setTrackData(newTrackData);
+  }, [blueprint, audioFeatures, setTrackData]);
+
   // Effect for building the ride when trackData is ready or on recovery
   useEffect(() => {
     const sceneManager = sceneManagerRef.current;
     if (!sceneManager || !trackData) {
-      console.log('[ThreeCanvas] Cannot build ride - missing requirements', { hasSceneManager: !!sceneManager, hasTrackData: !!trackData });
       return;
     }
-
-    console.log('[ThreeCanvas] Building ride from trackData', { pathLength: trackData.path.length, rideName: trackData.rideName, recoveryTrigger });
 
     // Clean up previous ride visuals
     visualEffectsRef.current?.dispose();
 
-    rideCameraRef.current = new RideCamera(sceneManager.camera, trackData);
-    console.log('[ThreeCanvas] RideCamera created');
-    visualEffectsRef.current = new VisualEffects(sceneManager.scene, trackData, sceneManager.camera);
-    console.log('[ThreeCanvas] VisualEffects created');
-    gpuInitRequestedRef.current = false;
-    const renderer = sceneManager.renderer;
-    if (visualEffectsRef.current && renderer && !gpuInitRequestedRef.current) {
-      gpuInitRequestedRef.current = true;
-      visualEffectsRef.current.initGPU(renderer)
-        .then(() => console.log('[ThreeCanvas] GPU particle system ready'))
-        .catch((error) => {
-          const message = error instanceof Error ? error.message : String(error);
-          console.info('[ThreeCanvas] GPU particle init skipped', message);
-        });
+    if (trackData.path.length > 1) {
+        rideCameraRef.current = new RideCamera(sceneManager.camera, trackData);
+        visualEffectsRef.current = new VisualEffects(sceneManager.scene, trackData, sceneManager.camera);
+
+        const renderer = sceneManager.renderer;
+        if (visualEffectsRef.current && renderer && !gpuInitRequestedRef.current) {
+          gpuInitRequestedRef.current = true;
+          visualEffectsRef.current.initGPU(renderer)
+            .then(() => console.log('[ThreeCanvas] GPU particle system ready'))
+            .catch((error) => {
+              const message = error instanceof Error ? error.message : String(error);
+              console.info('[ThreeCanvas] GPU particle init skipped', message);
+            });
+        }
     }
   }, [trackData, recoveryTrigger]);
 

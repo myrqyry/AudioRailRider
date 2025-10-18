@@ -55,50 +55,59 @@ afterEach(() => {
 });
 
 
+import { TrackComposer } from '../src/lib/procedural/TrackComposer';
+
+jest.mock('../src/lib/procedural/TrackComposer');
+
 describe('ThreeCanvas', () => {
     it('calls onRideFinish when ride progress reaches 100%', () => {
-        // 1. Set up the store for the riding state
-        const mockTrackData: TrackData = {
-            path: {
-                points: [
-                    new THREE.Vector3(0, 0, 0),
-                    new THREE.Vector3(0, 0, 100),
-                ],
-                getPoint: (t: number) => new THREE.Vector3(0, 0, t * 100),
-                getPointAt: (t: number) => new THREE.Vector3(0, 0, t * 100),
-                getLengths: () => [0, 100],
-                getUtoTmapping: (u: number) => u,
-            } as any,
+        const mockBlueprint = {
+            rideName: 'Test Ride',
+            moodDescription: 'A test mood.',
+            palette: ['#ff0000', '#00ff00', '#0000ff'],
+            track: [],
+        };
+        const mockAudioFeatures = {
+            duration: 100,
+            bpm: 120,
+            energy: 0.5,
+            spectralCentroid: 1500,
+            spectralFlux: 0.5,
+            frameAnalyses: [],
+        };
+
+        (TrackComposer.prototype.compose as jest.Mock).mockReturnValue({
+            path: [new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -100)],
+            upVectors: [new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 1, 0)],
+            segmentDetails: [],
+            segmentProgress: [],
             rideName: 'Test Ride',
             moodDescription: 'A test mood.',
             palette: ['#ff0000', '#00ff00', '#0000ff'],
             frameAnalyses: [],
-        };
+            audioFeatures: mockAudioFeatures,
+        });
 
         act(() => {
             useAppStore.setState({
                 status: AppStatus.Riding,
-                trackData: mockTrackData,
+                blueprint: mockBlueprint as any,
+                audioFeatures: mockAudioFeatures as any,
                 audioFile: new File([''], 'test.mp3'),
             });
         });
 
-        // 2. Mock requestAnimationFrame to control the animation loop
         let frameCallback: FrameRequestCallback | null = null;
         jest.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
             frameCallback = cb;
             return 0;
         });
 
-        // 3. Mock the useAudioAnalysis hook to provide a controlled audioRef
         const audioRef = { current: { currentTime: 0, duration: 100, ended: false } as HTMLAudioElement };
         jest.spyOn(useAudioAnalysis, 'useAudioAnalysis').mockReturnValue({ audioRef });
 
-
-        // 4. Render the component
         render(<ThreeCanvas />);
 
-        // 5. Simulate the ride progressing
         act(() => {
             if (frameCallback) {
                 audioRef.current.currentTime = 100;
@@ -106,7 +115,6 @@ describe('ThreeCanvas', () => {
             }
         });
 
-        // 6. Verify onRideFinish was called
         expect(mockOnRideFinish).toHaveBeenCalled();
     });
 });

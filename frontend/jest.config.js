@@ -14,6 +14,8 @@ export default {
       useESM: true,
     },
   },
+  setupFiles: ['jest-canvas-mock'],
+  modulePathIgnorePatterns: ["<rootDir>/public/lygia"],
   testPathIgnorePatterns: [
     "<rootDir>/tests/playwright/",
     "<rootDir>/dist/"
