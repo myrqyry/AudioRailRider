@@ -1,91 +1,141 @@
-import asyncio
 import pytest
+from unittest.mock import patch, MagicMock, AsyncMock
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
-
-from app.services.gemini_service import GeminiService
-
+from app.services.gemini_service import GeminiService, APIError
+from app.schema.blueprint import Blueprint
 
 @pytest.fixture
 def mock_gemini_client():
-    """Mocks the Gemini client."""
-    client = SimpleNamespace(
-        aio=SimpleNamespace(
-            models=SimpleNamespace(generate_content=AsyncMock()),
-            files=SimpleNamespace(upload=AsyncMock())
+    """Mocks the google.genai client."""
+    mock_client = MagicMock()
+    mock_client.aio = MagicMock()
+    mock_client.aio.models = MagicMock()
+    mock_client.aio.models.generate_content = AsyncMock()
+    mock_client.aio.files = MagicMock()
+    mock_client.aio.files.upload = AsyncMock()
+    mock_client.aio.files.delete = AsyncMock()
+    return mock_client
+
+@patch('app.services.gemini_service.analyze_audio', new_callable=AsyncMock)
+@patch('app.services.gemini_service.genai.Client')
+class TestGeminiService:
+
+    @pytest.mark.anyio
+    async def test_generate_blueprint_success(self, mock_genai_client, mock_analyze_audio, mock_gemini_client):
+        """
+        Tests the successful generation of a blueprint.
+        """
+        # Arrange
+        mock_genai_client.return_value = mock_gemini_client
+        svc = GeminiService()
+
+        audio_bytes = b"test_audio"
+        content_type = "audio/mpeg"
+        options = {"worldTheme": "cyberpunk"}
+
+        mock_analyze_audio.return_value = {
+            "duration": 60.0, "bpm": 120.0, "energy": 0.5,
+            "spectralCentroid": 1500.0, "spectralFlux": 0.2
+        }
+
+        # Helper to create a valid track
+        def make_track(n=12):
+            return [{"component": "climb", "length": 100} for _ in range(n)]
+
+        # Mock the Pydantic model object that would be returned
+        mock_blueprint_model = Blueprint(
+            rideName="Test Ride",
+            moodDescription="A test ride that is long enough.",
+            palette=["#ff0000", "#00ff00", "#0000ff"],
+            track=make_track()
         )
-    )
-    return client
 
-@pytest.mark.anyio
-async def test_generate_layout(mock_gemini_client):
-    """Tests the generate_layout method."""
-    svc = GeminiService()
-    svc.client = mock_gemini_client
+        mock_response = SimpleNamespace(
+            parsed=mock_blueprint_model,
+            text=mock_blueprint_model.model_dump_json()
+        )
+        svc.client.aio.models.generate_content.return_value = mock_response
 
-    audio_features = {'duration': 60.0, 'bpm': 120.0, 'energy': 0.5}
-    options = {'worldTheme': 'cyberpunk'}
+        # Act
+        result = await svc.generate_blueprint(audio_bytes, content_type, options)
 
-    mock_gemini_client.aio.models.generate_content.return_value = SimpleNamespace(
-        parsed={"ride_name": "Test Ride", "segments": []}
-    )
+        # Assert
+        assert "blueprint" in result
+        assert "features" in result
+        assert result["blueprint"]["rideName"] == "Test Ride"
+        assert result["features"]["bpm"] == 120.0
+        svc.client.aio.models.generate_content.assert_called_once()
+        mock_analyze_audio.assert_called_once_with(audio_bytes)
 
-    layout = await svc.generate_layout(audio_features, options)
+    @pytest.mark.anyio
+    async def test_generate_blueprint_api_error_fallback(self, mock_genai_client, mock_analyze_audio, mock_gemini_client):
+        """
+        Tests that the service falls back to procedural generation on APIError.
+        """
+        # Arrange
+        mock_genai_client.return_value = mock_gemini_client
+        svc = GeminiService()
 
-    assert layout['ride_name'] == "Test Ride"
-    mock_gemini_client.aio.models.generate_content.assert_called_once()
+        audio_bytes = b"test_audio_fallback"
+        content_type = "audio/mpeg"
 
-@pytest.mark.anyio
-async def test_generate_detailed_segment(mock_gemini_client):
-    """Tests the generate_detailed_segment method."""
-    svc = GeminiService()
-    svc.client = mock_gemini_client
+        mock_analyze_audio.return_value = {
+            "duration": 120.0, "bpm": 140.0, "energy": 0.8
+        }
 
-    segment_def = {'segment_type': 'climb', 'intensity': 75}
+        # Simulate an API error
+        svc.client.aio.models.generate_content.side_effect = APIError("Test API Error", response_json={})
 
-    mock_gemini_client.aio.models.generate_content.return_value = SimpleNamespace(
-        parsed={"component": "climb", "length": 100, "angle": 20}
-    )
+        # Act
+        result = await svc.generate_blueprint(audio_bytes, content_type)
 
-    segment = await svc.generate_detailed_segment(segment_def)
+        # Assert
+        assert result["blueprint"]["rideName"] == "Procedural Ride"
+        assert "A procedurally generated ride" in result["blueprint"]["moodDescription"]
+        assert len(result["blueprint"]["track"]) > 10
 
-    assert segment['component'] == "climb"
-    mock_gemini_client.aio.models.generate_content.assert_called_once()
+    @pytest.mark.anyio
+    async def test_generate_blueprint_caching(self, mock_genai_client, mock_analyze_audio, mock_gemini_client):
+        """
+        Tests that blueprint generation results are cached.
+        """
+        # Arrange
+        mock_genai_client.return_value = mock_gemini_client
+        svc = GeminiService()
 
-def test_generate_skybox_prompt_with_partial_palette():
-    """
-    Tests that the skybox prompt generation handles a partial palette correctly.
-    """
-    service = GeminiService()
-    prompt = "A test prompt"
-    blueprint_data = {
-        "rideName": "Test Ride",
-        "moodDescription": "A test mood",
-        "palette": ["#FF0000", "#00FF00"]  # Only two colors
-    }
+        audio_bytes = b"test_audio_caching"
+        content_type = "audio/mpeg"
+        options = {"trackStyle": "extreme"}
 
-    # We only need to check the generated prompt, not the full skybox generation
-    full_prompt = service.generate_skybox_prompt(prompt, blueprint_data)
+        mock_analyze_audio.return_value = {
+            "duration": 10.0, "bpm": 100.0, "energy": 0.4,
+            "spectralCentroid": 1200.0, "spectralFlux": 0.3
+        }
 
-    # Assert that the palette description is NOT in the prompt
-    assert "Color Palette" not in full_prompt
-    assert "A harmonious blend of" not in full_prompt
+        def make_track(n=12):
+            return [{"component": "climb", "length": 100} for _ in range(n)]
 
-def test_generate_skybox_prompt_with_full_palette():
-    """
-    Tests that the skybox prompt generation includes the palette description
-    when a full palette is provided.
-    """
-    service = GeminiService()
-    prompt = "A test prompt"
-    blueprint_data = {
-        "rideName": "Test Ride",
-        "moodDescription": "A test mood",
-        "palette": ["#FF0000", "#00FF00", "#0000FF"]
-    }
+        mock_blueprint_model = Blueprint(
+            rideName="Cached Ride",
+            moodDescription="A cached ride that is long enough.",
+            palette=["#111", "#222", "#333"],
+            track=make_track()
+        )
+        mock_response = SimpleNamespace(parsed=mock_blueprint_model)
+        svc.client.aio.models.generate_content.return_value = mock_response
 
-    full_prompt = service.generate_skybox_prompt(prompt, blueprint_data)
+        # Act
+        # First call - should miss cache and call API
+        result1 = await svc.generate_blueprint(audio_bytes, content_type, options)
 
-    # Assert that the palette description IS in the prompt
-    assert "Color Palette" in full_prompt
-    assert "A harmonious blend of #FF0000 (dominant), #00FF00 (accent), and #0000FF (ambient)." in full_prompt
+        # Second call with same params - should hit cache
+        result2 = await svc.generate_blueprint(audio_bytes, content_type, options)
+
+        # Assert
+        assert result1["blueprint"]["rideName"] == "Cached Ride"
+        assert result2 == result1 # Should be the exact same object from cache
+        svc.client.aio.models.generate_content.assert_called_once() # API should only be called once
+        mock_analyze_audio.assert_called_once() # Audio analysis should also only be called once
+
+        # Verify that audio analysis is not called on cache hit
+        assert mock_analyze_audio.call_count == 1

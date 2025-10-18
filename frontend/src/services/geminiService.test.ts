@@ -16,9 +16,9 @@ jest.mock('@google/genai', () => ({
         files: {
             upload: mockUpload,
         },
-        models: {
+        getGenerativeModel: jest.fn().mockImplementation(() => ({
             generateContent: mockGenerateContent,
-        },
+        })),
     })),
     HarmCategory: {
         HARM_CATEGORY_HARASSMENT: 'HARM_CATEGORY_HARASSMENT',

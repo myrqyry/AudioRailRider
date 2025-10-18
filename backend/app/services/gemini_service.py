@@ -307,10 +307,11 @@ Always output strictly valid JSON. Push creativity to the MAXIMUM while respecti
                            hit_rate=f"{self._cache_hits/(self._cache_hits + self._cache_misses):.2%}")
                 return self.blueprint_cache[cache_key]
 
+        self._cache_misses += 1
+        logger.info("Blueprint cache miss", cache_key=cache_key)
+
         audio_features = {}
         try:
-            self._cache_misses += 1
-            logger.info("Blueprint cache miss", cache_key=cache_key)
             # Asynchronously analyze audio first. If this fails, we can't proceed.
             audio_features = await analyze_audio(audio_bytes)
 
