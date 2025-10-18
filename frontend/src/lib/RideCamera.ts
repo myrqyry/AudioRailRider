@@ -51,7 +51,12 @@ export class RideCamera {
     constructor(camera: THREE.PerspectiveCamera, trackData: TrackData) {
         this.camera = camera;
         this.trackData = trackData;
-        this.curve = new THREE.CatmullRomCurve3(trackData.path, false, 'catmullrom', 0.5);
+        if (trackData.path && trackData.path.length > 1) {
+            this.curve = new THREE.CatmullRomCurve3(trackData.path, false, 'catmullrom', 0.5);
+        } else {
+            // Create a dummy curve to avoid errors
+            this.curve = new THREE.CatmullRomCurve3([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-1)]);
+        }
     }
 
     /**

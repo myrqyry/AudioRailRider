@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Request, Form
 from typing import Dict, Any
 from ..services.gemini_service import GeminiService, gemini_service
-from ..services.gemini_service import TrackGeneratorService
 from ..models.models import SkyboxRequest
 from ..limiter import limiter
 from ..config.settings import settings
@@ -21,7 +20,7 @@ async def generate_blueprint(
     request: Request,
     audio_file: UploadFile = File(...),
     options: str | None = Form(None),
-    gemini_service_instance: GeminiService = Depends(lambda: gemini_service)
+    service: GeminiService = Depends(lambda: gemini_service)
 ) -> Dict[str, Any]:
     """
     Generates a ride blueprint from an audio file.
@@ -63,8 +62,8 @@ async def generate_blueprint(
         except Exception as e:
             raise HTTPException(status_code=400, detail='Failed to parse options field')
 
-    track_generator = TrackGeneratorService(gemini_service_instance)
-    return await track_generator.generate_full_blueprint(audio_bytes, audio_file.content_type, parsed_options)
+    # This single call now handles analysis and generation, returning both.
+    return await service.generate_blueprint(audio_bytes, audio_file.content_type, parsed_options)
 
 @router.post("/api/generate-skybox")
 @limiter.limit("10/minute")

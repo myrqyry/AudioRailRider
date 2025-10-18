@@ -165,13 +165,14 @@ export const runAudioProcessingWorkflow = async (
     setStatus(AppStatus.Generating, 'Constructing ephemeral cathedral...');
     checkAbort();
     console.log('[Workflow] Building track data...');
-    // Use the audioFeatures returned from the backend.
-    const newTrackData = buildTrackData(refinedBlueprint, audioFeatures);
+    // Pass the blueprint and audio features to the store
+    const { setBlueprint, setAudioFeatures } = useAppStore.getState().actions;
+    setBlueprint(refinedBlueprint);
+    setAudioFeatures(audioFeatures);
 
     checkAbort();
     setWorkflowProgress(100);
     console.log('[Workflow] Setting track data and status to ready');
-    setTrackData(newTrackData);
     setStatus(AppStatus.Ready);
   } catch (error: unknown) {
     if (error instanceof DOMException && error.name === 'AbortError') {
