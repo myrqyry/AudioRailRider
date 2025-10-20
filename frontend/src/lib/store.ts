@@ -35,6 +35,8 @@ interface AppState {
     generationOptions?: import('shared/types').GenerationOptions | null;
     /** The progress of the current workflow (e.g., audio analysis, generation). */
     workflowProgress: number;
+    /** The progress of the generation process. */
+    generationProgress: number;
     /** A collection of actions to modify the application state. */
     actions: {
         /** Sets the user-defined generation options. */
@@ -53,6 +55,8 @@ interface AppState {
         setAudioFile: (file: File) => void;
         /** Sets the progress of the current workflow. */
         setWorkflowProgress: (progress: number) => void;
+        /** Sets the progress of the generation process. */
+        setGenerationProgress: (progress: number) => void;
         /** Sets the URL for the generated skybox image. */
         setSkyboxUrl: (url: string | null) => void;
         /** Resets the application to its initial idle state. */
@@ -78,6 +82,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     audioFeatures: null,
     trackData: null,
     workflowProgress: 0,
+    generationProgress: 0,
     skyboxUrl: null,
     generationOptions: null,
     actions: {
@@ -99,6 +104,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             set({ audioFile: file, status: AppStatus.Idle, error: null, workflowProgress: 0, skyboxUrl: null });
         },
     setWorkflowProgress: (progress: number) => set({ workflowProgress: progress }),
+    setGenerationProgress: (progress: number) => set({ generationProgress: progress }),
     setSkyboxUrl: (url: string | null) => set({ skyboxUrl: url }),
         startRide: () => {
             const currentState = get();

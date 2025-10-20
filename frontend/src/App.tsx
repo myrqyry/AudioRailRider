@@ -52,11 +52,7 @@ const App: React.FC = () => {
             <div className="absolute inset-0 z-0 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-20"></div>
             
             {status === AppStatus.Analyzing && <LoadingProgress stage="analyzing" />}
-            {status === AppStatus.Generating && (
-                statusMessage.includes('Translating') ? <LoadingProgress stage="generating" /> :
-                statusMessage.includes('Refining') ? <LoadingProgress stage="generating" progress={50} /> :
-                <LoadingProgress stage="building" progress={75} />
-            )}
+            {status === AppStatus.Generating && <LoadingProgress stage="generating" progress={useAppStore.getState().generationProgress} />}
             
             {/* Only show UI overlay when not riding */}
             {ContentComponent && (

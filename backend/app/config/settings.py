@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     # Max file size for audio uploads (in bytes)
     MAX_FILE_SIZE: int = Field(default=20 * 1024 * 1024, gt=0, description="Maximum audio file size in bytes (default 20MB)")
 
+    # Allowed MIME types for audio uploads
+    ALLOWED_MIME_TYPES: list[str] = Field(default=["audio/mpeg", "audio/wav", "audio/ogg", "audio/flac"])
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding='utf-8', extra='ignore')
 
     @validator('GEMINI_API_KEY')

@@ -71,9 +71,10 @@ export const runAudioProcessingWorkflow = async (
 
   try {
     checkAbort();
-    const { setWorkflowProgress } = useAppStore.getState().actions;
+    const { setWorkflowProgress, setGenerationProgress } = useAppStore.getState().actions;
     
     setWorkflowProgress(10);
+    setGenerationProgress(0);
     setStatus(AppStatus.Generating, 'Translating sound into structure...');
     checkAbort();
 
@@ -99,6 +100,7 @@ export const runAudioProcessingWorkflow = async (
 
     checkAbort();
     setWorkflowProgress(60);
+    setGenerationProgress(50);
     setStatus(AppStatus.Generating, 'Refining for physical plausibility...');
     checkAbort();
     console.log('[Workflow] Refining blueprint...');
@@ -157,6 +159,7 @@ export const runAudioProcessingWorkflow = async (
 
     checkAbort();
     setWorkflowProgress(85);
+    setGenerationProgress(75);
     setStatus(AppStatus.Generating, 'Constructing ephemeral cathedral...');
     checkAbort();
     console.log('[Workflow] Building track data...');

@@ -1,55 +1,6 @@
-export const RIDE_CONFIG = {
-    // === Camera & Rendering ===
-    CAMERA_BASE_FOV: 75,
-    CAMERA_SPEED_FOV_FACTOR: 0.05,
-    CAMERA_MAX_FOV_BOOST: 20,
-
-    // === Visual Effects ===
-    STARS_COUNT: 10000,
-    PARTICLE_COUNT: 14000,
-    PARTICLE_SPAWN_COUNT: 110,
-    PARTICLE_BASE_SIZE: 9.0,
-    PARTICLE_LIFETIME: 2.0, // in seconds
-    PARTICLE_GRAVITY: -9.8,
-
-    // === Audio Analysis & Ride Logic ===
-    BASS_KICK_THRESHOLD: 15,
-    MID_KICK_THRESHOLD: 10,
-    HIGH_KICK_THRESHOLD: 8,
-
-    // === Track Building ===
-    TRACK_SEGMENT_RESOLUTION: 100,
-    INITIAL_TRACK_SEGMENT_LENGTH: 10,
-    INITIAL_TRACK_SEGMENT_SPACING: 2,
-    DEFAULT_SKY_COLOR_2: '#000000',
-} as const satisfies RideConfig;
-
-export const DEFAULT_SPACING = 1.0;
-
-type HexColor = `#${string}`;
-
-interface RideConfig {
-    // === Camera & Rendering ===
-    CAMERA_BASE_FOV: number;
-    CAMERA_SPEED_FOV_FACTOR: number;
-    CAMERA_MAX_FOV_BOOST: number;
-
-    // === Visual Effects ===
-    STARS_COUNT: number;
-    PARTICLE_COUNT: number;
-    PARTICLE_SPAWN_COUNT: number;
-    PARTICLE_BASE_SIZE: number;
-    PARTICLE_LIFETIME: number;
-    PARTICLE_GRAVITY: number;
-
-    // === Audio Analysis & Ride Logic ===
-    BASS_KICK_THRESHOLD: number;
-    MID_KICK_THRESHOLD: number;
-    HIGH_KICK_THRESHOLD: number;
-
-    // === Track Building ===
-    TRACK_SEGMENT_RESOLUTION: number;
-    INITIAL_TRACK_SEGMENT_LENGTH: number;
-    INITIAL_TRACK_SEGMENT_SPACING: number;
-    DEFAULT_SKY_COLOR_2: HexColor;
-}
+export const TRACK_STYLES = ['classic', 'extreme', 'flowing', 'technical', 'experimental'];
+export const WORLD_THEMES = ['fantasy', 'cyberpunk', 'aurora', 'desert', 'space', 'underwater', 'noir'];
+export const VISUAL_STYLES = ['photorealistic', 'stylized', 'painterly', 'lowpoly', 'retro'];
+export const DETAIL_LEVELS = ['low', 'medium', 'high'];
+export const CAMERA_PRESETS = ['epic', 'immersive', 'first_person', 'wide_angle'];
+export const EVENT_PRESETS = ['fog', 'fireworks', 'starshow', 'lightBurst', 'sparkRing', 'confetti'];

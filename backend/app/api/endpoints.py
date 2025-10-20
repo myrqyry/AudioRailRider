@@ -4,10 +4,17 @@ from ..services.gemini_service import GeminiService, gemini_service
 from ..models.models import SkyboxRequest
 from ..limiter import limiter
 from ..config.settings import settings
+from ..schema.blueprint import BlueprintOptions
+from shared.constants import (
+    TRACK_STYLES,
+    WORLD_THEMES,
+    VISUAL_STYLES,
+    DETAIL_LEVELS,
+    CAMERA_PRESETS,
+    EVENT_PRESETS,
+)
 
 router = APIRouter()
-
-ALLOWED_MIME_TYPES = ["audio/mpeg", "audio/wav", "audio/ogg", "audio/flac"]
 
 @router.get("/")
 async def root() -> Dict[str, str]:
@@ -38,8 +45,8 @@ async def generate_blueprint(
         HTTPException: If the file type is invalid, file size exceeds the limit,
                        or the options JSON is malformed.
     """
-    if not audio_file.content_type or audio_file.content_type.lower() not in ALLOWED_MIME_TYPES:
-        supported_formats = ", ".join([mime.split('/')[-1].upper() for mime in ALLOWED_MIME_TYPES])
+    if not audio_file.content_type or audio_file.content_type.lower() not in settings.ALLOWED_MIME_TYPES:
+        supported_formats = ", ".join([mime.split('/')[-1].upper() for mime in settings.ALLOWED_MIME_TYPES])
         raise HTTPException(
             status_code=400,
             detail=f"Unsupported file format '{audio_file.content_type}'. Please upload: {supported_formats}"
@@ -53,11 +60,8 @@ async def generate_blueprint(
     parsed_options = None
     if options:
         try:
-            import json
-            parsed_options = json.loads(options)
-            if not isinstance(parsed_options, dict):
-                raise HTTPException(status_code=400, detail='Options must be a JSON object')
-        except json.JSONDecodeError as e:
+            parsed_options = BlueprintOptions.model_validate_json(options)
+        except Exception as e:
             raise HTTPException(status_code=400, detail=f'Invalid JSON in options field: {str(e)}')
 
     # This single call now handles analysis and generation, returning both.
@@ -98,11 +102,11 @@ async def generation_presets(request: Request) -> Dict[str, Any]:
     """
     # Mirror shared/types GenerationOptions presets so the frontend can present choices
     presets = {
-        'trackStyles': ['classic', 'extreme', 'flowing', 'technical', 'experimental'],
-        'worldThemes': ['fantasy', 'cyberpunk', 'aurora', 'desert', 'space', 'underwater', 'noir'],
-        'visualStyles': ['photorealistic', 'stylized', 'painterly', 'lowpoly', 'retro'],
-        'detailLevels': ['low', 'medium', 'high'],
-        'cameraPresets': ['epic', 'immersive', 'first_person', 'wide_angle'],
-        'eventPresets': ['fog', 'fireworks', 'starshow', 'lightBurst', 'sparkRing', 'confetti']
+        'trackStyles': TRACK_STYLES,
+        'worldThemes': WORLD_THEMES,
+        'visualStyles': VISUAL_STYLES,
+        'detailLevels': DETAIL_LEVELS,
+        'cameraPresets': CAMERA_PRESETS,
+        'eventPresets': EVENT_PRESETS,
     }
     return presets
