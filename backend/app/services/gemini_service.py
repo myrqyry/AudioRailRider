@@ -312,8 +312,22 @@ Always output strictly valid JSON. Push creativity to the MAXIMUM while respecti
 
         audio_features = {}
         try:
-            # Asynchronously analyze audio first. If this fails, we can't proceed.
-            audio_features = await analyze_audio(audio_bytes)
+            # Attempt to analyze audio. If analysis fails (corrupt/unsupported file),
+            # log and continue with conservative defaults so we can fall back to
+            # procedural generation instead of returning a hard 500.
+            try:
+                audio_features = await analyze_audio(audio_bytes)
+            except Exception as e:
+                logger.warning("Audio analysis failed; continuing with defaults", error=str(e), exc_info=True)
+                # Conservative safe defaults used to seed the prompt/fallback.
+                audio_features = {
+                    "duration": 0.0,
+                    "bpm": 120.0,
+                    "energy": 0.0,
+                    "spectralCentroid": 0.0,
+                    "spectralFlux": 0.0,
+                    "frameAnalyses": [],
+                }
 
             prompt = self.generate_prompt_text(
                 audio_features["duration"], audio_features["bpm"], audio_features["energy"],

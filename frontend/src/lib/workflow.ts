@@ -106,9 +106,12 @@ export const runAudioProcessingWorkflow = async (
 
     // --- Start skybox generation early so the image can be ready by the time
     // the UI marks the ride as Ready. We start the async request here and
-    // continue building the track data in parallel. If the skybox resolves
-    // quickly we'll apply it before the Ready transition; otherwise it will
-    // be applied when the promise completes without blocking the Ready state.
+    // continue building the track data in parallel. We give it a short
+    // fast-path to finish quickly, but also wait a bounded time later
+    // before transitioning to Ready so the skybox is available in most cases.
+    let skyboxPromise: Promise<string | null> | null = null;
+    const SKYBOX_FAST_PATH_MS = 2500; // give the skybox a short head-start to complete
+    const SKYBOX_MAX_WAIT_MS = 8000; // maximum wait before marking Ready
     try {
       const { setSkyboxUrl } = useAppStore.getState().actions;
       // Clear any previous skybox for this new run
@@ -117,8 +120,6 @@ export const runAudioProcessingWorkflow = async (
       const prompt = refinedBlueprint.moodDescription || refinedBlueprint.rideName || 'A surreal and cinematic sky';
       const blueprintWithOptions = { ...refinedBlueprint, generationOptions: options?.generationOptions ?? useAppStore.getState().generationOptions };
 
-      const SKYBOX_FAST_PATH_MS = 2500; // give the skybox a short head-start to complete
-      let skyboxPromise: Promise<string | null> | null = null;
       try {
         skyboxPromise = generateSkyboxImage(prompt, blueprintWithOptions)
           .then((imageUrl) => {
@@ -134,27 +135,21 @@ export const runAudioProcessingWorkflow = async (
         skyboxPromise = null;
       }
 
-      // Build track data in parallel and give the skybox a short time to finish
-      // before marking the ride ready so that in many cases the image is already
-      // available when the UI transitions to Ready.
-      
-      // Note: we intentionally do not await the skybox indefinitely; it will
-      // still apply to the scene when it completes.
-      
-      // Wait a short time (but not indefinitely) for the skybox fast-path
-      const waitForSkyboxFastPath = async () => {
-        if (!skyboxPromise) return null;
+      // Fast-path: give the skybox a short time to finish while we build the track
+      if (skyboxPromise) {
         try {
-          const result = await Promise.race([skyboxPromise, new Promise<string | null>((res) => setTimeout(() => res(null), SKYBOX_FAST_PATH_MS))]);
-          return result as string | null;
-        } catch (e) { return null; }
-      };
-      const skyboxFast = await waitForSkyboxFastPath();
-      if (skyboxFast) {
-        console.log('[Workflow] Skybox finished during build fast-path');
+          const early = await Promise.race([
+            skyboxPromise,
+            new Promise<string | null>((res) => setTimeout(() => res(null), SKYBOX_FAST_PATH_MS)),
+          ]);
+          if (early) console.log('[Workflow] Skybox finished during build fast-path');
+        } catch (e) {
+          /* ignore fast-path errors */
+        }
       }
     } catch (e) {
       console.info('[Workflow] Skybox pre-generation step encountered an error, continuing', e);
+      skyboxPromise = null;
     }
     try {
       console.log('[Workflow] Refined segment components', refinedBlueprint.track.map((segment, index) => ({ index, component: segment.component })));
@@ -172,7 +167,46 @@ export const runAudioProcessingWorkflow = async (
 
     checkAbort();
     setWorkflowProgress(100);
-    console.log('[Workflow] Setting track data and status to ready');
+    console.log('[Workflow] Building track data object and storing in app state');
+    try {
+      // Build the render-ready TrackData from the refined blueprint and audio features
+      const trackData = buildTrackData(refinedBlueprint, audioFeatures);
+      // Ensure we haven't been aborted before writing heavy state
+      checkAbort();
+      const { setTrackData } = useAppStore.getState().actions;
+      setTrackData(trackData);
+      console.log('[Workflow] Track data set in store (points:', trackData.path.length, 'segments:', trackData.segmentDetails.length, ')');
+    } catch (e) {
+      console.warn('[Workflow] Failed to build track data, aborting Ready transition', e);
+      setError({ title: 'Track Build Failed', message: 'Could not construct track geometry from blueprint.' });
+      return;
+    }
+
+    // If we started skybox generation, wait up to SKYBOX_MAX_WAIT_MS for it to finish
+    try {
+      if (skyboxPromise) {
+        console.log('[Workflow] Waiting up to', SKYBOX_MAX_WAIT_MS, 'ms for skybox to finish before Ready');
+        const { setSkyboxUrl } = useAppStore.getState().actions;
+        try {
+          const result = await Promise.race([
+            skyboxPromise,
+            new Promise<string | null>((res) => setTimeout(() => res(null), SKYBOX_MAX_WAIT_MS)),
+          ]);
+          if (result) {
+            console.log('[Workflow] Skybox generation completed before Ready');
+            try { setSkyboxUrl(result); } catch (e) {}
+          } else {
+            console.log('[Workflow] Skybox did not finish within max wait, continuing without it');
+          }
+        } catch (e) {
+          console.info('[Workflow] Error while awaiting skybox result, continuing', e);
+        }
+      }
+    } catch (e) {
+      console.info('[Workflow] Skybox wait logic failed, continuing', e);
+    }
+
+    console.log('[Workflow] Setting status to Ready');
     setStatus(AppStatus.Ready);
   } catch (error: unknown) {
     if (error instanceof DOMException && error.name === 'AbortError') {
