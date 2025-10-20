@@ -1,6 +1,4 @@
 import asyncio
-import librosa
-import numpy as np
 import io
 import os
 import structlog
@@ -14,8 +12,23 @@ logger = structlog.get_logger(__name__)
 # Create a bounded thread pool executor for CPU-bound audio analysis tasks.
 # Using os.cpu_count() is a good practice for CPU-bound tasks.
 # Default to 4 if cpu_count() is not available or to have a baseline.
-WORKERS = os.cpu_count() or 4
+WORKERS = max(1, (os.cpu_count() or 4))
 audio_analysis_executor = ThreadPoolExecutor(max_workers=WORKERS)
+
+# Register atexit shutdown to avoid dangling threads in some environments
+try:
+    from atexit import register as _register_atexit
+
+    def _shutdown_executor():
+        try:
+            audio_analysis_executor.shutdown(wait=False)
+        except Exception:
+            pass
+
+    _register_atexit(_shutdown_executor)
+except Exception:
+    # atexit isn't critical; ignore registration failures
+    pass
 
 
 def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
@@ -37,6 +50,10 @@ def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
                        error (400) or an unexpected error (500).
     """
     try:
+        # Lazy import heavy dependencies to avoid import-time failures
+        import librosa
+        import numpy as np
+
         audio_stream = io.BytesIO(audio_bytes)
         # Resample to a lower sample rate to speed up STFT and feature extraction.
         target_sr = 22050
@@ -62,6 +79,19 @@ def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
         S = np.abs(librosa.stft(y, n_fft=n_fft, hop_length=hop_length))
         freqs = librosa.fft_frequencies(sr=sr, n_fft=n_fft)
 
+        # Guard against empty-frame result (very short or silent audio)
+        num_frames = S.shape[1] if S.ndim >= 2 else 0
+        if num_frames == 0:
+            # Return safe defaults
+            return {
+                "duration": duration,
+                "bpm": float(120.0),
+                "energy": 0.0,
+                "spectralCentroid": 0.0,
+                "spectralFlux": 0.0,
+                "frameAnalyses": []
+            }
+
         bass_cutoff = 250
         mid_cutoff = 4000
 
@@ -71,14 +101,14 @@ def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
 
         # Vectorized band energy per frame
         # handle empty bin cases defensively
-        maxS = max(np.max(S), 1e-10) if S.size > 0 else 1e-10
+        max_s = max(np.max(S), 1e-10) if S.size > 0 else 1e-10
         bass_energy = S[bass_bins, :].mean(axis=0) if bass_bins.size > 0 else np.zeros(S.shape[1])
         mid_energy = S[mid_bins, :].mean(axis=0) if mid_bins.size > 0 else np.zeros(S.shape[1])
         high_energy = S[high_bins, :].mean(axis=0) if high_bins.size > 0 else np.zeros(S.shape[1])
 
-        bass = np.clip(bass_energy / maxS, 0, 1)
-        mid = np.clip(mid_energy / maxS, 0, 1)
-        high = np.clip(high_energy / maxS, 0, 1)
+        bass = np.clip(bass_energy / max_s, 0, 1)
+        mid = np.clip(mid_energy / max_s, 0, 1)
+        high = np.clip(high_energy / max_s, 0, 1)
 
         times = librosa.frames_to_time(np.arange(S.shape[1]), sr=sr, hop_length=hop_length)
         rms_frames = librosa.feature.rms(S=S, frame_length=n_fft, hop_length=hop_length)[0]
@@ -142,6 +172,6 @@ async def analyze_audio(audio_bytes: bytes) -> Dict[str, Any]:
     Returns:
         A dictionary containing the extracted audio features.
     """
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     # Use a specific, bounded executor to prevent resource exhaustion
     return await loop.run_in_executor(audio_analysis_executor, _analyze_audio_sync, audio_bytes)

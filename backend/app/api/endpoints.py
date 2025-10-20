@@ -60,7 +60,9 @@ async def generate_blueprint(
     parsed_options = None
     if options:
         try:
-            parsed_options = BlueprintOptions.model_validate_json(options)
+            parsed_model = BlueprintOptions.model_validate_json(options)
+            # Convert Pydantic model to a plain dict before passing downstream
+            parsed_options = parsed_model.model_dump()
         except Exception as e:
             raise HTTPException(status_code=400, detail=f'Invalid JSON in options field: {str(e)}')
 

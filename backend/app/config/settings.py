@@ -11,7 +11,8 @@ class Settings(BaseSettings):
         MAX_FILE_SIZE: The maximum allowed file size for audio uploads in bytes.
     """
     # Gemini API Key with validation
-    GEMINI_API_KEY: str = Field(..., min_length=10) # Basic check for presence and reasonable length
+    # GEMINI_API_KEY is optional to allow local/dev/test runs without a key.
+    GEMINI_API_KEY: str | None = Field(default=None, min_length=10)
 
     # Max file size for audio uploads (in bytes)
     MAX_FILE_SIZE: int = Field(default=20 * 1024 * 1024, gt=0, description="Maximum audio file size in bytes (default 20MB)")
@@ -22,7 +23,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding='utf-8', extra='ignore')
 
     @validator('GEMINI_API_KEY')
-    def validate_api_key_format(cls, v: str) -> str:
+    def validate_api_key_format(cls, v: str | None) -> str | None:
         """
         Validates that the Gemini API key has a plausible format.
         This is not a foolproof check but prevents common mistakes.
@@ -36,7 +37,10 @@ class Settings(BaseSettings):
         Raises:
             ValueError: If the API key seems too short.
         """
-        # Basic length check for plausibility
+        # Allow None (no key provided). Only validate when a value exists.
+        if v is None:
+            return v
+        # Basic plausibility check
         if len(v) < 30:
             raise ValueError("Gemini API key seems too short.")
         return v
