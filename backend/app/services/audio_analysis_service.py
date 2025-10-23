@@ -31,7 +31,7 @@ except Exception:
     pass
 
 
-def _extract_emotional_fingerprint(y, sr) -> Dict[str, Any]:
+def _extract_emotional_fingerprint(y: 'numpy.ndarray', sr: float) -> Dict[str, Any]:
     """
     Extracts a deeper emotional fingerprint from the audio.
     """
