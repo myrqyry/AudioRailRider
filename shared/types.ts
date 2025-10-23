@@ -99,14 +99,65 @@ export interface BaseSegment {
   audioSyncPoint?: Seconds;
 }
 
+export enum TrackComponentType {
+    // Basic Elements
+    STRAIGHT = "straight",
+    GENTLE_CURVE = "gentle_curve",
+    BANKING_TURN = "banking_turn",
+    // Climbs & Hills
+    GENTLE_HILL = "gentle_hill",
+    STEEP_CLIMB = "steep_climb",
+    LAUNCH_HILL = "launch_hill",
+    AIRTIME_HILL = "airtime_hill",
+    BUNNY_HOP = "bunny_hop",
+    // Drops & Descents
+    GENTLE_DROP = "gentle_drop",
+    STEEP_DROP = "steep_drop",
+    VERTICAL_DROP = "vertical_drop",
+    SPIRAL_DROP = "spiral_drop",
+    CURVED_DROP = "curved_drop",
+    // Loops & Inversions
+    VERTICAL_LOOP = "vertical_loop",
+    HORIZONTAL_LOOP = "horizontal_loop",
+    CORKSCREW = "corkscrew",
+    COBRA_ROLL = "cobra_roll",
+    BARREL_ROLL = "barrel_roll",
+    HEARTLINE_ROLL = "heartline_roll",
+    // Complex Elements
+    DOUBLE_DOWN = "double_down",
+    DOUBLE_UP = "double_up",
+    S_CURVE = "s_curve",
+    HELIX = "helix",
+    TWISTED_ELEMENT = "twisted_element",
+    // Speed Elements
+    LAUNCH_SECTION = "launch_section",
+    BRAKE_RUN = "brake_run",
+    SPEED_BOOST = "speed_boost",
+    // Special Elements
+    ZERO_G_ROLL = "zero_g_roll",
+    PRETZEL_KNOT = "pretzel_knot",
+    FLYING_COASTER_ELEMENT = "flying_element"
+}
+
 // Discriminated union for track segments with stricter validation hints.
-export type TrackSegment = BaseSegment & (
-  | { component: 'climb'; length: number; angle?: number }
-  | { component: 'drop'; length: number; angle?: number }
-  | { component: 'turn'; length: number; direction: 'left' | 'right'; angle: number; radius?: number }
-  | { component: 'loop'; radius: number; rotations?: number }
-  | { component: 'barrelRoll'; rotations: number; length?: number }
-);
+export type TrackSegment = BaseSegment & {
+    component: TrackComponentType;
+    length: number;
+    height?: number;
+    banking?: number;
+    g_force?: number;
+    speed_modifier?: number;
+    radius?: number;
+    twist_angle?: number;
+    inversions?: number;
+    audio_properties?: any;
+    effects?: any;
+    energy_threshold?: number;
+    beat_alignment?: boolean;
+    angle?: number;
+    direction?: 'left' | 'right';
+    rotations?: number;
+};
 
 // This alias is deprecated but kept for backward compatibility during refactoring.
 export type TrackSegmentWithMeta = TrackSegment;
