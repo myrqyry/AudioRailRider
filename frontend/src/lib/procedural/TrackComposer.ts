@@ -6,14 +6,31 @@ interface SegmentGenerator {
     generate(segment: TrackSegment, startPos: THREE.Vector3, startDir: THREE.Vector3, startUp: THREE.Vector3): { points: THREE.Vector3[], upVectors: THREE.Vector3[] };
 }
 
+class StraightGenerator implements SegmentGenerator {
+    generate(segment: TrackSegment, startPos: THREE.Vector3, startDir: THREE.Vector3, startUp: THREE.Vector3) {
+        const points: THREE.Vector3[] = [];
+        const upVectors: THREE.Vector3[] = [];
+        const resolution = 100;
+
+        const length = Math.max(10, segment.length);
+        const endPos = startPos.clone().add(startDir.clone().multiplyScalar(length));
+
+        for (let i = 1; i <= resolution; i++) {
+            const alpha = i / resolution;
+            points.push(new THREE.Vector3().lerpVectors(startPos, endPos, alpha));
+            upVectors.push(startUp.clone());
+        }
+        return { points, upVectors };
+    }
+}
+
 class ClimbGenerator implements SegmentGenerator {
     generate(segment: TrackSegment, startPos: THREE.Vector3, startDir: THREE.Vector3, startUp: THREE.Vector3) {
         const points: THREE.Vector3[] = [];
         const upVectors: THREE.Vector3[] = [];
         const resolution = 100; // TODO: make this configurable
 
-        const typed = segment as Extract<TrackSegment, { component: 'climb' }>;
-        const angle = THREE.MathUtils.degToRad(THREE.MathUtils.clamp(typed.angle ?? 15, -90, 90));
+        const angle = THREE.MathUtils.degToRad(THREE.MathUtils.clamp(segment.angle ?? 15, -90, 90));
         const length = Math.max(10, typed.length) * 1.25;
 
         const dir_horizontal = startDir.clone();
@@ -37,25 +54,21 @@ class DropGenerator implements SegmentGenerator {
     generate(segment: TrackSegment, startPos: THREE.Vector3, startDir: THREE.Vector3, startUp: THREE.Vector3) {
         const points: THREE.Vector3[] = [];
         const upVectors: THREE.Vector3[] = [];
-        const resolution = 100; // TODO: make this configurable
+        const resolution = 100;
 
-        const typed = segment as Extract<TrackSegment, { component: 'drop' }>;
-        const angle = THREE.MathUtils.degToRad(THREE.MathUtils.clamp(typed.angle ?? -40, -90, 90));
-        const length = Math.max(10, typed.length) * 1.25;
+        const height = segment.height ?? -50;
+        const length = Math.max(10, segment.length);
 
-        const dir_horizontal = startDir.clone();
-        dir_horizontal.y = 0;
-        dir_horizontal.normalize();
+        const controlPoint = startPos.clone().add(startDir.clone().multiplyScalar(length * 0.5)).add(new THREE.Vector3(0, height * 0.25, 0));
+        const endPos = startPos.clone().add(startDir.clone().multiplyScalar(length)).add(new THREE.Vector3(0, height, 0));
 
-        const endPos = startPos.clone()
-            .add(dir_horizontal.multiplyScalar(Math.cos(angle) * length))
-            .add(new THREE.Vector3(0, Math.sin(angle) * length, 0));
-
-        for(let i = 1; i <= resolution; i++) {
-            const alpha = i / resolution;
-            points.push(new THREE.Vector3().lerpVectors(startPos, endPos, alpha));
+        const curve = new THREE.QuadraticBezierCurve3(startPos, controlPoint, endPos);
+        const curvePoints = curve.getPoints(resolution);
+        points.push(...curvePoints);
+        for (let i = 0; i < curvePoints.length; i++) {
             upVectors.push(startUp.clone());
         }
+
         return { points, upVectors };
     }
 }
@@ -64,12 +77,12 @@ class TurnGenerator implements SegmentGenerator {
     generate(segment: TrackSegment, startPos: THREE.Vector3, startDir: THREE.Vector3, startUp: THREE.Vector3) {
         const points: THREE.Vector3[] = [];
         const upVectors: THREE.Vector3[] = [];
-        const resolution = 100; // TODO: make this configurable
+        const resolution = 100;
 
-        const typed = segment as Extract<TrackSegment, { component: 'turn' }>;
-        const radius = Math.max(10, typed.radius ?? 80) * 1.25;
-        const angle = THREE.MathUtils.degToRad(THREE.MathUtils.clamp(typed.angle ?? 90, -360, 360));
-        const direction = typed.direction === 'left' ? 1 : -1;
+        const radius = Math.max(10, segment.radius ?? 80);
+        const angle = THREE.MathUtils.degToRad(THREE.MathUtils.clamp(segment.angle ?? 90, -360, 360));
+        const direction = segment.direction === 'left' ? 1 : -1;
+        const banking = THREE.MathUtils.degToRad(segment.banking ?? 0);
 
         const turnAxis = new THREE.Vector3(0, 1, 0);
         const centerOffset = startDir.clone().cross(turnAxis).multiplyScalar(radius * direction);
@@ -90,11 +103,10 @@ class LoopGenerator implements SegmentGenerator {
     generate(segment: TrackSegment, startPos: THREE.Vector3, startDir: THREE.Vector3, startUp: THREE.Vector3) {
         const points: THREE.Vector3[] = [];
         const upVectors: THREE.Vector3[] = [];
-        const resolution = 100; // TODO: make this configurable
+        const resolution = 100;
 
-        const typed = segment as Extract<TrackSegment, { component: 'loop' }>;
-        const radius = Math.max(10, typed.radius ?? 50) * 1.25;
-        const forwardStretch = Math.max(radius * 1.5, (typed as any).length ? Math.max(20, Number((typed as any).length)) * 1.25 : radius * Math.PI * 0.75);
+        const radius = Math.max(10, segment.radius ?? 50);
+        const forwardStretch = Math.max(radius * 1.5, (segment as any).length ? Math.max(20, Number((segment as any).length)) : radius * Math.PI * 0.75);
 
         const center = startPos.clone().add(startDir.clone().multiplyScalar(radius));
 
@@ -115,11 +127,10 @@ class BarrelRollGenerator implements SegmentGenerator {
     generate(segment: TrackSegment, startPos: THREE.Vector3, startDir: THREE.Vector3, startUp: THREE.Vector3) {
         const points: THREE.Vector3[] = [];
         const upVectors: THREE.Vector3[] = [];
-        const resolution = 100; // TODO: make this configurable
+        const resolution = 100;
 
-        const typed = segment as Extract<TrackSegment, { component: 'barrelRoll' }>;
-        const rotations = Math.max(1, Math.round(typed.rotations ?? 1));
-        const length = Math.max(10, typed.length ?? 150) * 1.25;
+        const rotations = Math.max(1, Math.round(segment.rotations ?? 1));
+        const length = Math.max(10, segment.length ?? 150);
         const endPos = startPos.clone().add(startDir.clone().multiplyScalar(length));
 
         for (let i = 1; i <= resolution; i++) {
@@ -143,11 +154,36 @@ export class TrackComposer {
     constructor() {
         this.segmentGenerators = new Map();
         this.validator = new TrackValidator();
-        this.segmentGenerators.set('climb', new ClimbGenerator());
-        this.segmentGenerators.set('drop', new DropGenerator());
-        this.segmentGenerators.set('turn', new TurnGenerator());
-        this.segmentGenerators.set('loop', new LoopGenerator());
-        this.segmentGenerators.set('barrelRoll', new BarrelRollGenerator());
+        this.segmentGenerators.set('straight', new StraightGenerator());
+        this.segmentGenerators.set('gentle_curve', new TurnGenerator());
+        this.segmentGenerators.set('banking_turn', new TurnGenerator());
+        this.segmentGenerators.set('gentle_hill', new ClimbGenerator());
+        this.segmentGenerators.set('steep_climb', new ClimbGenerator());
+        this.segmentGenerators.set('launch_hill', new ClimbGenerator());
+        this.segmentGenerators.set('airtime_hill', new ClimbGenerator());
+        this.segmentGenerators.set('bunny_hop', new ClimbGenerator());
+        this.segmentGenerators.set('gentle_drop', new DropGenerator());
+        this.segmentGenerators.set('steep_drop', new DropGenerator());
+        this.segmentGenerators.set('vertical_drop', new DropGenerator());
+        this.segmentGenerators.set('spiral_drop', new DropGenerator());
+        this.segmentGenerators.set('curved_drop', new DropGenerator());
+        this.segmentGenerators.set('vertical_loop', new LoopGenerator());
+        this.segmentGenerators.set('horizontal_loop', new LoopGenerator());
+        this.segmentGenerators.set('corkscrew', new BarrelRollGenerator());
+        this.segmentGenerators.set('cobra_roll', new BarrelRollGenerator());
+        this.segmentGenerators.set('barrel_roll', new BarrelRollGenerator());
+        this.segmentGenerators.set('heartline_roll', new BarrelRollGenerator());
+        this.segmentGenerators.set('double_down', new DropGenerator());
+        this.segmentGenerators.set('double_up', new ClimbGenerator());
+        this.segmentGenerators.set('s_curve', new TurnGenerator());
+        this.segmentGenerators.set('helix', new TurnGenerator());
+        this.segmentGenerators.set('twisted_element', new BarrelRollGenerator());
+        this.segmentGenerators.set('launch_section', new StraightGenerator());
+        this.segmentGenerators.set('brake_run', new StraightGenerator());
+        this.segmentGenerators.set('speed_boost', new StraightGenerator());
+        this.segmentGenerators.set('zero_g_roll', new BarrelRollGenerator());
+        this.segmentGenerators.set('pretzel_knot', new LoopGenerator());
+        this.segmentGenerators.set('flying_element', new StraightGenerator());
     }
 
     public compose(blueprint: Blueprint, audioFeatures: AudioFeatures): TrackData {

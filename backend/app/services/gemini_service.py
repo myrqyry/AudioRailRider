@@ -18,6 +18,74 @@ from types import SimpleNamespace
 
 logger = logging.getLogger("GeminiService")
 
+ENHANCED_COASTER_PROMPT = """
+You are an expert rollercoaster designer creating thrilling, music-synchronized rides.
+AUDIO ANALYSIS INPUT: {features}
+
+Create a JSON blueprint for an exciting coaster with these requirements:
+
+1.  **TRACK VARIETY** - Use diverse components:
+    *   **Climbs**: steep_climb, gentle_hill, launch_hill
+    *   **Drops**: vertical_drop, spiral_drop, curved_drop
+    *   **Loops**: standard_loop, cobra_roll, double_corkscrew
+    *   **Turns**: banking_turn, sharp_turn, spiral_turn
+    *   **Thrills**: airtime_hill, bunny_hop, speed_boost
+    *   **Inversions**: barrel_roll, heartline_roll, twisted_element
+
+2.  **ENERGY MAPPING**:
+    *   **Low energy (0-0.3)**: Scenic sections, gentle curves
+    *   **Medium energy (0.3-0.7)**: Hills, banking turns, mild inversions
+    *   **High energy (0.7-0.9)**: Major drops, loops, rapid elements
+    *   **Extreme energy (0.9+)**: Mega drops, triple elements, launches
+
+3.  **MUSIC SYNCHRONIZATION**:
+    *   Map BPM to element timing and pacing.
+    *   Create energy peaks matching song structure.
+    *   Add beat-synchronized elements for drops/climaxes.
+    *   Include audio-reactive visual effects.
+
+4.  **DYNAMIC PROPERTIES** for each element:
+    *   Height/depth variations (20-300 units)
+    *   Banking angles (0-90 degrees)
+    *   G-force ratings (1.0-6.0)
+    *   Speed modifiers (0.5-2.5x)
+    *   Duration sync to musical phrases
+
+5.  **IMMERSIVE FEATURES**:
+    *   Dynamic lighting synchronized to beat.
+    *   Particle effects matching energy levels.
+    *   Environment reactions (fog, strobes, speed lines).
+    *   Color palettes reflecting mood/energy.
+
+Return JSON with this structure:
+{{
+  "rideName": "Creative name reflecting the music",
+  "moodDescription": "Vivid description of the ride experience",
+  "palette": ["#color1", "#color2", "#color3", "#color4"],
+  "track": [
+    {{
+      "component": "element_type",
+      "length": 100,
+      "height": 50,
+      "banking": 30,
+      "g_force": 3.2,
+      "speed_modifier": 1.2,
+      "audio_reactive": true,
+      "beat_sync": true
+    }}
+  ],
+  "effects": {{
+    "lighting": "dynamic/strobe/ambient",
+    "particles": "high/medium/low",
+    "fog_density": 0.5,
+    "camera_shake": true,
+    "environment_pulse": true
+  }}
+}}
+
+Make it THRILLING and MEMORABLE!
+"""
+
 
 class APIError(Exception):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -152,8 +220,9 @@ class GeminiService:
                         except Exception:
                             config = None
 
-                        contents = json.dumps(payload)
-                        response = await adapter.generate_content(model=model, contents=contents, config=config)
+                        # Use the new enhanced prompt
+                        prompt = ENHANCED_COASTER_PROMPT.format(features=features)
+                        response = await adapter.generate_content(model=model, contents=prompt, config=config)
                     except Exception:
                         # fall back to test-friendly single payload form
                         response = await self.client.aio.models.generate_content(payload)
@@ -197,19 +266,35 @@ class GeminiService:
 
     def _procedural_fallback_with_features(self, features: dict) -> Dict[str, Any]:
         """Procedural generator used by tests when the client fails or is absent."""
-        duration = features.get("duration", 60)
+        if not hasattr(self, "advanced_generator"):
+            from .advanced_track_generator import AdvancedTrackGenerator
+            self.advanced_generator = AdvancedTrackGenerator()
+
+        track = self.advanced_generator.generate_track(features)
+        track_dicts = [component.model_dump() for component in track]
+
         bpm = features.get("bpm", 120)
-        # Ensure a track longer than 10 segments for the tests
-        n_segments = max(12, int(duration // 5))
-        track = [{"component": "climb", "length": 100} for _ in range(n_segments)]
+        energy = features.get("energy", 0.5)
+
         blueprint = {
-            "rideName": "Procedural Ride",
-            "moodDescription": "A procedurally generated ride, designed to be long and varied.",
-            "palette": ["#888888"],
-            "track": track,
+            "rideName": f"Dynamic Audio Coaster ({int(bpm)} BPM)",
+            "moodDescription": f"A procedurally generated ride based on audio analysis.",
+            "palette": self._generate_dynamic_palette(energy, bpm),
+            "track": track_dicts,
         }
-        features_out = {"bpm": bpm, "energy": features.get("energy", 0.5)}
+        features_out = {"bpm": bpm, "energy": energy}
         return {"blueprint": blueprint, "features": features_out}
+
+    def _generate_dynamic_palette(self, energy: float, bpm: float) -> list:
+        """Generate color palette based on music energy and tempo."""
+        if energy > 0.8:
+            return ["#FF0040", "#FF6600", "#FFFF00", "#00FF80"]
+        elif energy > 0.6:
+            return ["#8000FF", "#FF0080", "#00FFFF", "#FF4000"]
+        elif energy > 0.4:
+            return ["#0080FF", "#8040FF", "#FF8000", "#40FF40"]
+        else:
+            return ["#4080FF", "#8080FF", "#FF8080", "#80FF80"]
 
     async def _call_client_generate(self, audio_path: str, options: Any) -> Any:
         # Compatibility helper for callers that want to call a client-level generate.
