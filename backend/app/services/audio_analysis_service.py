@@ -31,6 +31,43 @@ except Exception:
     pass
 
 
+def _extract_emotional_fingerprint(y: 'numpy.ndarray', sr: float) -> Dict[str, Any]:
+    """
+    Extracts a deeper emotional fingerprint from the audio.
+    """
+    import librosa
+    import numpy as np
+
+    # Harmonic-percussive separation
+    harmonic, percussive = librosa.effects.hpss(y)
+
+    # Tonal tension analysis (simplified)
+    chroma = librosa.feature.chroma_stft(y=y, sr=sr)
+    tonal_tension_curve = np.std(chroma, axis=0)
+
+    # Emotional valence (simplified)
+    tonnetz = librosa.feature.tonnetz(y=harmonic, sr=sr)
+    valence_curve = np.mean(tonnetz, axis=0)
+
+    # Rhythmic complexity
+    onset_strength = librosa.onset.onset_strength(y=y, sr=sr)
+
+    y_mean_squared = np.mean(y**2)
+    # Avoid division by zero for silent audio
+    harmonic_dominance = np.mean(harmonic**2) / y_mean_squared if y_mean_squared > 1e-10 else 0.0
+    percussive_energy = np.mean(percussive**2) / y_mean_squared if y_mean_squared > 1e-10 else 0.0
+
+    return {
+        'tonal_tension': float(np.mean(tonal_tension_curve)),
+        'valence_curve': float(np.mean(valence_curve)),
+        'rhythmic_complexity': float(np.mean(onset_strength)),
+        'textural_separation': {
+            'harmonic_dominance': float(harmonic_dominance),
+            'percussive_energy': float(percussive_energy)
+        }
+    }
+
+
 def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
     """
     Performs synchronous audio analysis on a byte stream.
@@ -133,6 +170,9 @@ def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
         avg_spectral_centroid = float(np.mean([f['spectralCentroid'] for f in frame_analyses])) if frame_analyses else 0
         avg_spectral_flux = float(np.mean([f['spectralFlux'] for f in frame_analyses])) if frame_analyses else 0
 
+        # Extract emotional fingerprint
+        emotional_fingerprint = _extract_emotional_fingerprint(y, sr)
+
         logger.info(
             "Audio analysis complete",
             duration_s=round(duration, 1),
@@ -140,14 +180,17 @@ def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
             bpm=round(bpm, 1)
         )
 
-        return {
+        features = {
             "duration": duration,
             "bpm": bpm,
             "energy": normalized_energy,
             "spectralCentroid": avg_spectral_centroid,
             "spectralFlux": avg_spectral_flux,
-            "frameAnalyses": frame_analyses
+            "frameAnalyses": frame_analyses,
+            "emotional_fingerprint": emotional_fingerprint
         }
+
+        return features
     # Catch specific, expected errors from audio processing
     except librosa.LibrosaError as e:
         logger.error("Librosa error during audio analysis", error=str(e), exc_info=True)

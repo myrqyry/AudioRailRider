@@ -18,72 +18,34 @@ from types import SimpleNamespace
 
 logger = logging.getLogger("GeminiService")
 
-ENHANCED_COASTER_PROMPT = """
-You are an expert rollercoaster designer creating thrilling, music-synchronized rides.
-AUDIO ANALYSIS INPUT: {features}
+SYNESTHETIC_PROMPT = """
+You are not designing a rollercoaster - you are translating a song's soul into a navigable dreamscape.
+AUDIO SOUL ANALYSIS: {features}
 
-Create a JSON blueprint for an exciting coaster with these requirements:
+Create a JSON blueprint for a synesthetic experience with impossible physics:
 
-1.  **TRACK VARIETY** - Use diverse components:
-    *   **Climbs**: steep_climb, gentle_hill, launch_hill
-    *   **Drops**: vertical_drop, spiral_drop, curved_drop
-    *   **Loops**: standard_loop, cobra_roll, double_corkscrew
-    *   **Turns**: banking_turn, sharp_turn, spiral_turn
-    *   **Thrills**: airtime_hill, bunny_hop, speed_boost
-    *   **Inversions**: barrel_roll, heartline_roll, twisted_element
+**DREAM-LOGIC ELEMENTS:**
+- gravity_defying_spirals: Rails that twist through negative space
+- temporal_loops: Segments where time dilates with the music's rhythm
+- chromatic_tunnels: Passages that shift color with harmonic changes
+- resonance_bridges: Structures that vibrate and reshape with frequencies
+- void_drops: Falls through pure darkness synchronized to bass drops
 
-2.  **ENERGY MAPPING**:
-    *   **Low energy (0-0.3)**: Scenic sections, gentle curves
-    *   **Medium energy (0.3-0.7)**: Hills, banking turns, mild inversions
-    *   **High energy (0.7-0.9)**: Major drops, loops, rapid elements
-    *   **Extreme energy (0.9+)**: Mega drops, triple elements, launches
+**SYNESTHETIC MAPPINGS:**
+- Low frequencies (20-250Hz) → Heavy, grounding elements, earthen colors
+- Mid frequencies (250-4000Hz) → Flowing curves, warm hues, organic shapes
+- High frequencies (4000Hz+) → Sharp crystalline structures, cool colors, light
+- Harmonic tension → Track banking and inversion complexity
+- Rhythmic patterns → Segment timing and repetition cycles
 
-3.  **MUSIC SYNCHRONIZATION**:
-    *   Map BPM to element timing and pacing.
-    *   Create energy peaks matching song structure.
-    *   Add beat-synchronized elements for drops/climaxes.
-    *   Include audio-reactive visual effects.
+**CELESTIAL AESTHETICS:**
+- Wireframe sections that pulse with the beat
+- Particle trails that follow melodic lines
+- Environmental breathing that matches song dynamics
+- Colors that exist between normal spectrum (impossible hues)
+- Geometry that morphs between 2D and 3D based on musical texture
 
-4.  **DYNAMIC PROPERTIES** for each element:
-    *   Height/depth variations (20-300 units)
-    *   Banking angles (0-90 degrees)
-    *   G-force ratings (1.0-6.0)
-    *   Speed modifiers (0.5-2.5x)
-    *   Duration sync to musical phrases
-
-5.  **IMMERSIVE FEATURES**:
-    *   Dynamic lighting synchronized to beat.
-    *   Particle effects matching energy levels.
-    *   Environment reactions (fog, strobes, speed lines).
-    *   Color palettes reflecting mood/energy.
-
-Return JSON with this structure:
-{{
-  "rideName": "Creative name reflecting the music",
-  "moodDescription": "Vivid description of the ride experience",
-  "palette": ["#color1", "#color2", "#color3", "#color4"],
-  "track": [
-    {{
-      "component": "element_type",
-      "length": 100,
-      "height": 50,
-      "banking": 30,
-      "g_force": 3.2,
-      "speed_modifier": 1.2,
-      "audio_reactive": true,
-      "beat_sync": true
-    }}
-  ],
-  "effects": {{
-    "lighting": "dynamic/strobe/ambient",
-    "particles": "high/medium/low",
-    "fog_density": 0.5,
-    "camera_shake": true,
-    "environment_pulse": true
-  }}
-}}
-
-Make it THRILLING and MEMORABLE!
+Return a blueprint that makes the rider feel like "the needle on the record."
 """
 
 
@@ -221,7 +183,7 @@ class GeminiService:
                             config = None
 
                         # Use the new enhanced prompt
-                        prompt = ENHANCED_COASTER_PROMPT.format(features=features)
+                        prompt = SYNESTHETIC_PROMPT.format(features=features)
                         response = await adapter.generate_content(model=model, contents=prompt, config=config)
                     except Exception:
                         # fall back to test-friendly single payload form
@@ -272,6 +234,8 @@ class GeminiService:
 
         track = self.advanced_generator.generate_track(features)
         track_dicts = [component.model_dump() for component in track]
+        if not track_dicts:
+            track_dicts = [{"component": "straight", "length": 10}]
 
         bpm = features.get("bpm", 120)
         energy = features.get("energy", 0.5)
