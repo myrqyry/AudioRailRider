@@ -235,7 +235,7 @@ class GeminiService:
         track = self.advanced_generator.generate_track(features)
         track_dicts = [component.model_dump() for component in track]
         if not track_dicts:
-            track_dicts = [{"component": "test_component"}]
+            track_dicts = [{"component": "straight", "length": 10}]
 
         bpm = features.get("bpm", 120)
         energy = features.get("energy", 0.5)
