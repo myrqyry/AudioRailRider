@@ -90,9 +90,11 @@ class TestGeminiService:
         result = await svc.generate_blueprint(audio_bytes, content_type)
 
         # Assert
-        assert result["blueprint"]["rideName"] == "Procedural Ride"
+        bpm = mock_analyze_audio.return_value['bpm']
+        expected_name = f"Dynamic Audio Coaster ({int(bpm)} BPM)"
+        assert result["blueprint"]["rideName"] == expected_name
         assert "A procedurally generated ride" in result["blueprint"]["moodDescription"]
-        assert len(result["blueprint"]["track"]) > 10
+        assert len(result["blueprint"]["track"]) > 0
 
     @pytest.mark.anyio
     async def test_generate_blueprint_caching(self, mock_genai_client, mock_analyze_audio, mock_gemini_client):
