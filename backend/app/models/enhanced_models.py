@@ -85,7 +85,7 @@ class EnhancedBlueprint(BaseModel):
     """Complete coaster blueprint with all enhancements"""
     rideName: str
     moodDescription: str
-    palette: List[str] = Field(..., min_items=3, max_items=8)
+    palette: List[str] = Field(..., min_length=3, max_length=8)
     # Track Definition
     track: List[TrackComponent]
     total_length: float = Field(..., description="Total track length in meters")

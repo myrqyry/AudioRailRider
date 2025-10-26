@@ -6,13 +6,7 @@ export default {
     '\\.(css|less|scss|sass)$': 'identity-obj-proxy',
   },
   transform: {
-    '^.+\\.tsx?$': ['ts-jest', { tsconfig: 'tsconfig.json' }],
-  },
-  globals: {
-    'ts-jest': {
-      // Must be set to `true` when using ES Modules
-      useESM: true,
-    },
+    '^.+\\.tsx?$': ['ts-jest', { tsconfig: 'tsconfig.json', useESM: true }],
   },
   setupFilesAfterEnv: ['@testing-library/jest-dom'],
   setupFiles: ['jest-canvas-mock'],

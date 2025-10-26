@@ -59,15 +59,24 @@ describe('VisualEffects', () => {
     });
 
     it('creates a track mesh with an attached BVH', () => {
+      // Arrange: VisualEffects instance is created in beforeEach
+
+      // Act: No additional action needed, mesh is created during construction
+
+      // Assert
       const trackMesh = scene.children.find((child) => child instanceof THREE.Mesh) as THREE.Mesh;
       expect(trackMesh).toBeDefined();
       expect((trackMesh.geometry as any).boundsTree).toBeDefined();
     });
 
     it('invokes particle system hooks during update', () => {
+      // Arrange: Spies are set up in beforeEach, VisualEffects instance created
+
+      // Act
       const now = performance.now() / 1000;
       visualEffects.update(now, null, new THREE.Vector3(), new THREE.Vector3(0, 0, -1), 0.5);
 
+      // Assert
       expect(driveReactiveParticlesSpy).toHaveBeenCalled();
       expect(reclaimExpiredSpy).toHaveBeenCalled();
       expect(updatePointsMaterialSpy).toHaveBeenCalled();
@@ -75,9 +84,13 @@ describe('VisualEffects', () => {
     });
 
     it('delegates to ParticleSystem.spawnParticles', () => {
+      // Arrange: Spy is set up in beforeEach, VisualEffects instance created
+
+      // Act
       const origin = new THREE.Vector3(1, 2, 3);
       visualEffects.spawnParticles(10, origin);
 
+      // Assert
       expect(spawnParticlesSpy).toHaveBeenCalledWith(10, {
         origin,
         feature: undefined,
@@ -88,16 +101,26 @@ describe('VisualEffects', () => {
     });
 
     it('rebuilds BVH geometry and downgrades particle quality in low quality mode', () => {
+      // Arrange: VisualEffects instance created, spy on rebuildTrackGeometry
+
+      // Act
       const rebuildSpy = jest.spyOn(visualEffects, 'rebuildTrackGeometry');
       (visualEffects as any).switchToLowQuality();
+
+      // Assert
       expect(rebuildSpy).toHaveBeenCalled();
       expect(setQualityProfileSpy).toHaveBeenCalledWith('low');
     });
 
     it('restores high quality geometry with a fresh BVH', () => {
+      // Arrange: Switch to low quality first, then spy on rebuildTrackGeometry
+
+      // Act
       (visualEffects as any).switchToLowQuality();
       const rebuildSpy = jest.spyOn(visualEffects, 'rebuildTrackGeometry');
       visualEffects.switchToHighQuality();
+
+      // Assert
       expect(rebuildSpy).toHaveBeenCalled();
       expect(setQualityProfileSpy).toHaveBeenCalledWith('high');
     });
