@@ -224,6 +224,12 @@ export class VisualEffects {
       if (this.placeTrackUnderCamera) {
         curvePoints = this.computeOffsetCurvePoints(this.trackPathPoints);
       }
+
+      // Apply impossible physics loops if synesthetic geometry is enabled
+      if (this.synesthetic?.geometry?.impossiblePhysics?.enabled) {
+        curvePoints = this.applyImpossiblePhysicsLoops(curvePoints);
+      }
+
       const curve = new THREE.CatmullRomCurve3(curvePoints);
       const newGeom = new THREE.TubeGeometry(curve, Math.max(4, segments), this.trackRadius, this.highQualityMode ? 8 : 6, false);
       const geometry = geometryPool.acquire();
@@ -248,6 +254,51 @@ export class VisualEffects {
       console.error('[VisualEffects] rebuildTrackGeometry failed', e);
     }
   }
+
+  private applyImpossiblePhysicsLoops(points: THREE.Vector3[]): THREE.Vector3[] {
+    if (!this.synesthetic?.geometry?.impossiblePhysics?.enabled || points.length < 4) {
+      return points;
+    }
+
+    const result: THREE.Vector3[] = [];
+    const loopIntensity = this.synesthetic.geometry.impossiblePhysics.intensity || 0.5;
+    const loopFrequency = this.synesthetic.geometry.impossiblePhysics.frequency || 0.3;
+
+    for (let i = 0; i < points.length; i++) {
+      const point = points[i].clone();
+      const t = i / (points.length - 1);
+
+      // Create impossible loops by adding perpendicular displacements
+      if (i > 0 && i < points.length - 1) {
+        const prev = points[i - 1];
+        const next = points[i + 1];
+        const direction = next.clone().sub(prev).normalize();
+        const up = new THREE.Vector3(0, 1, 0);
+        const right = direction.clone().cross(up).normalize();
+
+        // Create gravity-defying loops
+        const loopPhase = Math.sin(t * Math.PI * 2 * loopFrequency) * loopIntensity;
+        const loopRadius = 3 + Math.sin(t * Math.PI * 4) * 2;
+
+        // Add impossible perpendicular displacement
+        const loopOffset = right.clone().multiplyScalar(Math.cos(loopPhase * Math.PI * 2) * loopRadius);
+        loopOffset.add(up.clone().multiplyScalar(Math.sin(loopPhase * Math.PI * 2) * loopRadius));
+
+        point.add(loopOffset);
+
+        // Add quantum tunneling effect - sudden jumps
+        if (Math.random() < loopIntensity * 0.1) {
+          const jumpDistance = (Math.random() - 0.5) * 4 * loopIntensity;
+          point.add(direction.clone().multiplyScalar(jumpDistance));
+        }
+      }
+
+      result.push(point);
+    }
+
+    return result;
+  }
+
   private baseGhostTintA: THREE.Color;
   private baseGhostTintB: THREE.Color;
   private trackTintA: THREE.Color;
@@ -468,11 +519,15 @@ export class VisualEffects {
       shader.uniforms.motionBlur = { value: 0 };
       shader.uniforms.cameraDirection = { value: new THREE.Vector3() };
       shader.uniforms.previousModelViewMatrix = { value: new THREE.Matrix4() };
+      shader.uniforms.breathingStrength = { value: 0 };
+      shader.uniforms.breathingRate = { value: 0 };
+      shader.uniforms.spectralCentroid = { value: 0 };
+      shader.uniforms.energy = { value: 0 };
 
       shader.fragmentShader = shader.fragmentShader
         .replace(
           '#include <common>',
-          `#include <common>\nvarying vec2 vUv;\nvarying vec3 vWorldPosition;\nvarying vec3 vVelocity;\nvarying float vSpeedLines;\nuniform float trackTime;\nuniform float pulseIntensity;\nuniform float segmentBoost;\nuniform float audioFlow;\nuniform vec3 ghostTintA;\nuniform vec3 ghostTintB;\nuniform float rideSpeed;\nuniform float motionBlur;\nuniform vec3 cameraDirection;\n`
+          `#include <common>\nvarying vec2 vUv;\nvarying vec3 vWorldPosition;\nvarying vec3 vVelocity;\nvarying float vSpeedLines;\nuniform float trackTime;\nuniform float pulseIntensity;\nuniform float segmentBoost;\nuniform float audioFlow;\nuniform vec3 ghostTintA;\nuniform vec3 ghostTintB;\nuniform float rideSpeed;\nuniform float motionBlur;\nuniform vec3 cameraDirection;\nuniform float breathingStrength;\nuniform float breathingRate;\nuniform float spectralCentroid;\nuniform float energy;\n`
         )
         .replace(
           'vec3 totalEmissiveRadiance = emissive;',
@@ -493,6 +548,10 @@ uniform float bassIntensity;
 uniform float trebleIntensity;
 uniform float rideSpeed;
 uniform mat4 previousModelViewMatrix;
+uniform float breathingStrength;
+uniform float breathingRate;
+uniform float spectralCentroid;
+uniform float energy;
 `
         )
         .replace(
@@ -513,6 +572,18 @@ float ribbonIntensity = distortionStrength * (0.2 + 0.3 * motionRibbon);
 transformed += normal * ribbonIntensity;
 float speedVibration = sin(vPath * 100.0 + trackTime * 20.0) * rideSpeed * 0.02;
 transformed += normal * speedVibration;
+
+// Organic breathing geometry - responds to harmonic content
+float breathingPhase = sin(trackTime * breathingRate + vPath * 6.28) * 0.5 + 0.5;
+float harmonicInfluence = spectralCentroid * 0.8 + energy * 0.6;
+float breathingAmplitude = breathingStrength * harmonicInfluence * (0.3 + 0.4 * breathingPhase);
+float breathingWave = sin(vPath * 12.0 + trackTime * breathingRate * 2.0) * breathingAmplitude;
+transformed += normal * breathingWave;
+
+// Add subtle harmonic ripples for synesthetic effect
+float harmonicRipple = sin(vPath * 24.0 + trackTime * breathingRate * 3.0 + spectralCentroid * 6.28) * breathingStrength * 0.15 * energy;
+transformed += normal * harmonicRipple;
+
 vWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;
 
 // Move speed lines calculation from fragment to vertex shader
@@ -1386,6 +1457,10 @@ void main() {
         this.updateUniformSafe(uniforms.trebleIntensity, this.audioFeatures.treble || 0);
         this.updateUniformSafe(uniforms.rideSpeed, rideSpeed, 1e-3);
         this.updateUniformSafe(uniforms.motionBlur, Math.min(1.0, rideSpeed * 0.12), 1e-3);
+        this.updateUniformSafe(uniforms.breathingStrength, Math.min(0.8, 0.1 + this.segmentIntensityBoost * 0.3));
+        this.updateUniformSafe(uniforms.breathingRate, 0.5 + (this.audioFeatures.energy || 0) * 2.0);
+        this.updateUniformSafe(uniforms.spectralCentroid, this.audioFeatures.spectralCentroid || 0);
+        this.updateUniformSafe(uniforms.energy, this.audioFeatures.energy || 0);
       }
 
       if (this.ghostRibbonMaterial) {

@@ -15,6 +15,8 @@ interface ErrorState {
  * Defines the complete state of the application, including status, data, and actions.
  */
 interface AppState {
+        /** Global breathing intensity for geometry deformation. */
+        breathingIntensity: number;
     /** The current status of the application. */
     status: AppStatus;
     /** The current error state, or null if there is no error. */
@@ -39,6 +41,8 @@ interface AppState {
     generationProgress: number;
     /** A collection of actions to modify the application state. */
     actions: {
+        /** Sets the global breathing intensity. */
+        setBreathingIntensity: (intensity: number) => void;
         /** Sets the user-defined generation options. */
         setGenerationOptions: (opts: import('shared/types').GenerationOptions | null) => void;
         /** Sets the application's status and an optional message. */
@@ -85,8 +89,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     generationProgress: 0,
     skyboxUrl: null,
     generationOptions: null,
+    breathingIntensity: 1.0,
     actions: {
     setGenerationOptions: (opts: import('shared/types').GenerationOptions | null) => set({ generationOptions: opts }),
+    setBreathingIntensity: (intensity: number) => set({ breathingIntensity: intensity }),
         setStatus: (status: AppStatus, message?: string) => set({ status, statusMessage: message || '', error: null }),
         setBlueprint: (blueprint: Blueprint | null) => set({ blueprint }),
         setAudioFeatures: (features: AudioFeatures | null) => set({ audioFeatures: features }),

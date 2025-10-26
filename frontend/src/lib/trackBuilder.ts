@@ -56,7 +56,13 @@ const sanitizeSynestheticLayer = (raw: unknown): SynestheticBlueprintLayer | nul
         const breathingDriver = typeof g.breathingDriver === 'string' ? g.breathingDriver.toString().toLowerCase() : undefined;
         geometry = {
             wireframeDensity: Number.isFinite(g.wireframeDensity as number) ? clamp01(g.wireframeDensity as number, 0.55) : undefined,
-            impossiblePhysics: typeof g.impossiblePhysics === 'boolean' ? g.impossiblePhysics : undefined,
+            impossiblePhysics: typeof g.impossiblePhysics === 'object' && g.impossiblePhysics !== null
+                ? {
+                    enabled: typeof (g.impossiblePhysics as any).enabled === 'boolean' ? (g.impossiblePhysics as any).enabled : false,
+                    intensity: Number.isFinite((g.impossiblePhysics as any).intensity as number) ? clamp01((g.impossiblePhysics as any).intensity as number, 0.5) : undefined,
+                    frequency: Number.isFinite((g.impossiblePhysics as any).frequency as number) ? Math.max(0.1, (g.impossiblePhysics as any).frequency as number) : undefined,
+                }
+                : undefined,
             organicBreathing: Number.isFinite(g.organicBreathing as number) ? clamp01(g.organicBreathing as number, 0.4) : undefined,
             breathingDriver: breathingDriver === 'energy' || breathingDriver === 'spectralflux' || breathingDriver === 'spectralcentroid'
                 ? (breathingDriver === 'spectralflux'
@@ -125,7 +131,9 @@ const ROLL_CLAMP = Math.PI / 4;
  * @param {AudioFeatures} [audioFeatures] - The analyzed features of the audio track.
  * @returns {TrackData} The processed, render-ready track data.
  */
-export const buildTrackData = (blueprint: Blueprint, audioFeatures?: AudioFeatures): TrackData => {
+import { useAppStore } from './store';
+
+export const buildTrackData = (blueprint: Blueprint, audioFeatures?: AudioFeatures, breathingIntensity?: number): TrackData => {
     const SPEED_MULTIPLIER = 1.25;
     const points: THREE.Vector3[] = [];
     const upVectors: THREE.Vector3[] = [];
@@ -199,6 +207,8 @@ export const buildTrackData = (blueprint: Blueprint, audioFeatures?: AudioFeatur
         const normalizedComponent = normalizeSegmentComponent(rawComponent as TrackSegment['component']);
     const metricsSource: Record<string, number | string | undefined> = {};
 
+        // Get breathing intensity from argument or store
+        const intensity = typeof breathingIntensity === 'number' ? breathingIntensity : (useAppStore.getState().breathingIntensity ?? 1.0);
         switch (normalizedComponent) {
             case 'climb':
             case 'drop': {
@@ -223,6 +233,11 @@ export const buildTrackData = (blueprint: Blueprint, audioFeatures?: AudioFeatur
                     const alpha = i / resolution;
                     segmentPoints.push(new THREE.Vector3().lerpVectors(currentPos, endPos, alpha));
                     segmentUps.push(currentUp.clone());
+                }
+                // Apply breathing deformation
+                if (audioFeatures) {
+                    const { applyBreathingToGeometry } = require('./procedural/TrackComposer');
+                    applyBreathingToGeometry(segmentPoints, audioFeatures, intensity);
                 }
                 break;
             }
@@ -251,6 +266,11 @@ export const buildTrackData = (blueprint: Blueprint, audioFeatures?: AudioFeatur
                     segmentPoints.push(center.clone().add(newVec));
                     segmentUps.push(currentUp.clone());
                 }
+                // Apply breathing deformation
+                if (audioFeatures) {
+                    const { applyBreathingToGeometry } = require('./procedural/TrackComposer');
+                    applyBreathingToGeometry(segmentPoints, audioFeatures, intensity);
+                }
                 break;
             }
             case 'loop': {
@@ -272,6 +292,11 @@ export const buildTrackData = (blueprint: Blueprint, audioFeatures?: AudioFeatur
                     segmentPoints.push(point);
                     segmentUps.push(currentUp.clone());
                 }
+                // Apply breathing deformation
+                if (audioFeatures) {
+                    const { applyBreathingToGeometry } = require('./procedural/TrackComposer');
+                    applyBreathingToGeometry(segmentPoints, audioFeatures, intensity);
+                }
                 break;
             }
             case 'barrelRoll': {
@@ -290,6 +315,11 @@ export const buildTrackData = (blueprint: Blueprint, audioFeatures?: AudioFeatur
                     const rollAngle = alpha * Math.PI * 2 * rotations;
                     segmentPoints.push(new THREE.Vector3().lerpVectors(currentPos, endPos, alpha));
                     segmentUps.push(currentUp.clone().applyAxisAngle(currentDir, rollAngle));
+                }
+                // Apply breathing deformation
+                if (audioFeatures) {
+                    const { applyBreathingToGeometry } = require('./procedural/TrackComposer');
+                    applyBreathingToGeometry(segmentPoints, audioFeatures, intensity);
                 }
                 break;
             }
@@ -431,7 +461,9 @@ const applyAudioWarp = (
 
     const wireframeDensity = clamp01(geometrySettings?.wireframeDensity, 0.55);
     const breathingStrength = clamp01(geometrySettings?.organicBreathing, 0.4);
-    const impossiblePhysics = Boolean(geometrySettings?.impossiblePhysics);
+    const impossiblePhysicsEnabled = Boolean(geometrySettings?.impossiblePhysics?.enabled);
+    const impossiblePhysicsIntensity = clamp01(geometrySettings?.impossiblePhysics?.intensity, 0.5);
+    const impossiblePhysicsFrequency = geometrySettings?.impossiblePhysics?.frequency ?? 1.0;
     const breathingDriver = geometrySettings?.breathingDriver ?? 'energy';
     const bpm = Number.isFinite(audioFeatures.bpm) ? Math.max(30, audioFeatures.bpm || 120) : 120;
     const breathFrequency = (bpm / 60) * 0.5;
@@ -519,11 +551,11 @@ const applyAudioWarp = (
             targetLat += breathSway;
         }
 
-        if (impossiblePhysics) {
-            const tumble = Math.sin(progress * Math.PI * (3.6 + wireframeDensity * 3.0) + energyNorm * 5.0) * fluxNorm;
-            const lateralInvert = Math.cos(progress * Math.PI * 2.6 + centroidNorm * 3.6) * energyNorm;
-            targetVert += tumble * 2.4;
-            targetLat += lateralInvert * 2.1;
+        if (impossiblePhysicsEnabled) {
+            const tumble = Math.sin(progress * Math.PI * (3.6 * impossiblePhysicsFrequency + wireframeDensity * 3.0) + energyNorm * 5.0) * fluxNorm;
+            const lateralInvert = Math.cos(progress * Math.PI * 2.6 * impossiblePhysicsFrequency + centroidNorm * 3.6) * energyNorm;
+            targetVert += tumble * 2.4 * impossiblePhysicsIntensity;
+            targetLat += lateralInvert * 2.1 * impossiblePhysicsIntensity;
         }
 
         targetLat = THREE.MathUtils.clamp(targetLat, -MAX_AUDIO_LATERAL_SHIFT, MAX_AUDIO_LATERAL_SHIFT);
@@ -562,7 +594,9 @@ const applyDefaultWave = (points: THREE.Vector3[], upVectors: THREE.Vector3[], g
 
     const wireframeDensity = clamp01(geometrySettings?.wireframeDensity, 0.45);
     const breathingStrength = clamp01(geometrySettings?.organicBreathing, 0.35);
-    const impossiblePhysics = Boolean(geometrySettings?.impossiblePhysics);
+    const impossiblePhysicsEnabled = Boolean(geometrySettings?.impossiblePhysics?.enabled);
+    const impossiblePhysicsIntensity = clamp01(geometrySettings?.impossiblePhysics?.intensity, 0.5);
+    const impossiblePhysicsFrequency = geometrySettings?.impossiblePhysics?.frequency ?? 1.0;
     const macroBend = 22 + wireframeDensity * 34;
     const macroLift = 18 + breathingStrength * 28;
     const warpBlend = THREE.MathUtils.clamp(DEFAULT_WARP_BLEND + breathingStrength * 0.2, 0.25, 0.55);
@@ -596,9 +630,9 @@ const applyDefaultWave = (points: THREE.Vector3[], upVectors: THREE.Vector3[], g
         let targetLat = wave * (5.5 + wireframeDensity * 3.4) + macroCurve;
         let targetVert = wave * (7.5 + breathingStrength * 3.6) + macroRise * 0.7;
 
-        if (impossiblePhysics) {
-            targetLat += Math.cos(progress * Math.PI * 3.4) * 2.0 * fade;
-            targetVert += Math.sin(progress * Math.PI * 3.8) * 2.2 * fade;
+        if (impossiblePhysicsEnabled) {
+            targetLat += Math.cos(progress * Math.PI * 3.4 * impossiblePhysicsFrequency) * 2.0 * fade * impossiblePhysicsIntensity;
+            targetVert += Math.sin(progress * Math.PI * 3.8 * impossiblePhysicsFrequency) * 2.2 * fade * impossiblePhysicsIntensity;
         }
 
         targetLat = THREE.MathUtils.clamp(targetLat, -MAX_DEFAULT_LATERAL_SHIFT, MAX_DEFAULT_LATERAL_SHIFT);

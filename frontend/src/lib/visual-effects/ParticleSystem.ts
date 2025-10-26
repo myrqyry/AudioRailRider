@@ -48,15 +48,84 @@ interface QualityProfile {
   gpuUpdateInterval: number;
 }
 
+type ThoughtType = 'melody' | 'harmony' | 'rhythm' | 'texture';
+
 interface ConsciousParticle {
   id: number;
   featureKey: string;
+  thoughtType: ThoughtType;
   position: THREE.Vector3;
   velocity: THREE.Vector3;
   resonance: number;
   createdAt: number;
   lifespan: number;
+  emotionalResonance?: number;
+  synapticConnections?: number[]; // ids of connected particles
 }
+  /**
+   * Spawns a musical thought particle and classifies it by audio feature.
+   * @param audioFeature - The key of the audio feature (e.g., 'melody', 'harmony', etc.)
+   * @param intensity - Initial resonance/intensity
+   * @param origin - Spawn position
+   * @param nowSeconds - Current time
+   */
+  public spawnMusicalThought(audioFeature: string, intensity: number, origin: THREE.Vector3, nowSeconds: number): void {
+    const thoughtType: ThoughtType = this.classifyThought(audioFeature);
+    const particle: ConsciousParticle = {
+      id: ++this.consciousIdCounter,
+      featureKey: audioFeature,
+      thoughtType,
+      position: origin.clone(),
+      velocity: new THREE.Vector3(
+        (Math.random() - 0.5) * 0.2,
+        (Math.random() - 0.5) * 0.2,
+        (Math.random() - 0.5) * 0.2
+      ),
+      resonance: intensity,
+      createdAt: nowSeconds,
+      lifespan: this.synestheticSettings?.lifespanSeconds ?? 4.0,
+      emotionalResonance: intensity,
+      synapticConnections: [],
+    };
+    this.consciousParticles.push(particle);
+    this.connectToHarmonicallyRelated(particle);
+  }
+
+  /**
+   * Classifies the audio feature into a musical thought type.
+   */
+  private classifyThought(audioFeature: string): ThoughtType {
+    if (audioFeature.includes('melody')) return 'melody';
+    if (audioFeature.includes('harmony')) return 'harmony';
+    if (audioFeature.includes('rhythm') || audioFeature.includes('beat')) return 'rhythm';
+    if (audioFeature.includes('texture') || audioFeature.includes('noise')) return 'texture';
+    // Default mapping
+    if (audioFeature.includes('bass') || audioFeature.includes('sub')) return 'rhythm';
+    if (audioFeature.includes('mid') || audioFeature.includes('treble')) return 'harmony';
+    return 'texture';
+  }
+
+  /**
+   * Connects the given particle to harmonically related particles.
+   * Forms neural/synaptic links based on resonance and proximity.
+   */
+  private connectToHarmonicallyRelated(particle: ConsciousParticle): void {
+    if (!this.synestheticSettings) return;
+    const resonanceThreshold = this.synestheticSettings.resonanceThreshold ?? 0.4;
+    const maxLinks = Math.max(2, Math.round(this.maxSynapticLinks * (this.synestheticSettings.connectionDensity ?? 0.45)));
+    let links = 0;
+    for (const other of this.consciousParticles) {
+      if (other.id === particle.id) continue;
+      // Connect if resonance is high and distance is close
+      const resonanceAvg = (particle.resonance + other.resonance) * 0.5;
+      const dist = particle.position.distanceTo(other.position);
+      if (resonanceAvg > resonanceThreshold && dist < 24 && links < maxLinks) {
+        particle.synapticConnections?.push(other.id);
+        other.synapticConnections?.push(particle.id);
+        links++;
+      }
+    }
+  }
 
 const QUALITY_PROFILES: Record<ParticleQualityLevel, QualityProfile> = {
   low: {
@@ -398,6 +467,9 @@ export class ParticleSystem {
     }
   }
 
+  /**
+   * Updates all conscious particles and synaptic network. Call each frame.
+   */
   public updateConsciousness(params: { nowSeconds: number; audioFeatures: Record<string, number>; segmentIntensityBoost: number }): void {
     if (!this.synestheticSettings) {
       this.fadeSynapticNetwork(false);

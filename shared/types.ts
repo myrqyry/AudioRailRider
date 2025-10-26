@@ -165,8 +165,15 @@ export type TrackSegmentWithMeta = TrackSegment;
 export interface SynestheticGeometry {
   /** Relative density of fine-grained wireframe ripples (0-1). */
   wireframeDensity?: number;
-  /** When true, introduce impossible physics oscillations along the path. */
-  impossiblePhysics?: boolean;
+  /** Configuration for impossible physics oscillations along the path. */
+  impossiblePhysics?: {
+    /** Whether impossible physics is enabled. */
+    enabled?: boolean;
+    /** Intensity of the impossible physics effect (0-1). */
+    intensity?: number;
+    /** Frequency of the impossible loops (0-1). */
+    frequency?: number;
+  };
   /** Strength of breathing modulation driven by audio analysis (0-1). */
   organicBreathing?: number;
   /** Selects which feature drives the breathing pulse. */

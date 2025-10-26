@@ -1,3 +1,28 @@
+/**
+ * Applies breathing deformation to geometry points based on audio features.
+ * @param points - Array of THREE.Vector3 points to deform
+ * @param audioFeatures - Audio features (energy, spectralCentroid, harmonic, etc.)
+ * @param intensity - Optional multiplier for breathing effect
+ */
+export function applyBreathingToGeometry(
+    points: THREE.Vector3[],
+    audioFeatures: Partial<AudioFeatures>,
+    intensity: number = 1.0
+): void {
+    const energy = audioFeatures.energy ?? 0;
+    const spectralCentroid = audioFeatures.spectralCentroid ?? 0;
+    const harmonic = audioFeatures.harmonic ?? 0;
+    const time = performance.now() * 0.001;
+    for (let i = 0; i < points.length; i++) {
+        const alpha = i / points.length;
+        // Breathing: sinusoidal pulse modulated by energy and harmonic content
+        const breath = Math.sin(time * 2.0 + alpha * Math.PI * 2) * energy * 0.5 * intensity;
+        const harmonicPulse = Math.sin(time * 1.3 + alpha * Math.PI) * harmonic * 0.3 * intensity;
+        const centroidPulse = Math.cos(time * 1.7 + alpha * Math.PI * 2) * (spectralCentroid / 8000) * 0.2 * intensity;
+        points[i].x += breath + harmonicPulse;
+        points[i].y += centroidPulse;
+    }
+}
 import * as THREE from 'three';
 import { Blueprint, TrackSegment, TrackData, AudioFeatures } from 'shared/types';
 import { TrackValidator } from './TrackValidator';
@@ -100,7 +125,7 @@ class TurnGenerator implements SegmentGenerator {
 }
 
 class LoopGenerator implements SegmentGenerator {
-    generate(segment: TrackSegment, startPos: THREE.Vector3, startDir: THREE.Vector3, startUp: THREE.Vector3) {
+    generate(segment: TrackSegment, startPos: THREE.Vector3, startDir: THREE.Vector3, startUp: THREE.Vector3, audioFeatures?: Partial<AudioFeatures>) {
         const points: THREE.Vector3[] = [];
         const upVectors: THREE.Vector3[] = [];
         const resolution = 100;
@@ -119,12 +144,16 @@ class LoopGenerator implements SegmentGenerator {
             points.push(point);
             upVectors.push(startUp.clone());
         }
+        // Apply breathing deformation if audio features provided
+        if (audioFeatures) {
+            applyBreathingToGeometry(points, audioFeatures);
+        }
         return { points, upVectors };
     }
 }
 
 class BarrelRollGenerator implements SegmentGenerator {
-    generate(segment: TrackSegment, startPos: THREE.Vector3, startDir: THREE.Vector3, startUp: THREE.Vector3) {
+    generate(segment: TrackSegment, startPos: THREE.Vector3, startDir: THREE.Vector3, startUp: THREE.Vector3, audioFeatures?: Partial<AudioFeatures>) {
         const points: THREE.Vector3[] = [];
         const upVectors: THREE.Vector3[] = [];
         const resolution = 100;
@@ -138,6 +167,10 @@ class BarrelRollGenerator implements SegmentGenerator {
             const rollAngle = alpha * Math.PI * 2 * rotations;
             points.push(new THREE.Vector3().lerpVectors(startPos, endPos, alpha));
             upVectors.push(startUp.clone().applyAxisAngle(startDir, rollAngle));
+        }
+        // Apply breathing deformation if audio features provided
+        if (audioFeatures) {
+            applyBreathingToGeometry(points, audioFeatures);
         }
         return { points, upVectors };
     }

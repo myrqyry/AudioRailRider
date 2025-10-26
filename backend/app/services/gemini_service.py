@@ -159,13 +159,46 @@ class GeminiService:
         # Run audio analysis (tests patch analyze_audio)
         features = await analyze_audio(audio_bytes)
 
+        # --- Synesthetic Prompt Engineering ---
+        # Build a rich prompt for Gemini, including advanced keys
+        synesthetic_keys = {}
+        if options:
+            # Extract advanced options if present
+            synesthetic_keys["aestheticMood"] = options.get("aestheticMood")
+            synesthetic_keys["impossiblePhysics"] = options.get("impossiblePhysics")
+            synesthetic_keys["breathingIntensity"] = options.get("breathingIntensity")
+            synesthetic_keys["organicBreathing"] = options.get("organicBreathing")
+            synesthetic_keys["connectionDensity"] = options.get("connectionDensity")
+            synesthetic_keys["resonanceThreshold"] = options.get("resonanceThreshold")
+            synesthetic_keys["lifespanSeconds"] = options.get("lifespanSeconds")
+            synesthetic_keys["skyMood"] = options.get("skyMood")
+            synesthetic_keys["turbulenceBias"] = options.get("turbulenceBias")
+            synesthetic_keys["passionIntensity"] = options.get("passionIntensity")
+            synesthetic_keys["paletteHint"] = options.get("paletteHint")
+
+        # Compose a detailed prompt string for Gemini
+        prompt = (
+            f"You are a synesthetic translation engine. "
+            f"Given the following audio features and user options, generate a JSON blueprint for an immersive ride. "
+            f"Audio features: {json.dumps(features)}. "
+            f"User options: {json.dumps(options)}. "
+            f"Advanced synesthetic keys: {json.dumps(synesthetic_keys)}. "
+            f"Output must strictly follow the Blueprint schema: rideName, moodDescription, palette, track, generationOptions, events, synesthetic. "
+            f"Include synesthetic fields for geometry, particles, and atmosphere. "
+            f"Make use of aestheticMood, impossiblePhysics, breathingIntensity, and any advanced keys provided. "
+            f"Return only valid JSON."
+        )
+
         # If a real client (or a test-injected mock) is present, call it.
-        # Two scenarios:
-        # - test: tests may inject a patched client (with .aio.models.generate_content that accepts a single payload arg)
-        # - prod: a real google-genai client expects (model=..., contents=..., config=...)
         if self.client is not None and getattr(self.client, "aio", None) is not None:
             try:
-                payload = {"features": features, "content_type": content_type, "options": options}
+                payload = {
+                    "prompt": prompt,
+                    "features": features,
+                    "content_type": content_type,
+                    "options": options,
+                    "synesthetic_keys": synesthetic_keys
+                }
                 # If the imported real SDK is available and we instantiated a real client,
                 # call the SDK with typed args so response.parsed is filled when we request JSON.
                 # If we have an adapter instance, use it to call the SDK in a typed way.
@@ -173,12 +206,24 @@ class GeminiService:
                     try:
                         adapter = self._adapter
                         model = model_name or (options.get("model") if isinstance(options, dict) else None) or "gemini-2.5-flash"
-                        # pass JSON string as contents so the model receives a stable payload
+                        content_data = {
+                            "prompt": prompt,
+                            "features": features,
+                            "content_type": content_type,
+                            "options": options,
+                            "synesthetic_keys": synesthetic_keys
+                        }
+                        if content_type.startswith('audio/'):
+                            content_data["audio_data"] = {
+                                "inlineData": {
+                                    "content": audio_bytes,
+                                    "mimeType": content_type
+                                }
+                            }
                         config = None
                         try:
                             from google.genai import types as _gtypes
-
-                            config = _gtypes.GenerateContentConfig(response_mime_type="application/json", max_output_tokens=1024, temperature=0.0)
+                            config = _gtypes.GenerateContentConfig(response_mime_type="application/json", max_output_tokens=2048, temperature=0.7)
                         except Exception:
                             config = None
 
@@ -186,13 +231,10 @@ class GeminiService:
                         prompt = SYNESTHETIC_PROMPT.format(features=features)
                         response = await adapter.generate_content(model=model, contents=prompt, config=config)
                     except Exception:
-                        # fall back to test-friendly single payload form
                         response = await self.client.aio.models.generate_content(payload)
                 else:
-                    # Most tests expect a single-arg payload call; keep that behavior.
                     response = await self.client.aio.models.generate_content(payload)
 
-                # Prefer `parsed` attribute (tests set this)
                 blueprint_obj = getattr(response, "parsed", None)
                 if blueprint_obj is not None:
                     if hasattr(blueprint_obj, "model_dump"):
@@ -200,10 +242,8 @@ class GeminiService:
                     elif hasattr(blueprint_obj, "to_dict"):
                         blueprint = blueprint_obj.to_dict()
                     else:
-                        # best-effort conversion
                         blueprint = dict(blueprint_obj.__dict__) if hasattr(blueprint_obj, "__dict__") else {"parsed": str(blueprint_obj)}
                 else:
-                    # fallback to text/json
                     text = getattr(response, "text", None)
                     if text:
                         try:
