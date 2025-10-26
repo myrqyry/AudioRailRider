@@ -63,6 +63,9 @@ const DevPanel: React.FC = () => {
     insideOpacity: 0.28,
     opacityLerpSpeed: 6.0,
     trackRadius: 0.35,
+    outlineMode: false,
+    outlineOpacity: 0.18,
+    glowOpacity: 0.08,
   };
   /**
    * Loads track settings from localStorage.
@@ -82,6 +85,9 @@ const DevPanel: React.FC = () => {
   const [trackInsideOpacity, setTrackInsideOpacity] = useState<number>(savedTrackSettings.insideOpacity ?? TRACK_DEFAULTS.insideOpacity);
   const [trackOpacityLerpSpeed, setTrackOpacityLerpSpeed] = useState<number>(savedTrackSettings.opacityLerpSpeed ?? TRACK_DEFAULTS.opacityLerpSpeed);
   const [trackRadius, setTrackRadius] = useState<number>(savedTrackSettings.trackRadius ?? TRACK_DEFAULTS.trackRadius);
+  const [outlineMode, setOutlineMode] = useState<boolean>(savedTrackSettings.outlineMode ?? TRACK_DEFAULTS.outlineMode);
+  const [outlineOpacity, setOutlineOpacity] = useState<number>(savedTrackSettings.outlineOpacity ?? TRACK_DEFAULTS.outlineOpacity);
+  const [glowOpacity, setGlowOpacity] = useState<number>(savedTrackSettings.glowOpacity ?? TRACK_DEFAULTS.glowOpacity);
   const [forceInside, setForceInside] = useState<boolean>(false);
   const [presets, setPresets] = useState<Record<string, any>[]>(() => {
     try { return JSON.parse(localStorage.getItem(PRESET_KEY) || '[]'); } catch (e) { return []; }
@@ -111,10 +117,12 @@ const DevPanel: React.FC = () => {
 
   // Dispatch track settings whenever they change
   useEffect(() => {
-    const detail = { placeUnderCamera, verticalOffset, defaultOpacity: trackDefaultOpacity, insideOpacity: trackInsideOpacity, opacityLerpSpeed: trackOpacityLerpSpeed, trackRadius };
+    const detail = { placeUnderCamera, verticalOffset, defaultOpacity: trackDefaultOpacity, insideOpacity: trackInsideOpacity, opacityLerpSpeed: trackOpacityLerpSpeed, trackRadius, outlineMode, outlineOpacity, glowOpacity };
     try { localStorage.setItem(TRACK_SETTINGS_KEY, JSON.stringify(detail)); } catch (e) {}
     window.dispatchEvent(new CustomEvent('audiorailrider:dev:setTrackSettings', { detail }));
-  }, [placeUnderCamera, verticalOffset, trackDefaultOpacity, trackInsideOpacity, trackOpacityLerpSpeed, trackRadius]);
+  }, [placeUnderCamera, verticalOffset, trackDefaultOpacity, trackInsideOpacity, trackOpacityLerpSpeed, trackRadius, outlineMode, outlineOpacity, glowOpacity]);
+
+  // (outlineMode and its opacities are dispatched together in the track settings effect)
 
   useEffect(() => {
     window.dispatchEvent(new CustomEvent('audiorailrider:dev:forceTrackInside', { detail: { force: forceInside } }));
@@ -336,6 +344,9 @@ const DevPanel: React.FC = () => {
     data.trackInsideOpacity = trackInsideOpacity;
     data.trackOpacityLerpSpeed = trackOpacityLerpSpeed;
     data.trackRadius = trackRadius;
+    data.outlineMode = outlineMode;
+    data.outlineOpacity = outlineOpacity;
+    data.glowOpacity = glowOpacity;
     const newPresets = [...presets, { name, data }];
     setPresets(newPresets);
     try { localStorage.setItem(PRESET_KEY, JSON.stringify(newPresets)); } catch (e) {}
@@ -424,6 +435,9 @@ const DevPanel: React.FC = () => {
       if (k === 'trackInsideOpacity' && typeof v === 'number') setTrackInsideOpacity(v);
       if (k === 'trackOpacityLerpSpeed' && typeof v === 'number') setTrackOpacityLerpSpeed(v);
       if (k === 'trackRadius' && typeof v === 'number') setTrackRadius(v);
+        if (k === 'outlineMode' && typeof v === 'boolean') setOutlineMode(v);
+        if (k === 'outlineOpacity' && typeof v === 'number') setOutlineOpacity(v);
+        if (k === 'glowOpacity' && typeof v === 'number') setGlowOpacity(v);
       setUniformValues(prev => ({ ...prev, [k]: v }));
       // dispatch apply for each uniform so visuals update
       window.dispatchEvent(new CustomEvent('audiorailrider:dev:applyUniform', { detail: { name: k, value: v } }));
@@ -486,6 +500,20 @@ const DevPanel: React.FC = () => {
         <div className="flex gap-2 mb-3">
           <button onClick={() => setForceInside((s) => !s)} className="px-3 py-1 bg-orange-600 rounded">{forceInside ? 'Release Inside' : 'Force Inside'}</button>
           <button onClick={() => window.dispatchEvent(new CustomEvent('audiorailrider:dev:rebuildTrack'))} className="px-3 py-1 bg-blue-600 rounded">Rebuild Track</button>
+        </div>
+        <div className="mb-3 text-xs text-gray-300">
+          <label className="inline-flex items-center gap-2">
+            <input type="checkbox" checked={outlineMode} onChange={(e) => setOutlineMode(e.target.checked)} />
+            Outline Mode (minimal wireframe + glow)
+          </label>
+        </div>
+        <div className="mb-2">
+          <label className="block text-xs text-gray-300">Outline Opacity: {outlineOpacity.toFixed(2)}</label>
+          <input type="range" min="0" max="1" step="0.01" value={outlineOpacity} onChange={(e) => setOutlineOpacity(Number(e.target.value))} className="w-full" />
+        </div>
+        <div className="mb-3">
+          <label className="block text-xs text-gray-300">Glow Opacity: {glowOpacity.toFixed(2)}</label>
+          <input type="range" min="0" max="1" step="0.01" value={glowOpacity} onChange={(e) => setGlowOpacity(Number(e.target.value))} className="w-full" />
         </div>
       </div>
       {uniformsManifest ? (

@@ -46,6 +46,43 @@ Create a JSON blueprint for a synesthetic experience with impossible physics:
 - Geometry that morphs between 2D and 3D based on musical texture
 
 Return a blueprint that makes the rider feel like "the needle on the record."
+
+Output must be valid JSON with this exact schema:
+{{
+  "rideName": "string (creative name for the ride)",
+  "moodDescription": "string (evocative description of the ride's mood)",
+  "palette": ["#hexcolor1", "#hexcolor2", "#hexcolor3"] (array of 3-5 hex color strings),
+  "track": [
+    {{
+      "component": "straight|climb|drop|turn|loop|barrelRoll",
+      "length": number (segment length in meters),
+      "intensity": number (optional, 0-100),
+      "lightingEffect": "string (optional)",
+      "environmentChange": "string (optional)",
+      "audioSyncPoint": number (optional, seconds)
+    }},
+    ... (at least 5 segments)
+  ],
+  "synesthetic": {{
+    "geometry": {{
+      "wireframeDensity": number (0-1, optional),
+      "organicBreathing": number (0-1, optional),
+      "impossiblePhysics": {{
+        "enabled": boolean,
+        "intensity": number (0-1),
+        "frequency": number (0-1)
+      }}
+    }},
+    "particles": {{
+      "connectionDensity": number (0-1, optional),
+      "resonanceThreshold": number (0-1, optional)
+    }},
+    "atmosphere": {{
+      "skyMood": "string (optional)"
+    }}
+  }}
+}}
+Return only the JSON, no extra text.
 """
 
 
@@ -183,10 +220,13 @@ class GeminiService:
             f"Audio features: {json.dumps(features)}. "
             f"User options: {json.dumps(options)}. "
             f"Advanced synesthetic keys: {json.dumps(synesthetic_keys)}. "
-            f"Output must strictly follow the Blueprint schema: rideName, moodDescription, palette, track, generationOptions, events, synesthetic. "
+            f"Output must strictly follow the Blueprint schema with these exact fields: "
+            f"rideName (string), moodDescription (string), palette (array of 3-5 hex color strings), "
+            f"track (array of at least 5 track segments, each with component, length, and other properties), "
+            f"generationOptions (optional object), events (optional array), synesthetic (optional object). "
             f"Include synesthetic fields for geometry, particles, and atmosphere. "
             f"Make use of aestheticMood, impossiblePhysics, breathingIntensity, and any advanced keys provided. "
-            f"Return only valid JSON."
+            f"Return only valid JSON with all required fields."
         )
 
         # If a real client (or a test-injected mock) is present, call it.
@@ -223,7 +263,99 @@ class GeminiService:
                         config = None
                         try:
                             from google.genai import types as _gtypes
-                            config = _gtypes.GenerateContentConfig(response_mime_type="application/json", max_output_tokens=2048, temperature=0.7)
+                            # Define the response schema for Blueprint
+                            track_segment_schema = _gtypes.Schema(
+                                type=_gtypes.Type.OBJECT,
+                                properties={
+                                    "component": _gtypes.Schema(type=_gtypes.Type.STRING),
+                                    "length": _gtypes.Schema(type=_gtypes.Type.NUMBER),
+                                    "intensity": _gtypes.Schema(type=_gtypes.Type.NUMBER),
+                                    "lightingEffect": _gtypes.Schema(type=_gtypes.Type.STRING),
+                                    "environmentChange": _gtypes.Schema(type=_gtypes.Type.STRING),
+                                    "audioSyncPoint": _gtypes.Schema(type=_gtypes.Type.NUMBER),
+                                    "angle": _gtypes.Schema(type=_gtypes.Type.NUMBER),
+                                    "radius": _gtypes.Schema(type=_gtypes.Type.NUMBER),
+                                    "direction": _gtypes.Schema(type=_gtypes.Type.STRING),
+                                    "rotations": _gtypes.Schema(type=_gtypes.Type.NUMBER),
+                                    "height": _gtypes.Schema(type=_gtypes.Type.NUMBER),
+                                    "banking": _gtypes.Schema(type=_gtypes.Type.NUMBER),
+                                    "g_force": _gtypes.Schema(type=_gtypes.Type.NUMBER),
+                                    "speed_modifier": _gtypes.Schema(type=_gtypes.Type.NUMBER),
+                                    "twist_angle": _gtypes.Schema(type=_gtypes.Type.NUMBER),
+                                    "inversions": _gtypes.Schema(type=_gtypes.Type.NUMBER),
+                                },
+                                required=["component", "length"]
+                            )
+                            synesthetic_geometry_schema = _gtypes.Schema(
+                                type=_gtypes.Type.OBJECT,
+                                properties={
+                                    "wireframeDensity": _gtypes.Schema(type=_gtypes.Type.NUMBER),
+                                    "organicBreathing": _gtypes.Schema(type=_gtypes.Type.NUMBER),
+                                    "impossiblePhysics": _gtypes.Schema(
+                                        type=_gtypes.Type.OBJECT,
+                                        properties={
+                                            "enabled": _gtypes.Schema(type=_gtypes.Type.BOOLEAN),
+                                            "intensity": _gtypes.Schema(type=_gtypes.Type.NUMBER),
+                                            "frequency": _gtypes.Schema(type=_gtypes.Type.NUMBER),
+                                        }
+                                    ),
+                                    "breathingDriver": _gtypes.Schema(type=_gtypes.Type.STRING),
+                                }
+                            )
+                            synesthetic_particles_schema = _gtypes.Schema(
+                                type=_gtypes.Type.OBJECT,
+                                properties={
+                                    "connectionDensity": _gtypes.Schema(type=_gtypes.Type.NUMBER),
+                                    "resonanceThreshold": _gtypes.Schema(type=_gtypes.Type.NUMBER),
+                                    "lifespanSeconds": _gtypes.Schema(type=_gtypes.Type.NUMBER),
+                                    "persistence": _gtypes.Schema(type=_gtypes.Type.NUMBER),
+                                }
+                            )
+                            synesthetic_atmosphere_schema = _gtypes.Schema(
+                                type=_gtypes.Type.OBJECT,
+                                properties={
+                                    "skyMood": _gtypes.Schema(type=_gtypes.Type.STRING),
+                                    "turbulenceBias": _gtypes.Schema(type=_gtypes.Type.NUMBER),
+                                    "passionIntensity": _gtypes.Schema(type=_gtypes.Type.NUMBER),
+                                    "tint": _gtypes.Schema(type=_gtypes.Type.STRING),
+                                }
+                            )
+                            synesthetic_schema = _gtypes.Schema(
+                                type=_gtypes.Type.OBJECT,
+                                properties={
+                                    "geometry": synesthetic_geometry_schema,
+                                    "particles": synesthetic_particles_schema,
+                                    "atmosphere": synesthetic_atmosphere_schema,
+                                }
+                            )
+                            blueprint_schema = _gtypes.Schema(
+                                type=_gtypes.Type.OBJECT,
+                                properties={
+                                    "rideName": _gtypes.Schema(type=_gtypes.Type.STRING),
+                                    "moodDescription": _gtypes.Schema(type=_gtypes.Type.STRING),
+                                    "palette": _gtypes.Schema(
+                                        type=_gtypes.Type.ARRAY,
+                                        items=_gtypes.Schema(type=_gtypes.Type.STRING)
+                                    ),
+                                    "track": _gtypes.Schema(
+                                        type=_gtypes.Type.ARRAY,
+                                        items=track_segment_schema
+                                    ),
+                                    "generationOptions": _gtypes.Schema(type=_gtypes.Type.OBJECT),
+                                    "events": _gtypes.Schema(
+                                        type=_gtypes.Type.ARRAY,
+                                        items=_gtypes.Schema(type=_gtypes.Type.OBJECT)
+                                    ),
+                                    "synesthetic": synesthetic_schema,
+                                },
+                                required=["rideName", "moodDescription", "palette", "track"]
+                            )
+                            config = _gtypes.GenerateContentConfig(
+                                response_mime_type="application/json",
+                                response_schema=blueprint_schema,
+                                max_output_tokens=4096,
+                                temperature=0.7
+                            )
                         except Exception:
                             config = None
 
@@ -253,6 +385,7 @@ class GeminiService:
                     else:
                         blueprint = {"result": repr(response)}
 
+                blueprint = self._ensure_blueprint_has_track(blueprint, features)
                 result = {"blueprint": blueprint, "features": features}
                 self._cache[cache_key] = result
                 return result
@@ -289,6 +422,24 @@ class GeminiService:
         features_out = {"bpm": bpm, "energy": energy}
         return {"blueprint": blueprint, "features": features_out}
 
+    def _ensure_blueprint_has_track(self, blueprint: dict, features: dict) -> dict:
+        """Ensure the blueprint has a valid track array, generating one if missing."""
+        if isinstance(blueprint.get("track"), list) and len(blueprint["track"]) > 0:
+            return blueprint
+        
+        logger.warning("Blueprint missing or invalid track, generating procedural track")
+        if not hasattr(self, "advanced_generator"):
+            from .advanced_track_generator import AdvancedTrackGenerator
+            self.advanced_generator = AdvancedTrackGenerator()
+
+        track = self.advanced_generator.generate_track(features)
+        track_dicts = [component.model_dump() for component in track]
+        if not track_dicts:
+            track_dicts = [{"component": "straight", "length": 10}]
+
+        blueprint["track"] = track_dicts
+        return blueprint
+
     def _generate_dynamic_palette(self, energy: float, bpm: float) -> list:
         """Generate color palette based on music energy and tempo."""
         if energy > 0.8:
@@ -300,25 +451,11 @@ class GeminiService:
         else:
             return ["#4080FF", "#8080FF", "#FF8080", "#80FF80"]
 
-    async def _call_client_generate(self, audio_path: str, options: Any) -> Any:
-        # Compatibility helper for callers that want to call a client-level generate.
-        gen = getattr(self.client, "generate_content", None) or getattr(getattr(self.client, "aio", None), "models", None)
-        if gen is None:
-            raise RuntimeError("client has no generate_content method")
-        payload = {"audio_path": audio_path, "options": options if isinstance(options, dict) else _safe_serialize(options)}
-        # Prefer awaitable call signature
-        try:
-            out = await gen(payload)
-        except TypeError:
-            # If gen expects typed args, try to call via real SDK shape (best-effort)
-            try:
-                from google.genai import types as _gtypes
-
-                config = _gtypes.GenerateContentConfig(response_mime_type="application/json")
-                out = await self.client.aio.models.generate_content(model=options.get("model") if isinstance(options, dict) else None, contents=json.dumps(payload), config=config)
-            except Exception as e:
-                raise
-        return out
+    async def generate_skybox(self, prompt: str, blueprint: dict, options: Any = None) -> Dict[str, Any]:
+        """Generate a skybox image based on prompt and blueprint."""
+        # For now, return a placeholder URL since skybox generation is optional
+        logger.info("Skybox generation requested but not implemented, returning placeholder")
+        return {"skybox_url": "/default_skybox.jpg"}
 
     def _procedural_fallback(self, audio_path: str, options: Any) -> Dict[str, Any]:
         name = os.path.splitext(os.path.basename(audio_path))[0]

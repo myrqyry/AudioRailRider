@@ -157,7 +157,7 @@ export class VisualEffects {
    * @param {number} [settings.opacityLerpSpeed] - The speed of opacity transitions.
    * @param {number} [settings.trackRadius] - The radius of the track tube.
    */
-  public setTrackSettings(settings: { placeUnderCamera?: boolean; verticalOffset?: number; defaultOpacity?: number; insideOpacity?: number; opacityLerpSpeed?: number; trackRadius?: number; }) {
+  public setTrackSettings(settings: { placeUnderCamera?: boolean; verticalOffset?: number; defaultOpacity?: number; insideOpacity?: number; opacityLerpSpeed?: number; trackRadius?: number; outlineMode?: boolean; outlineOpacity?: number; glowOpacity?: number; }) {
     try {
       let needsRebuild = false;
       if (typeof settings.placeUnderCamera === 'boolean' && settings.placeUnderCamera !== this.placeTrackUnderCamera) {
@@ -188,11 +188,82 @@ export class VisualEffects {
         this.trackOpacityLerpSpeed = settings.opacityLerpSpeed;
       }
 
+      // Support outline mode toggle and optional per-material opacities coming from DevPanel
+      if (typeof settings.outlineMode === 'boolean') {
+        try {
+          this.setOutlineMode(!!settings.outlineMode);
+        } catch (e) {
+          console.warn('[VisualEffects] Failed to apply outlineMode from settings', e);
+        }
+      }
+
+      if (typeof settings.outlineOpacity === 'number' && this.outlineMaterial) {
+        try {
+          this.outlineMaterial.opacity = settings.outlineOpacity;
+          this.outlineMaterial.transparent = this.outlineMaterial.opacity < 0.995;
+          this.outlineMaterial.needsUpdate = true;
+        } catch (e) {}
+      }
+
+      if (typeof settings.glowOpacity === 'number' && this.glowMaterial) {
+        try {
+          this.glowMaterial.opacity = settings.glowOpacity;
+          this.glowMaterial.transparent = this.glowMaterial.opacity < 0.995;
+          this.glowMaterial.needsUpdate = true;
+        } catch (e) {}
+      }
+
       if (needsRebuild) {
         this.rebuildTrackGeometry();
       }
     } catch (e) {
       console.error('[VisualEffects] Failed to apply track settings', e);
+    }
+  }
+
+  /**
+   * Toggle a minimal outline-only visual style for the track.
+   * When enabled, the full track mesh is made nearly transparent and a thin
+   * line overlay + subtle additive glow line are rendered along the path.
+   */
+  public setOutlineMode(enabled: boolean) {
+    try {
+      this.outlineMode = !!enabled;
+      if (this.outlineMode) {
+        // make base track nearly invisible
+        if (this.trackMaterial) {
+          this.trackMaterial.opacity = 0.02;
+          this.trackMaterial.transparent = true;
+          this.trackMaterial.needsUpdate = true;
+        }
+        // ensure overlay materials exist
+        if (!this.outlineMaterial) {
+          this.outlineMaterial = new THREE.LineBasicMaterial({ color: this.baseRailColor.clone(), transparent: true, opacity: 0.18, depthWrite: false });
+          // Ensure outlines render on top of scene geometry for visibility
+          (this.outlineMaterial as any).depthTest = false;
+        }
+        if (!this.glowMaterial) {
+          this.glowMaterial = new THREE.LineBasicMaterial({ color: this.baseEmissiveColor.clone(), transparent: true, opacity: 0.08, blending: THREE.AdditiveBlending, depthWrite: false });
+          // Glow should bypass depth testing so additive halo remains visible
+          (this.glowMaterial as any).depthTest = false;
+        }
+        // build overlays immediately if geometry exists
+        if (this.pathCurve) {
+          this.buildLineOverlays(this.pathCurve, Math.max(64, (this.trackPathPoints?.length ?? 32) * 2));
+        }
+      } else {
+        // restore default track opacity
+        if (this.trackMaterial) {
+          this.trackMaterial.opacity = this.trackDefaultOpacity;
+          this.trackMaterial.transparent = this.trackMaterial.opacity < 0.995;
+          this.trackMaterial.needsUpdate = true;
+        }
+        // remove overlays
+        try { if (this.outlineLine) { this.scene.remove(this.outlineLine); this.outlineLine = null; } } catch(e) {}
+        try { if (this.glowLine) { this.scene.remove(this.glowLine); this.glowLine = null; } } catch(e) {}
+      }
+    } catch (e) {
+      console.error('[VisualEffects] setOutlineMode failed', e);
     }
   }
 
@@ -245,6 +316,21 @@ export class VisualEffects {
         const oldGeometry = this.trackMesh.geometry as THREE.BufferGeometry;
         geometryPool.release(oldGeometry);
         this.trackMesh.geometry = geometry;
+      }
+
+      // Recreate or update outline overlays if outline mode is active
+      if (this.outlineMode && curve) {
+        try {
+          this.buildLineOverlays(curve, Math.max(64, this.trackPathPoints.length * 2));
+        } catch (e) {
+          console.warn('[VisualEffects] Failed to build line overlays', e);
+        }
+      } else {
+        // Ensure overlays removed when not in outline mode
+        if (!this.outlineMode) {
+          try { if (this.outlineLine) { this.scene.remove(this.outlineLine); this.outlineLine = null; } } catch(e) {}
+          try { if (this.glowLine) { this.scene.remove(this.glowLine); this.glowLine = null; } } catch(e) {}
+        }
       }
 
       // Rebuild ghost ribbon to follow the same curve/resolution
@@ -337,6 +423,12 @@ export class VisualEffects {
   private tunnelRushMesh: THREE.Mesh | null = null;
   private lastMotionPosition: THREE.Vector3 = new THREE.Vector3();
   private hasMotionHistory: boolean = false;
+  // Outline / wireframe rendering overlays
+  private outlineLine: THREE.Line | null = null;
+  private outlineMaterial: THREE.LineBasicMaterial | null = null;
+  private glowLine: THREE.Line | null = null;
+  private glowMaterial: THREE.LineBasicMaterial | null = null;
+  private outlineMode: boolean = false;
   private _animationFrameHandles: number[] = [];
   private previousTrackModelViewMatrix: THREE.Matrix4 = new THREE.Matrix4();
   private rideSpeedSmoothed: number = 0;
@@ -1789,6 +1881,56 @@ void main() {
     newGeom.dispose();
   }
 
+  private buildLineOverlays(curve: THREE.CatmullRomCurve3, segments: number) {
+    if (!curve) return;
+    try {
+      const pts = curve.getPoints(Math.max(segments, 8));
+      const pos = new Float32Array(pts.length * 3);
+      for (let i = 0; i < pts.length; i++) {
+        pos[i * 3] = pts[i].x;
+        pos[i * 3 + 1] = pts[i].y;
+        pos[i * 3 + 2] = pts[i].z;
+      }
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      geometry.computeBoundingSphere();
+
+      if (!this.outlineMaterial) {
+        this.outlineMaterial = new THREE.LineBasicMaterial({ color: this.baseRailColor.clone(), transparent: true, opacity: 0.18, depthWrite: false });
+        (this.outlineMaterial as any).depthTest = false;
+      }
+      if (!this.outlineLine) {
+        this.outlineLine = new THREE.Line(geometry, this.outlineMaterial);
+        this.outlineLine.frustumCulled = false;
+        // Render outlines above most geometry
+        this.outlineLine.renderOrder = 10000;
+        this.scene.add(this.outlineLine);
+      } else {
+        try { this.outlineLine.geometry.dispose(); } catch (e) {}
+        this.outlineLine.geometry = geometry;
+      }
+
+      if (!this.glowMaterial) {
+        this.glowMaterial = new THREE.LineBasicMaterial({ color: this.baseEmissiveColor.clone(), transparent: true, opacity: 0.08, blending: THREE.AdditiveBlending, depthWrite: false });
+        (this.glowMaterial as any).depthTest = false;
+      }
+      if (!this.glowLine) {
+        const glowGeom = geometry.clone();
+        this.glowLine = new THREE.Line(glowGeom, this.glowMaterial);
+        this.glowLine.frustumCulled = false;
+        // Glow should render above everything to be visible
+        this.glowLine.renderOrder = 10001;
+        this.scene.add(this.glowLine);
+      } else {
+        try { this.glowLine.geometry.dispose(); } catch (e) {}
+        this.glowLine.geometry = geometry.clone();
+      }
+    } catch (e) {
+      console.warn('[VisualEffects] buildLineOverlays error', e);
+    }
+  }
+
   private switchToLowQuality() {
     if (!this.highQualityMode) return;
     this.highQualityMode = false;
@@ -1878,6 +2020,26 @@ void main() {
           parent.remove(audioGlow);
         }
       } catch(e) {}
+    }
+
+    // Remove outline overlays and dispose materials
+    if (this.outlineLine) {
+      try { this.scene.remove(this.outlineLine); } catch (e) {}
+      try { this.outlineLine.geometry.dispose(); } catch (e) {}
+      this.outlineLine = null;
+    }
+    if (this.glowLine) {
+      try { this.scene.remove(this.glowLine); } catch (e) {}
+      try { this.glowLine.geometry.dispose(); } catch (e) {}
+      this.glowLine = null;
+    }
+    if (this.outlineMaterial) {
+      try { this.outlineMaterial.dispose(); } catch (e) {}
+      this.outlineMaterial = null;
+    }
+    if (this.glowMaterial) {
+      try { this.glowMaterial.dispose(); } catch (e) {}
+      this.glowMaterial = null;
     }
 
     this._animationFrameHandles.forEach(handle => cancelAnimationFrame(handle));

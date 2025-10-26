@@ -1,6 +1,3 @@
-[tool.poetry]
-package-mode = false
-
 [project]
 name = "audiorailrider-backend"
 version = "0.1.0"

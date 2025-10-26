@@ -66,6 +66,17 @@ export const validateAndRefineBlueprint = (blueprint: Blueprint): Blueprint => {
         throw new Error('Blueprint is missing a valid track array');
     }
     
+    // Ensure required fields have defaults
+    if (!blueprint.rideName || typeof blueprint.rideName !== 'string') {
+        blueprint.rideName = 'Audio Coaster';
+    }
+    if (!blueprint.moodDescription || typeof blueprint.moodDescription !== 'string') {
+        blueprint.moodDescription = 'An immersive audio-driven experience';
+    }
+    if (!blueprint.palette || !Array.isArray(blueprint.palette) || blueprint.palette.length < 3) {
+        blueprint.palette = ['#ffffff', '#00ffff', '#0d0a1f'];
+    }
+    
     if (originalTrack.length < 2) {
         return blueprint; // Not enough segments to need refinement
     }
