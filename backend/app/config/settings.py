@@ -20,6 +20,13 @@ class Settings(BaseSettings):
     # Allowed MIME types for audio uploads
     ALLOWED_MIME_TYPES: list[str] = Field(default=["audio/mpeg", "audio/wav", "audio/ogg", "audio/flac"])
 
+    # --- Audio Analysis Settings ---
+    ANALYSIS_MAX_SECONDS: int = Field(default=120, gt=0, description="Maximum audio duration to analyze in seconds")
+    ANALYSIS_N_FFT: int = Field(default=1024, gt=0, description="FFT window size for audio analysis")
+    ANALYSIS_HOP_LENGTH: int = Field(default=512, gt=0, description="Hop length for audio analysis")
+    ANALYSIS_BASS_CUTOFF: int = Field(default=250, gt=0, description="Frequency cutoff for bass in Hz")
+    ANALYSIS_MID_CUTOFF: int = Field(default=4000, gt=0, description="Frequency cutoff for mid-range in Hz")
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding='utf-8', extra='ignore')
 
     @validator('GEMINI_API_KEY')

@@ -13,16 +13,12 @@ export const useSceneManager = (mountRef: React.RefObject<HTMLDivElement>) => {
 
   useEffect(() => {
     if (!mountRef.current) {
-      console.error('[useSceneManager] mountRef.current is null!');
       return;
     }
     const container = mountRef.current;
-    console.log('[useSceneManager] Initializing SceneManager', { width: container.clientWidth, height: container.clientHeight });
     sceneManagerRef.current = new SceneManager(container);
-    console.log('[useSceneManager] SceneManager initialized', { hasScene: !!sceneManagerRef.current.scene, hasCamera: !!sceneManagerRef.current.camera });
 
     return () => {
-      console.log('[useSceneManager] Cleaning up scene');
       sceneManagerRef.current?.dispose();
       sceneManagerRef.current = null;
     };
