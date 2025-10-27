@@ -26,7 +26,12 @@ export class SceneManager {
         this.scene = new THREE.Scene();
         const width = this.container.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 1);
         const height = this.container.clientHeight || (typeof window !== 'undefined' ? window.innerHeight : 1);
-        this.camera = new THREE.PerspectiveCamera(RIDE_CONFIG.CAMERA_BASE_FOV, width / height, 0.1, 2000);
+        this.camera = new THREE.PerspectiveCamera(
+            RIDE_CONFIG.CAMERA_BASE_FOV,
+            width / height,
+            RIDE_CONFIG.CAMERA_NEAR,
+            RIDE_CONFIG.CAMERA_FAR
+        );
         this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             // Lightweight FPS meter for adaptive quality heuristics
             (this.scene as any).userData = (this.scene as any).userData || {};
@@ -41,7 +46,6 @@ export class SceneManager {
     private init() {
         const width = this.container.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 1);
         const height = this.container.clientHeight || (typeof window !== 'undefined' ? window.innerHeight : 1);
-        console.log('[SceneManager] Initializing renderer', { width, height, containerSize: { w: this.container.clientWidth, h: this.container.clientHeight } });
         
         // Cap DPR to avoid excessive GPU work; we adaptively lower it if FPS drops.
         const rawDpr = (typeof window !== 'undefined' && window.devicePixelRatio) ? window.devicePixelRatio : 1;
@@ -49,40 +53,31 @@ export class SceneManager {
         this.renderer.setPixelRatio(capped);
         this.renderer.setSize(width, height);
         
-        console.log('[SceneManager] Appending canvas to container', { 
-            hasContainer: !!this.container, 
-            containerTagName: this.container.tagName,
-            canvasSize: { w: this.renderer.domElement.width, h: this.renderer.domElement.height }
-        });
-        
         // Ensure canvas has proper styling
         this.renderer.domElement.style.display = 'block';
         this.renderer.domElement.style.width = '100%';
         this.renderer.domElement.style.height = '100%';
         
         this.container.appendChild(this.renderer.domElement);
-        console.log('[SceneManager] Canvas appended', { childCount: this.container.children.length });
 
         // Set a default dark gradient background
         const topColor = new THREE.Color(0x0a0a1a); // Very dark blue
         const bottomColor = new THREE.Color(0x000000); // Black
         this.scene.background = topColor;
-        this.scene.fog = new THREE.Fog(bottomColor, 100, 1000);
+        this.scene.fog = new THREE.Fog(bottomColor, RIDE_CONFIG.FOG_NEAR, RIDE_CONFIG.FOG_FAR);
 
         // Add essential lighting to the scene
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+        const ambientLight = new THREE.AmbientLight(0xffffff, RIDE_CONFIG.AMBIENT_LIGHT_INTENSITY);
         this.scene.add(ambientLight);
         
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, RIDE_CONFIG.DIRECTIONAL_LIGHT_INTENSITY);
         directionalLight.position.set(10, 50, 10);
         this.scene.add(directionalLight);
         
-        const backLight = new THREE.DirectionalLight(0x6666ff, 0.3);
+        const backLight = new THREE.DirectionalLight(0x6666ff, RIDE_CONFIG.BACKLIGHT_INTENSITY);
         backLight.position.set(-10, 20, -10);
         this.scene.add(backLight);
         
-        console.log('[SceneManager] Lighting added to scene');
-
         if (typeof window !== 'undefined') {
             window.addEventListener('resize', this.handleResize);
             this.renderer.domElement.addEventListener('webglcontextlost', this.handleContextLost, false);
@@ -138,7 +133,6 @@ export class SceneManager {
      */
     private handleContextLost = (event: Event): void => {
         event.preventDefault();
-        console.warn('[SceneManager] WebGL context lost. Notifying application.');
         window.dispatchEvent(new CustomEvent('audiorailrider:webglcontextlost'));
     }
 
@@ -147,7 +141,6 @@ export class SceneManager {
      * @private
      */
     private handleContextRestored = (): void => {
-        console.log('[SceneManager] WebGL context restored. Notifying application to rebuild.');
         // We don't need to do much here because the application will be notified
         // to rebuild the scene from scratch, which is safer.
         window.dispatchEvent(new CustomEvent('audiorailrider:webglcontextrestored'));

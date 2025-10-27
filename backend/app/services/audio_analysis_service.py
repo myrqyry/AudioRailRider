@@ -1,13 +1,20 @@
 import asyncio
+import hashlib
 import io
 import os
 import structlog
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Any, List
+from cachetools import TTLCache
 from fastapi import HTTPException
+
+from ..config.settings import settings
 
 # Configure logging
 logger = structlog.get_logger(__name__)
+
+# Cache for audio analysis results (100 items, 1 hour TTL)
+analysis_cache = TTLCache(maxsize=100, ttl=3600)
 
 # Create a bounded thread pool executor for CPU-bound audio analysis tasks.
 # Using os.cpu_count() is a good practice for CPU-bound tasks.
@@ -38,14 +45,16 @@ def _extract_emotional_fingerprint(y: 'numpy.ndarray', sr: float) -> Dict[str, A
     import librosa
     import numpy as np
 
-    # Harmonic-percussive separation
+    # Harmonic-percussive separation to distinguish tonal from rhythmic elements.
     harmonic, percussive = librosa.effects.hpss(y)
 
-    # Tonal tension analysis (simplified)
+    # Tonal tension analysis: Calculate the standard deviation of chroma features.
+    # Higher values suggest more harmonic variation and potential tension.
     chroma = librosa.feature.chroma_stft(y=y, sr=sr)
     tonal_tension_curve = np.std(chroma, axis=0)
 
-    # Emotional valence (simplified)
+    # Emotional valence proxy: Use the tonnetz (tonal centroids) feature.
+    # The mean of the tonnetz can be a rough proxy for the 'brightness' or 'mood'.
     tonnetz = librosa.feature.tonnetz(y=harmonic, sr=sr)
     valence_curve = np.mean(tonnetz, axis=0)
 
@@ -98,23 +107,18 @@ def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
         duration = float(librosa.get_duration(y=y, sr=sr))
 
         # Cap analysis length to avoid long processing times (seconds)
-        MAX_ANALYZE_SECONDS = 120
-        if duration > MAX_ANALYZE_SECONDS:
-            max_samples = int(MAX_ANALYZE_SECONDS * sr)
+        if duration > settings.ANALYSIS_MAX_SECONDS:
+            max_samples = int(settings.ANALYSIS_MAX_SECONDS * sr)
             y = y[:max_samples]
-            duration = MAX_ANALYZE_SECONDS  # Use the limit directly
+            duration = settings.ANALYSIS_MAX_SECONDS  # Use the limit directly
 
         # BPM estimation (fast path)
         tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
         bpm = float(tempo) if tempo else 120.0
 
         # --- Frame-by-Frame Analysis (vectorized) ---
-        # Use smaller FFT to reduce cost
-        n_fft = 1024
-        hop_length = 512
-
-        S = np.abs(librosa.stft(y, n_fft=n_fft, hop_length=hop_length))
-        freqs = librosa.fft_frequencies(sr=sr, n_fft=n_fft)
+        S = np.abs(librosa.stft(y, n_fft=settings.ANALYSIS_N_FFT, hop_length=settings.ANALYSIS_HOP_LENGTH))
+        freqs = librosa.fft_frequencies(sr=sr, n_fft=settings.ANALYSIS_N_FFT)
 
         # Guard against empty-frame result (very short or silent audio)
         num_frames = S.shape[1] if S.ndim >= 2 else 0
@@ -129,12 +133,9 @@ def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
                 "frameAnalyses": []
             }
 
-        bass_cutoff = 250
-        mid_cutoff = 4000
-
-        bass_bins = np.where(freqs <= bass_cutoff)[0]
-        mid_bins = np.where((freqs > bass_cutoff) & (freqs <= mid_cutoff))[0]
-        high_bins = np.where(freqs > mid_cutoff)[0]
+        bass_bins = np.where(freqs <= settings.ANALYSIS_BASS_CUTOFF)[0]
+        mid_bins = np.where((freqs > settings.ANALYSIS_BASS_CUTOFF) & (freqs <= settings.ANALYSIS_MID_CUTOFF))[0]
+        high_bins = np.where(freqs > settings.ANALYSIS_MID_CUTOFF)[0]
 
         # Vectorized band energy per frame
         # handle empty bin cases defensively
@@ -203,11 +204,12 @@ def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
 
 async def analyze_audio(audio_bytes: bytes) -> Dict[str, Any]:
     """
-    Asynchronously analyzes an audio byte stream.
+    Asynchronously analyzes an audio byte stream, with caching.
 
-    This function offloads the CPU-bound `_analyze_audio_sync` function to a
+    This function first checks a time-sensitive cache for pre-computed results.
+    If not found, it offloads the CPU-bound `_analyze_audio_sync` function to a
     separate thread pool to avoid blocking the main asyncio event loop, ensuring
-    the server remains responsive.
+    the server remains responsive. The result is then cached.
 
     Args:
         audio_bytes: The raw bytes of the audio file.
@@ -215,6 +217,22 @@ async def analyze_audio(audio_bytes: bytes) -> Dict[str, Any]:
     Returns:
         A dictionary containing the extracted audio features.
     """
+    # Generate a cache key based on the hash of the audio content
+    cache_key = hashlib.sha256(audio_bytes).hexdigest()
+
+    # Check cache first
+    if cache_key in analysis_cache:
+        logger.info("Audio analysis cache hit", cache_key=cache_key)
+        return analysis_cache[cache_key]
+
+    logger.info("Audio analysis cache miss", cache_key=cache_key)
+
     loop = asyncio.get_running_loop()
     # Use a specific, bounded executor to prevent resource exhaustion
-    return await loop.run_in_executor(audio_analysis_executor, _analyze_audio_sync, audio_bytes)
+    features = await loop.run_in_executor(
+        audio_analysis_executor, _analyze_audio_sync, audio_bytes
+    )
+
+    # Store the result in the cache
+    analysis_cache[cache_key] = features
+    return features

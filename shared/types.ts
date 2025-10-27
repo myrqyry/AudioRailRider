@@ -150,17 +150,14 @@ export type TrackSegment = BaseSegment & {
     radius?: number;
     twist_angle?: number;
     inversions?: number;
-    audio_properties?: any;
-    effects?: any;
+    audio_properties?: Record<string, unknown>;
+    effects?: Record<string, unknown>;
     energy_threshold?: number;
     beat_alignment?: boolean;
     angle?: number;
     direction?: 'left' | 'right';
     rotations?: number;
 };
-
-// This alias is deprecated but kept for backward compatibility during refactoring.
-export type TrackSegmentWithMeta = TrackSegment;
 
 export interface SynestheticGeometry {
   /** Relative density of fine-grained wireframe ripples (0-1). */
