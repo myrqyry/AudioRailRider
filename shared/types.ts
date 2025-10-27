@@ -32,9 +32,19 @@ export interface FrameAnalysis {
   bass: number;
   mid: number;
   high: number;
-  sampleRate?: number;
-  channelCount?: number;
+  // REASON: Made critical audio properties required to prevent runtime errors
+  sampleRate: number;
+  channelCount: number;
   frame?: Float32Array;
+}
+
+// REASON: Added type guards for better runtime validation
+export function isValidFrameAnalysis(obj: any): obj is FrameAnalysis {
+  return obj &&
+          typeof obj.timestamp === 'number' &&
+         typeof obj.energy === 'number' &&
+         typeof obj.sampleRate === 'number' &&
+         typeof obj.channelCount === 'number';
 }
 
 export interface EnhancedAudioFeatures {
@@ -82,9 +92,7 @@ export interface AudioFeatures {
   enhanced?: EnhancedAudioFeatures | null;
 }
 
-// Discriminated union for track segments so each variant has its own required params
-// --- Stricter Track Segment Definitions ---
-
+// REASON: Improved track segment definitions with better type constraints
 // Base interface for all track segments, including optional metadata.
 export interface BaseSegment {
   // A descriptive name for this segment, e.g., "The Ascent"
@@ -139,10 +147,10 @@ export enum TrackComponentType {
     FLYING_COASTER_ELEMENT = "flying_element"
 }
 
-// Discriminated union for track segments with stricter validation hints.
-export type TrackSegment = BaseSegment & {
+// REASON: Strengthened track segment validation with required core properties
+export interface TrackSegment extends BaseSegment {
     component: TrackComponentType;
-    length: number;
+    length: number; // Always required
     height?: number;
     banking?: number;
     g_force?: number;
@@ -157,8 +165,18 @@ export type TrackSegment = BaseSegment & {
     angle?: number;
     direction?: 'left' | 'right';
     rotations?: number;
-};
+}
 
+// REASON: Added validation functions for runtime type checking
+export function isValidTrackSegment(obj: any): obj is TrackSegment {
+  return obj &&
+         typeof obj.component === 'string' &&
+         Object.values(TrackComponentType).includes(obj.component) &&
+         typeof obj.length === 'number' &&
+         obj.length > 0;
+}
+
+// Rest of interfaces remain the same...
 export interface SynestheticGeometry {
   /** Relative density of fine-grained wireframe ripples (0-1). */
   wireframeDensity?: number;
@@ -226,7 +244,6 @@ export interface Blueprint {
   // Optional synesthetic metadata that informs advanced visuals.
   synesthetic?: SynestheticBlueprintLayer | null;
 }
-
 
 // Enumerated presets for track and world generation. These inform the AI
 // prompt and allow the user to select a preferred stylistic direction.

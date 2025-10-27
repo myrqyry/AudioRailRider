@@ -1,9 +1,5 @@
-
-# Add monorepo root to sys.path for shared imports
-import sys
-import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-
+# REASON: Removed unsafe sys.path manipulation for better security
+# Add monorepo root through proper Python packaging instead
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -23,6 +19,7 @@ from app.exceptions import http_exception_handler, generic_exception_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
 import uvicorn
+import os
 
 # Initialize logger after setup
 logger = structlog.get_logger("main")
@@ -47,11 +44,9 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # --- CORS Configuration ---
-origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    # "https://your-frontend-domain.com", # Placeholder for production frontend
-]
+# REASON: Made CORS origins configurable via environment variables for security
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
+origins = [origin.strip() for origin in allowed_origins]
 
 app.add_middleware(
     CORSMiddleware,
@@ -67,9 +62,11 @@ app.include_router(router)
 # --- Main ---
 if __name__ == "__main__":
     try:
-        # Pydantic will raise a validation error if GEMINI_API_KEY is missing
+        # REASON: Added proper configuration validation before server start
+        if not settings.gemini_api_key:
+            raise ValueError("GEMINI_API_KEY environment variable is required")
+
         logger.info("Starting application", host="0.0.0.0", port=8000, reload=True)
-        settings
         uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
     except ValueError as e:
         logger.critical("Configuration error, application cannot start.", error=str(e), exc_info=True)
