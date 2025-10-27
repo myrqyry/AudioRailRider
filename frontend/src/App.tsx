@@ -27,6 +27,8 @@ const App: React.FC = () => {
     const statusMessage = useAppStore((state) => state.statusMessage);
     const trackData = useAppStore((state) => state.trackData);
     const audioFeatures = useAppStore((state) => state.trackData?.audioFeatures);
+    // REASON: Fixed direct store access to use proper React hooks for reactivity
+    const generationProgress = useAppStore((state) => state.generationProgress);
 
     // Start preloading resources as soon as the app mounts
     useEffect(() => {
@@ -36,6 +38,7 @@ const App: React.FC = () => {
     // This custom hook manages the audio processing workflow.
     useAudioProcessor();
 
+    // REASON: Added proper TypeScript constraint for safer status mapping
     const statusToComponent: Record<AppStatus, React.ComponentType | null> = {
         [AppStatus.Idle]: IdleUI,
         [AppStatus.Ready]: ReadyUI,
@@ -53,7 +56,7 @@ const App: React.FC = () => {
             <div className="absolute inset-0 z-0 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-20"></div>
 
             {status === AppStatus.Analyzing && <LoadingProgress stage="analyzing" />}
-            {status === AppStatus.Generating && <LoadingProgress stage="generating" progress={useAppStore.getState().generationProgress} />}
+            {status === AppStatus.Generating && <LoadingProgress stage="generating" progress={generationProgress} />}
 
             {/* Only show UI overlay when not riding */}
             {ContentComponent && (
