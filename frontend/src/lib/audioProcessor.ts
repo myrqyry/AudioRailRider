@@ -383,26 +383,13 @@ export class LiveAudioProcessor {
   private audioContext: AudioContext | null = null;
   private workletNode: AudioWorkletNode | null = null;
   private sourceNode: MediaElementAudioSourceNode | null = null;
+  private isDisposing = false;
+  private isDisposed = false;
 
-    async cleanup(): Promise<void> {
-        try {
-            if (this.sourceNode) {
-                this.sourceNode.disconnect();
-                this.sourceNode = null;
-            }
-            if (this.workletNode) {
-                this.workletNode.disconnect();
-                this.workletNode = null;
-            }
-            if (this.audioContext && this.audioContext.state !== 'closed') {
-                await this.audioContext.close();
-                this.audioContext = null;
-            }
-        } catch (error) {
-            console.warn('Error during audio cleanup:', error);
-        }
-    }
   async initialize(audioElement: HTMLAudioElement): Promise<void> {
+    if (this.isDisposing || this.isDisposed) {
+      throw new Error('Cannot initialize a disposed or disposing audio processor.');
+    }
     if (this.audioContext) {
       await this.dispose();
     }
@@ -435,31 +422,47 @@ export class LiveAudioProcessor {
   }
 
   async dispose(): Promise<void> {
-    if (this.workletNode) {
-      try {
-        this.workletNode.disconnect();
-      } catch (e) {
-        console.warn('[LiveAudioProcessor] Error disconnecting worklet node:', e);
-      }
-      this.workletNode = null;
+    if (this.isDisposing || this.isDisposed) {
+      return;
     }
+    this.isDisposing = true;
 
-    if (this.sourceNode) {
+    const cleanupErrors: Error[] = [];
+
+    const safeDisconnect = (node: AudioNode | null, name: string) => {
+      if (!node) return;
       try {
-        this.sourceNode.disconnect();
+        node.disconnect();
       } catch (e) {
-        console.warn('[LiveAudioProcessor] Error disconnecting source node:', e);
+        const error = new Error(`Error disconnecting ${name} node: ${e instanceof Error ? e.message : String(e)}`);
+        console.warn(`[LiveAudioProcessor] ${error.message}`);
+        cleanupErrors.push(error);
       }
-      this.sourceNode = null;
-    }
+    };
+
+    safeDisconnect(this.workletNode, 'worklet');
+    this.workletNode = null;
+
+    safeDisconnect(this.sourceNode, 'source');
+    this.sourceNode = null;
 
     if (this.audioContext && this.audioContext.state !== 'closed') {
       try {
         await this.audioContext.close();
       } catch (e) {
-        console.warn('[LiveAudioProcessor] Error closing AudioContext:', e);
+        const error = new Error(`Error closing AudioContext: ${e instanceof Error ? e.message : String(e)}`);
+        console.warn(`[LiveAudioProcessor] ${error.message}`);
+        cleanupErrors.push(error);
       }
     }
     this.audioContext = null;
+
+    this.isDisposing = false;
+    this.isDisposed = true;
+
+    if (cleanupErrors.length > 0) {
+      const aggregateMessage = cleanupErrors.map(e => e.message).join('; ');
+      throw new Error(`Cleanup failed with multiple errors: ${aggregateMessage}`);
+    }
   }
 }

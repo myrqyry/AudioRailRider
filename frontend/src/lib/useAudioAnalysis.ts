@@ -30,7 +30,7 @@ export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) =
   useEffect(() => {
     console.log('[useAudioAnalysis] Effect triggered', { status, hasAudioFile: !!audioFile });
 
-    const cleanup = () => {
+    const dispose = () => {
       if (animationFrameId.current) {
         cancelAnimationFrame(animationFrameId.current);
         animationFrameId.current = null;
@@ -51,7 +51,7 @@ export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) =
     };
 
     if (status !== AppStatus.Riding || !audioFile) {
-      cleanup();
+      dispose();
       return;
     }
 
@@ -188,7 +188,7 @@ export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) =
 
     setupAudioProcessing();
 
-    return cleanup;
+    return dispose;
   }, [audioFile, status]);
 
   return { audioRef };
