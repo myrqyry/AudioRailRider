@@ -20,8 +20,14 @@ async def test_generate_blueprint_success(mock_gemini_service):
     """
     Test successful blueprint generation.
     """
-    audio_content = b"fake_audio_data"
-    files = {'audio_file': ('test.mp3', audio_content, 'audio/mpeg')}
+    from create_wav import create_silent_wav
+    import os
+    wav_filename = "test.wav"
+    create_silent_wav(wav_filename)
+    with open(wav_filename, "rb") as f:
+        audio_content = f.read()
+    os.remove(wav_filename)
+    files = {'audio_file': ('test.wav', audio_content, 'audio/wav')}
     response = client.post("/api/generate-blueprint", files=files)
     assert response.status_code == 200
     json_response = response.json()

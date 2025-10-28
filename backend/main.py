@@ -12,6 +12,7 @@ setup_logging()
 import structlog
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from app.middleware import TimeoutMiddleware
 from app.api.endpoints import router
 from app.config.settings import settings
 from app.limiter import limiter
@@ -56,15 +57,33 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"],
 )
 
+app.add_middleware(TimeoutMiddleware, timeout=120)  # 2 minutes timeout
+
 # --- Router ---
 app.include_router(router)
+
+def validate_environment():
+    """Validate all critical environment variables and settings."""
+    errors = []
+    if not settings.gemini_api_key:
+        errors.append("GEMINI_API_KEY is required")
+    if settings.MAX_FILE_SIZE <= 0:
+        errors.append("MAX_FILE_SIZE must be positive")
+    if not settings.ALLOWED_MIME_TYPES:
+        errors.append("ALLOWED_MIME_TYPES cannot be empty")
+    # Validate CORS origins
+    origins = os.getenv("ALLOWED_ORIGINS", "").split(",")
+    for origin in origins:
+        if origin.strip() and not origin.startswith(('http://', 'https://')):
+            errors.append(f"Invalid CORS origin format: {origin}")
+    if errors:
+        raise ValueError("Configuration errors: " + "; ".join(errors))
 
 # --- Main ---
 if __name__ == "__main__":
     try:
         # REASON: Added proper configuration validation before server start
-        if not settings.gemini_api_key:
-            raise ValueError("GEMINI_API_KEY environment variable is required")
+        validate_environment()
 
         logger.info("Starting application", host="0.0.0.0", port=8000, reload=True)
         uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
