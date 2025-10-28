@@ -378,10 +378,15 @@ class GeminiService:
                 else:
                     text = getattr(response, "text", None)
                     if text:
+                        from pydantic import ValidationError
+                        from ..schema.blueprint import Blueprint
                         try:
-                            blueprint = json.loads(text)
-                        except Exception:
-                            blueprint = {"text": text}
+                            raw_data = json.loads(text)
+                            # Validate against schema to prevent malformed data
+                            blueprint = Blueprint.model_validate(raw_data).model_dump()
+                        except (json.JSONDecodeError, ValidationError) as e:
+                            logger.warning("Invalid blueprint from Gemini API", error=str(e))
+                            blueprint = self._procedural_fallback_with_features(features)
                     else:
                         blueprint = {"result": repr(response)}
 

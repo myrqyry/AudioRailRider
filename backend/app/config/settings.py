@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     MAX_FILE_SIZE: int = Field(default=20 * 1024 * 1024, gt=0, description="Maximum audio file size in bytes (default 20MB)")
 
     # Allowed MIME types for audio uploads
-    ALLOWED_MIME_TYPES: list[str] = Field(default=["audio/mpeg", "audio/wav", "audio/ogg", "audio/flac"])
+    ALLOWED_MIME_TYPES: list[str] = Field(default=["audio/mpeg", "audio/wav", "audio/x-wav", "audio/ogg", "audio/flac"])
 
     # --- Audio Analysis Settings ---
     ANALYSIS_MAX_SECONDS: int = Field(default=120, gt=0, description="Maximum audio duration to analyze in seconds")

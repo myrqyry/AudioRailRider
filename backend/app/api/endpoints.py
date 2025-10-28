@@ -56,6 +56,15 @@ async def generate_blueprint(
     if len(audio_bytes) > settings.MAX_FILE_SIZE:
         raise HTTPException(status_code=413, detail="File size exceeds limit.")
 
+    # Validate actual file content using magic numbers
+    import magic
+    detected_mime = magic.from_buffer(audio_bytes, mime=True)
+    if detected_mime not in settings.ALLOWED_MIME_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File content doesn't match declared type. Detected: {detected_mime}"
+        )
+
     # Parse options JSON if provided and pass through to the service
     parsed_options = None
     if options:
@@ -67,7 +76,13 @@ async def generate_blueprint(
             raise HTTPException(status_code=400, detail=f'Invalid JSON in options field: {str(e)}')
 
     # This single call now handles analysis and generation, returning both.
-    return await service.generate_blueprint(audio_bytes, audio_file.content_type, parsed_options)
+    import json
+    MAX_RESPONSE_SIZE = 50 * 1024 * 1024  # 50MB
+    result = await service.generate_blueprint(audio_bytes, audio_file.content_type, parsed_options)
+    response_size = len(json.dumps(result).encode('utf-8'))
+    if response_size > MAX_RESPONSE_SIZE:
+        raise HTTPException(status_code=413, detail="Response too large")
+    return result
 
 @router.post("/api/generate-skybox")
 @limiter.limit("10/minute")

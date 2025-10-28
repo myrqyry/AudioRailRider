@@ -39,17 +39,22 @@ const App: React.FC = () => {
     useAudioProcessor();
 
     // REASON: Added proper TypeScript constraint for safer status mapping
-    const statusToComponent: Record<AppStatus, React.ComponentType | null> = {
+    const SAFE_STATUS_COMPONENTS = {
         [AppStatus.Idle]: IdleUI,
         [AppStatus.Ready]: ReadyUI,
         [AppStatus.Finished]: FinishedUI,
         [AppStatus.Error]: ErrorUI,
-        [AppStatus.Analyzing]: null,
-        [AppStatus.Generating]: null,
-        [AppStatus.Riding]: null,
+    } as const;
+
+    // Validate status and provide safe fallback
+    const getSafeComponent = (status: AppStatus): React.ComponentType => {
+        if (status in SAFE_STATUS_COMPONENTS) {
+            return SAFE_STATUS_COMPONENTS[status as keyof typeof SAFE_STATUS_COMPONENTS];
+        }
+        return ErrorUI;
     };
 
-    const ContentComponent = statusToComponent[status] || ErrorUI;
+    const ContentComponent = getSafeComponent(status);
 
     return (
         <main className="relative w-full h-screen bg-black overflow-hidden flex items-center justify-center">

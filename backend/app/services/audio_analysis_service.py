@@ -19,8 +19,23 @@ analysis_cache = TTLCache(maxsize=100, ttl=3600)
 # Create a bounded thread pool executor for CPU-bound audio analysis tasks.
 # Using os.cpu_count() is a good practice for CPU-bound tasks.
 # Default to 4 if cpu_count() is not available or to have a baseline.
-WORKERS = max(1, (os.cpu_count() or 4))
-audio_analysis_executor = ThreadPoolExecutor(max_workers=WORKERS)
+MAX_QUEUED_TASKS = 50
+WORKERS = min(max(1, (os.cpu_count() or 4)), 8)  # Cap at 8 workers
+
+class BoundedThreadPoolExecutor(ThreadPoolExecutor):
+    def __init__(self, max_workers, max_queued_tasks=MAX_QUEUED_TASKS):
+        super().__init__(max_workers=max_workers)
+        self._semaphore = asyncio.Semaphore(max_queued_tasks)
+
+    async def submit_bounded(self, fn, *args, **kwargs):
+        await self._semaphore.acquire()
+        try:
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(self, fn, *args, **kwargs)
+        finally:
+            self._semaphore.release()
+
+audio_analysis_executor = BoundedThreadPoolExecutor(max_workers=WORKERS)
 
 # Register atexit shutdown to avoid dangling threads in some environments
 try:
@@ -117,7 +132,23 @@ def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
         bpm = float(tempo) if tempo else 120.0
 
         # --- Frame-by-Frame Analysis (vectorized) ---
-        S = np.abs(librosa.stft(y, n_fft=settings.ANALYSIS_N_FFT, hop_length=settings.ANALYSIS_HOP_LENGTH))
+        CHUNK_SIZE = 30  # seconds
+        if duration > 60:  # For files longer than 1 minute
+            chunks = []
+            chunk_duration = CHUNK_SIZE * sr
+
+            for i in range(0, len(y), int(chunk_duration)):
+                chunk = y[i:i + int(chunk_duration)]
+                if len(chunk) < sr:  # Skip chunks shorter than 1 second
+                    continue
+
+                chunk_S = np.abs(librosa.stft(chunk, n_fft=settings.ANALYSIS_N_FFT, hop_length=settings.ANALYSIS_HOP_LENGTH))
+                chunks.append(chunk_S)
+
+            # Combine chunk analyses with weighted averaging
+            S = np.concatenate(chunks, axis=1) if chunks else np.array([[]])
+        else:
+            S = np.abs(librosa.stft(y, n_fft=settings.ANALYSIS_N_FFT, hop_length=settings.ANALYSIS_HOP_LENGTH))
         freqs = librosa.fft_frequencies(sr=sr, n_fft=settings.ANALYSIS_N_FFT)
 
         # Guard against empty-frame result (very short or silent audio)
@@ -147,6 +178,10 @@ def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
         bass = np.clip(bass_energy / max_s, 0, 1)
         mid = np.clip(mid_energy / max_s, 0, 1)
         high = np.clip(high_energy / max_s, 0, 1)
+
+        # Use settings values consistently
+        hop_length = settings.ANALYSIS_HOP_LENGTH
+        n_fft = settings.ANALYSIS_N_FFT
 
         times = librosa.frames_to_time(np.arange(S.shape[1]), sr=sr, hop_length=hop_length)
         rms_frames = librosa.feature.rms(S=S, frame_length=n_fft, hop_length=hop_length)[0]
@@ -227,10 +262,9 @@ async def analyze_audio(audio_bytes: bytes) -> Dict[str, Any]:
 
     logger.info("Audio analysis cache miss", cache_key=cache_key)
 
-    loop = asyncio.get_running_loop()
     # Use a specific, bounded executor to prevent resource exhaustion
-    features = await loop.run_in_executor(
-        audio_analysis_executor, _analyze_audio_sync, audio_bytes
+    features = await audio_analysis_executor.submit_bounded(
+        _analyze_audio_sync, audio_bytes
     )
 
     # Store the result in the cache

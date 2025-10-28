@@ -384,6 +384,24 @@ export class LiveAudioProcessor {
   private workletNode: AudioWorkletNode | null = null;
   private sourceNode: MediaElementAudioSourceNode | null = null;
 
+    async cleanup(): Promise<void> {
+        try {
+            if (this.sourceNode) {
+                this.sourceNode.disconnect();
+                this.sourceNode = null;
+            }
+            if (this.workletNode) {
+                this.workletNode.disconnect();
+                this.workletNode = null;
+            }
+            if (this.audioContext && this.audioContext.state !== 'closed') {
+                await this.audioContext.close();
+                this.audioContext = null;
+            }
+        } catch (error) {
+            console.warn('Error during audio cleanup:', error);
+        }
+    }
   async initialize(audioElement: HTMLAudioElement): Promise<void> {
     if (this.audioContext) {
       await this.dispose();
