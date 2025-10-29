@@ -4,7 +4,7 @@
 // main goal is to provide a stable migration surface and a graceful
 // fallback to the existing AudioContext + pipeline.
 import { setLatestFrame } from './audioWorkletState';
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 
 export interface WorkletAnalysisResult {
   timestamp: number; // seconds
@@ -238,15 +238,6 @@ export class AudioWorkletManager {
             }
         }
 
-        // Close audio context if we created it
-        if (this.audioContext?.state !== 'closed') {
-            try {
-                await this.audioContext?.close();
-            } catch (error) {
-                console.warn('Error closing audio context:', error);
-            }
-        }
-
         // Clear resources
         this.resources.clear();
         this.workletNode = undefined;
@@ -265,17 +256,30 @@ export class AudioWorkletManager {
 }
 
 // Usage with automatic cleanup
-export function useAudioWorklet() {
-    const managerRef = useRef<AudioWorkletManager>();
+export function useAudioWorklet(audioContext: AudioContext | undefined) {
+    const managerRef = useRef<AudioWorkletManager | null>(null);
+    const [isReady, setIsReady] = useState(false);
 
     useEffect(() => {
+        if (!audioContext) {
+            return;
+        }
+
         const manager = new AudioWorkletManager();
-        managerRef.current = manager;
+        manager.initialize(audioContext).then(() => {
+            managerRef.current = manager;
+            setIsReady(true);
+        }).catch(error => {
+            console.error("Failed to initialize AudioWorkletManager:", error);
+            setIsReady(false);
+        });
 
         return () => {
             manager.dispose().catch(console.error);
+            managerRef.current = null;
+            setIsReady(false);
         };
-    }, []);
+    }, [audioContext]);
 
-    return managerRef.current;
+    return { manager: managerRef.current, isReady };
 }

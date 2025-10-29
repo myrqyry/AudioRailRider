@@ -235,7 +235,6 @@ class GeminiService:
             audio_cache.set(audio_bytes, content_type, features)
 
         # Generate a cache key for the blueprint itself, including audio features and options
-        model_name = options.get("model") if isinstance(options, dict) else None
         blueprint_cache_key = _generate_cache_key(
             json.dumps(features, sort_keys=True).encode('utf-8'),
             "application/json",
@@ -244,9 +243,10 @@ class GeminiService:
         )
 
         if blueprint_cache_key in self._cache:
-            # Return cached blueprint. The features will be consistent
-            # because the cache key is derived from them.
-            return self._cache[blueprint_cache_key]
+            # Return cached blueprint but with fresh features
+            cached_result = self._cache[blueprint_cache_key]
+            cached_result['features'] = features
+            return cached_result
         synesthetic_keys = {}
         if options:
             # Extract advanced options if present

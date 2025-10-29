@@ -208,7 +208,7 @@ export function isValidTrackSegment(obj: any): obj is TrackSegment {
          typeof obj.length === 'number' &&
          obj.length > 0 &&
          (!obj.audio_properties || validateAudioProperties(obj.audio_properties)) &&
-         (!obj.effects || (Array.isArray(obj.effects) && obj.effects.every(validateVisualEffect)));
+         (!obj.effects || (Array.isArray(obj.effects) && obj.effects.every((e: any) => typeof e.type === 'string')));
 }
 
 // Rest of interfaces remain the same...

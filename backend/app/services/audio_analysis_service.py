@@ -34,11 +34,7 @@ class BoundedThreadPoolExecutor(ThreadPoolExecutor):
     async def submit_bounded(self, fn, *args, **kwargs):
         await self._semaphore.acquire()
         try:
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
+            loop = asyncio.get_event_loop()
             return await loop.run_in_executor(self, fn, *args, **kwargs)
         finally:
             self._semaphore.release()
@@ -114,10 +110,10 @@ def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
             y = y / np.max(np.abs(y))
 
         duration = float(librosa.get_duration(y=y, sr=sr))
-        if duration > settings.ANALYSIS_MAX_SECONDS:
-            max_samples = int(settings.ANALYSIS_MAX_SECONDS * sr)
+        if duration > settings.audio_analysis.max_analyze_seconds:
+            max_samples = int(settings.audio_analysis.max_analyze_seconds * sr)
             y = y[:max_samples]
-            duration = settings.ANALYSIS_MAX_SECONDS
+            duration = settings.audio_analysis.max_analyze_seconds
 
         features: Dict[str, Any] = {"duration": duration}
 
@@ -130,18 +126,33 @@ def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
             features.update(_get_fallback_temporal_features())
 
         try:
-            S = np.abs(librosa.stft(y, n_fft=settings.ANALYSIS_N_FFT, hop_length=settings.ANALYSIS_HOP_LENGTH))
+            S = np.abs(librosa.stft(y, n_fft=settings.audio_analysis.n_fft, hop_length=settings.audio_analysis.hop_length))
             if S.shape[1] == 0:
                 features.update(_get_fallback_frame_analysis())
             else:
-                times = librosa.frames_to_time(np.arange(S.shape[1]), sr=sr, hop_length=settings.ANALYSIS_HOP_LENGTH)
+                freqs = librosa.fft_frequencies(sr=sr, n_fft=settings.audio_analysis.n_fft)
+                bass_bins = np.where(freqs <= settings.audio_analysis.bass_cutoff_hz)[0]
+                mid_bins = np.where((freqs > settings.audio_analysis.bass_cutoff_hz) & (freqs <= settings.audio_analysis.mid_cutoff_hz))[0]
+                high_bins = np.where(freqs > settings.audio_analysis.mid_cutoff_hz)[0]
+
+                max_s = max(np.max(S), 1e-10) if S.size > 0 else 1e-10
+                bass_energy = S[bass_bins, :].mean(axis=0) if bass_bins.size > 0 else np.zeros(S.shape[1])
+                mid_energy = S[mid_bins, :].mean(axis=0) if mid_bins.size > 0 else np.zeros(S.shape[1])
+                high_energy = S[high_bins, :].mean(axis=0) if high_bins.size > 0 else np.zeros(S.shape[1])
+
+                bass = np.clip(bass_energy / max_s, 0, 1)
+                mid = np.clip(mid_energy / max_s, 0, 1)
+                high = np.clip(high_energy / max_s, 0, 1)
+
+                times = librosa.frames_to_time(np.arange(S.shape[1]), sr=sr, hop_length=settings.audio_analysis.hop_length)
                 rms = librosa.feature.rms(S=S)[0]
                 centroid = librosa.feature.spectral_centroid(S=S, sr=sr)[0]
                 flux = np.abs(np.diff(centroid, prepend=centroid[0]))
 
                 features["frameAnalyses"] = [{
                     "timestamp": float(times[i]), "energy": float(rms[i]),
-                    "spectralCentroid": float(centroid[i]), "spectralFlux": float(flux[i])
+                    "spectralCentroid": float(centroid[i]), "spectralFlux": float(flux[i]),
+                    "bass": float(bass[i]), "mid": float(mid[i]), "high": float(high[i])
                 } for i in range(S.shape[1])]
 
                 avg_energy = np.mean(rms) if len(rms) > 0 else 0.0
