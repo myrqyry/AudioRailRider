@@ -32,7 +32,7 @@ async def validate_audio_file(audio_file: UploadFile, max_size: int) -> bytes:
     # Validate content type
     if not audio_file.content_type or audio_file.content_type.lower() not in settings.ALLOWED_MIME_TYPES:
         supported_formats = ", ".join([mime.split('/')[-1].upper() for mime in settings.ALLOWED_MIME_TYPES])
-        raise HTTPException(status_code=400, detail=f"Unsupported file format...")
+        raise HTTPException(status_code=400, detail=f"Unsupported file format. Please upload one of the following: {supported_formats}")
 
     # Stream validation with size limits
     audio_bytes = bytearray()
