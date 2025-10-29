@@ -54,7 +54,9 @@ const IdleUI: React.FC = () => {
             <input ref={fileInputRef} id="audio-upload" type="file" accept="audio/mp3, audio/wav, audio/mpeg" className="hidden" onChange={handleFileChange} />
             <p className="text-xs text-gray-600 mt-4">For the best experience, use a track with dynamic range.</p>
 
+import BreathingIntensitySlider from '../BreathingIntensitySlider';
             <GenerationOptionsForm />
+            <BreathingIntensitySlider />
 
             <div className="mt-8 text-sm text-gray-500">
                 Powered by <span className="font-semibold text-gray-400">Gemini</span> & <span className="font-semibold text-gray-400">Three.js</span>

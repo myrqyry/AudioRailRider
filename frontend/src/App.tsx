@@ -58,7 +58,7 @@ const App: React.FC = () => {
 
     return (
         <main className="relative w-full h-screen bg-black overflow-hidden flex items-center justify-center">
-            <div className="absolute inset-0 z-0 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-20"></div>
+            <div className="absolute inset-0 z-0 bg-[url('/stardust.png')] opacity-20"></div>
 
             {status === AppStatus.Analyzing && <LoadingProgress stage="analyzing" />}
             {status === AppStatus.Generating && <LoadingProgress stage="generating" progress={generationProgress} />}
@@ -68,7 +68,6 @@ const App: React.FC = () => {
                 <div className="relative z-20 p-4">
                     <RendererWarning />
                     <ContentComponent />
-                    <BreathingIntensitySlider />
                 </div>
             )}
 

@@ -57,7 +57,7 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"],
 )
 
-app.add_middleware(TimeoutMiddleware, timeout=120)  # 2 minutes timeout
+app.add_middleware(TimeoutMiddleware)
 
 # --- Router ---
 app.include_router(router)

@@ -1,13 +1,13 @@
 import asyncio
-import asyncio
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
+from app.config.settings import settings
 
 class TimeoutMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, timeout: int = 60):
+    def __init__(self, app):
         super().__init__(app)
-        self.timeout = timeout
+        self.timeout = settings.REQUEST_TIMEOUT
 
     async def dispatch(self, request: Request, call_next):
         try:
