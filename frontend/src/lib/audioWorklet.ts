@@ -4,6 +4,7 @@
 // main goal is to provide a stable migration surface and a graceful
 // fallback to the existing AudioContext + pipeline.
 import { setLatestFrame } from './audioWorkletState';
+import { useRef, useEffect, useState } from 'react';
 
 export interface WorkletAnalysisResult {
   timestamp: number; // seconds
@@ -183,40 +184,102 @@ export const createWorkletNode = (audioContext: AudioContext): AudioWorkletNode 
   }
 };
 
-// Create an analyzer node that pushes analysis results into a shared state buffer.
-export const createAnalyzerNode = (audioContext: AudioContext): AudioWorkletNode | null => {
-  if (!isWorkletSupported()) return null;
-  try {
-    const node = new AudioWorkletNode(audioContext, 'simple-analyzer-processor');
-    node.port.onmessage = (ev) => {
-      const data = ev.data;
-      if (!data || data.type !== 'analysis') return;
-      try {
-        const frame = data.frame instanceof Float32Array
-          ? data.frame
-          : (data.frame ? new Float32Array(data.frame) : undefined);
+export class AudioWorkletManager {
+    private workletNode?: AudioWorkletNode;
+    private audioContext?: AudioContext;
+    private resources: Set<any> = new Set();
+    private isDisposed = false;
 
-        // Write the latest frame to the shared state.
-        // This decouples the worklet's output from the main thread's consumption.
-        setLatestFrame({
-          timestamp: data.timestamp,
-          energy: data.energy,
-          spectralCentroid: data.spectralCentroid,
-          spectralFlux: data.spectralFlux,
-          bass: data.bass,
-          mid: data.mid,
-          high: data.high,
-          frame,
-          sampleRate: typeof data.sampleRate === 'number' ? data.sampleRate : audioContext.sampleRate,
-          channelCount: typeof data.channelCount === 'number' ? data.channelCount : 1,
+    async initialize(audioContext: AudioContext): Promise<void> {
+        if (this.isDisposed) {
+            throw new Error('AudioWorkletManager has been disposed');
+        }
+
+        this.audioContext = audioContext;
+
+        try {
+            // Register for cleanup
+            this.resources.add(audioContext);
+
+            await audioContext.audioWorklet.addModule('/audio-worklet-processor.js');
+
+            this.workletNode = new AudioWorkletNode(audioContext, 'audio-processor');
+            this.resources.add(this.workletNode);
+
+            // Setup error handling
+            this.workletNode.onprocessorerror = (event) => {
+                console.error('Audio worklet processor error:', event);
+                this.handleWorkletError();
+            };
+
+        } catch (error) {
+            await this.dispose();
+            throw error;
+        }
+    }
+
+    private handleWorkletError(): void {
+        // Graceful error recovery
+        this.dispose().catch(console.error);
+    }
+
+    async dispose(): Promise<void> {
+        if (this.isDisposed) return;
+
+        this.isDisposed = true;
+
+        // Disconnect worklet node
+        if (this.workletNode) {
+            try {
+                this.workletNode.disconnect();
+                this.workletNode.port.close();
+            } catch (error) {
+                console.warn('Error disconnecting worklet node:', error);
+            }
+        }
+
+        // Clear resources
+        this.resources.clear();
+        this.workletNode = undefined;
+        this.audioContext = undefined;
+    }
+
+    // Implement finalizer for garbage collection
+    private finalizationRegistry = new FinalizationRegistry((cleanup: () => void) => {
+        cleanup();
+    });
+
+    constructor() {
+        // Register cleanup for GC
+        this.finalizationRegistry.register(this, () => this.dispose());
+    }
+}
+
+// Usage with automatic cleanup
+export function useAudioWorklet(audioContext: AudioContext | undefined) {
+    const managerRef = useRef<AudioWorkletManager | null>(null);
+    const [isReady, setIsReady] = useState(false);
+
+    useEffect(() => {
+        if (!audioContext) {
+            return;
+        }
+
+        const manager = new AudioWorkletManager();
+        manager.initialize(audioContext).then(() => {
+            managerRef.current = manager;
+            setIsReady(true);
+        }).catch(error => {
+            console.error("Failed to initialize AudioWorkletManager:", error);
+            setIsReady(false);
         });
-      } catch (e) {
-        console.warn('[audioWorklet] Failed to process and set latest frame', e);
-      }
-    };
-    return node;
-  } catch (e) {
-    console.warn('[audioWorklet] createAnalyzerNode failed', e);
-    return null;
-  }
-};
+
+        return () => {
+            manager.dispose().catch(console.error);
+            managerRef.current = null;
+            setIsReady(false);
+        };
+    }, [audioContext]);
+
+    return { manager: managerRef.current, isReady };
+}

@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import os
+import threading
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, Optional
 
@@ -17,6 +18,40 @@ from cachetools import TTLCache
 from types import SimpleNamespace
 
 logger = logging.getLogger("GeminiService")
+
+class AudioAnalysisCache:
+    """Thread-safe cache for audio analysis results."""
+
+    def __init__(self, max_size: int = 100, ttl: int = 3600):
+        self._cache = TTLCache(maxsize=max_size, ttl=ttl)
+        self._lock = threading.RLock()
+
+    def _generate_cache_key(self, audio_bytes: bytes, content_type: str) -> str:
+        """Generate cache key from audio content hash."""
+        hasher = hashlib.sha256()
+        hasher.update(audio_bytes)
+        hasher.update(content_type.encode('utf-8'))
+        return f"audio_analysis_{hasher.hexdigest()}"
+
+    def get(self, audio_bytes: bytes, content_type: str) -> Optional[Dict[str, Any]]:
+        """Retrieve cached analysis results."""
+        key = self._generate_cache_key(audio_bytes, content_type)
+        with self._lock:
+            return self._cache.get(key)
+
+    def set(self, audio_bytes: bytes, content_type: str, result: Dict[str, Any]) -> None:
+        """Cache analysis results."""
+        key = self._generate_cache_key(audio_bytes, content_type)
+        with self._lock:
+            self._cache[key] = result
+
+    def clear(self) -> None:
+        """Clear all cached results."""
+        with self._lock:
+            self._cache.clear()
+
+# Global cache instance for audio analysis
+audio_cache = AudioAnalysisCache(max_size=200, ttl=7200)  # 2 hour TTL
 
 SYNESTHETIC_PROMPT = """
 You are not designing a rollercoaster - you are translating a song's soul into a navigable dreamscape.
@@ -189,15 +224,29 @@ class GeminiService:
         """
         model_name = options.get("model") if isinstance(options, dict) else None
 
-        cache_key = _generate_cache_key(audio_bytes, content_type, options, model_name=model_name)
-        if cache_key in self._cache:
-            return self._cache[cache_key]
+        # Check for cached audio features first
+        cached_features = audio_cache.get(audio_bytes, content_type)
+        if cached_features:
+            logger.info("Using cached audio analysis", cache_hit=True)
+            features = cached_features
+        else:
+            logger.info("Performing fresh audio analysis", cache_hit=False)
+            features = await analyze_audio(audio_bytes)
+            audio_cache.set(audio_bytes, content_type, features)
 
-        # Run audio analysis (tests patch analyze_audio)
-        features = await analyze_audio(audio_bytes)
+        # Generate a cache key for the blueprint itself, including audio features and options
+        blueprint_cache_key = _generate_cache_key(
+            json.dumps(features, sort_keys=True).encode('utf-8'),
+            "application/json",
+            options,
+            model_name
+        )
 
-        # --- Synesthetic Prompt Engineering ---
-        # Build a rich prompt for Gemini, including advanced keys
+        if blueprint_cache_key in self._cache:
+            # Return cached blueprint but with fresh features
+            cached_result = self._cache[blueprint_cache_key]
+            cached_result['features'] = features
+            return cached_result
         synesthetic_keys = {}
         if options:
             # Extract advanced options if present
@@ -392,7 +441,7 @@ class GeminiService:
 
                 blueprint = self._ensure_blueprint_has_track(blueprint, features)
                 result = {"blueprint": blueprint, "features": features}
-                self._cache[cache_key] = result
+                self._cache[blueprint_cache_key] = result
                 return result
             except APIError as e:
                 logger.warning("APIError from client, falling back: %s", e)
@@ -401,7 +450,7 @@ class GeminiService:
 
         # Procedural fallback
         proc = self._procedural_fallback_with_features(features)
-        self._cache[cache_key] = proc
+        self._cache[blueprint_cache_key] = proc
         return proc
 
     def _procedural_fallback_with_features(self, features: dict) -> Dict[str, Any]:

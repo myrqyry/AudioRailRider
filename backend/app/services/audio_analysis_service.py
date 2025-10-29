@@ -5,22 +5,26 @@ import os
 import structlog
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Any, List
+import numpy as np
 from cachetools import TTLCache
 from fastapi import HTTPException
+import librosa
 
 from ..config.settings import settings
 
 # Configure logging
 logger = structlog.get_logger(__name__)
 
+class AudioAnalysisError(Exception):
+    """Custom exception for audio analysis failures."""
+    pass
+
 # Cache for audio analysis results (100 items, 1 hour TTL)
 analysis_cache = TTLCache(maxsize=100, ttl=3600)
 
-# Create a bounded thread pool executor for CPU-bound audio analysis tasks.
-# Using os.cpu_count() is a good practice for CPU-bound tasks.
-# Default to 4 if cpu_count() is not available or to have a baseline.
+# Bounded thread pool executor for CPU-bound tasks
 MAX_QUEUED_TASKS = 50
-WORKERS = min(max(1, (os.cpu_count() or 4)), 8)  # Cap at 8 workers
+WORKERS = min(max(1, (os.cpu_count() or 4)), 8)
 
 class BoundedThreadPoolExecutor(ThreadPoolExecutor):
     def __init__(self, max_workers, max_queued_tasks=MAX_QUEUED_TASKS):
@@ -30,57 +34,44 @@ class BoundedThreadPoolExecutor(ThreadPoolExecutor):
     async def submit_bounded(self, fn, *args, **kwargs):
         await self._semaphore.acquire()
         try:
-            loop = asyncio.get_running_loop()
+            loop = asyncio.get_event_loop()
             return await loop.run_in_executor(self, fn, *args, **kwargs)
         finally:
             self._semaphore.release()
 
 audio_analysis_executor = BoundedThreadPoolExecutor(max_workers=WORKERS)
 
-# Register atexit shutdown to avoid dangling threads in some environments
-try:
-    from atexit import register as _register_atexit
+# --- Fallback data generators ---
 
-    def _shutdown_executor():
-        try:
-            audio_analysis_executor.shutdown(wait=False)
-        except Exception:
-            pass
+def _get_fallback_temporal_features() -> Dict[str, Any]:
+    """Provide fallback values for temporal features."""
+    return {'bpm': 120.0}
 
-    _register_atexit(_shutdown_executor)
-except Exception:
-    # atexit isn't critical; ignore registration failures
-    pass
+def _get_fallback_frame_analysis() -> Dict[str, Any]:
+    """Provide fallback values for frame-by-frame analysis."""
+    return {
+        "energy": 0.0, "spectralCentroid": 0.0, "spectralFlux": 0.0, "frameAnalyses": []
+    }
 
+def _get_fallback_emotional_fingerprint() -> Dict[str, Any]:
+    """Provide fallback values for emotional fingerprint."""
+    return {
+        'tonal_tension': 0.0, 'valence_curve': 0.0, 'rhythmic_complexity': 0.0,
+        'textural_separation': {'harmonic_dominance': 0.0, 'percussive_energy': 0.0}
+    }
 
-def _extract_emotional_fingerprint(y: 'numpy.ndarray', sr: float) -> Dict[str, Any]:
-    """
-    Extracts a deeper emotional fingerprint from the audio.
-    """
-    import librosa
-    import numpy as np
+# --- Core Analysis Functions ---
 
-    # Harmonic-percussive separation to distinguish tonal from rhythmic elements.
+def _extract_emotional_fingerprint(y: np.ndarray, sr: float) -> Dict[str, Any]:
     harmonic, percussive = librosa.effects.hpss(y)
-
-    # Tonal tension analysis: Calculate the standard deviation of chroma features.
-    # Higher values suggest more harmonic variation and potential tension.
     chroma = librosa.feature.chroma_stft(y=y, sr=sr)
     tonal_tension_curve = np.std(chroma, axis=0)
-
-    # Emotional valence proxy: Use the tonnetz (tonal centroids) feature.
-    # The mean of the tonnetz can be a rough proxy for the 'brightness' or 'mood'.
     tonnetz = librosa.feature.tonnetz(y=harmonic, sr=sr)
     valence_curve = np.mean(tonnetz, axis=0)
-
-    # Rhythmic complexity
     onset_strength = librosa.onset.onset_strength(y=y, sr=sr)
-
     y_mean_squared = np.mean(y**2)
-    # Avoid division by zero for silent audio
     harmonic_dominance = np.mean(harmonic**2) / y_mean_squared if y_mean_squared > 1e-10 else 0.0
     percussive_energy = np.mean(percussive**2) / y_mean_squared if y_mean_squared > 1e-10 else 0.0
-
     return {
         'tonal_tension': float(np.mean(tonal_tension_curve)),
         'valence_curve': float(np.mean(valence_curve)),
@@ -91,182 +82,123 @@ def _extract_emotional_fingerprint(y: 'numpy.ndarray', sr: float) -> Dict[str, A
         }
     }
 
-
 def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
     """
-    Performs synchronous audio analysis on a byte stream.
-
-    This function uses librosa to extract features like duration, BPM, and a
-    series of frame-by-frame analyses. It's designed to be run in a separate
-    thread to avoid blocking the main asyncio event loop.
-
-    Args:
-        audio_bytes: The raw bytes of the audio file.
-
-    Returns:
-        A dictionary containing the extracted audio features.
-
-    Raises:
-        HTTPException: If audio processing fails due to a known `librosa`
-                       error (400) or an unexpected error (500).
+    Performs synchronous, robust audio analysis with graceful error handling.
     """
     try:
-        # Lazy import heavy dependencies to avoid import-time failures
-        import librosa
-        import numpy as np
+        # 1. Input validation
+        if not audio_bytes:
+            raise AudioAnalysisError("Empty audio data provided")
 
-        audio_stream = io.BytesIO(audio_bytes)
-        # Resample to a lower sample rate to speed up STFT and feature extraction.
-        target_sr = 22050
-        y, sr = librosa.load(audio_stream, sr=target_sr, mono=True)
+        # 2. Load audio with error handling
+        try:
+            audio_stream = io.BytesIO(audio_bytes)
+            target_sr = 22050
+            y, sr = librosa.load(audio_stream, sr=target_sr, mono=True)
+        except Exception as e:
+            logger.error("Failed to decode audio", error=str(e), exc_info=True)
+            raise AudioAnalysisError(f"Failed to decode audio: {e}")
+
+        # 3. Validate loaded audio
+        if len(y) == 0: raise AudioAnalysisError("Audio file contains no data")
+        if sr <= 0: raise AudioAnalysisError("Invalid sample rate detected")
+        if len(y) / sr < 0.1: raise AudioAnalysisError("Audio file too short for analysis")
+
+        # 4. Normalize audio
+        if np.max(np.abs(y)) > 0:
+            y = y / np.max(np.abs(y))
+
         duration = float(librosa.get_duration(y=y, sr=sr))
-
-        # Cap analysis length to avoid long processing times (seconds)
-        if duration > settings.ANALYSIS_MAX_SECONDS:
-            max_samples = int(settings.ANALYSIS_MAX_SECONDS * sr)
+        if duration > settings.audio_analysis.max_analyze_seconds:
+            max_samples = int(settings.audio_analysis.max_analyze_seconds * sr)
             y = y[:max_samples]
-            duration = settings.ANALYSIS_MAX_SECONDS  # Use the limit directly
+            duration = settings.audio_analysis.max_analyze_seconds
 
-        # BPM estimation (fast path)
-        tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-        bpm = float(tempo) if tempo else 120.0
+        features: Dict[str, Any] = {"duration": duration}
 
-        # --- Frame-by-Frame Analysis (vectorized) ---
-        CHUNK_SIZE = 30  # seconds
-        if duration > 60:  # For files longer than 1 minute
-            chunks = []
-            chunk_duration = CHUNK_SIZE * sr
+        # 5. Extract features with individual fallbacks
+        try:
+            tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+            features['bpm'] = float(tempo) if tempo else 120.0
+        except Exception as e:
+            logger.warning("BPM estimation failed, using fallback.", error=str(e))
+            features.update(_get_fallback_temporal_features())
 
-            for i in range(0, len(y), int(chunk_duration)):
-                chunk = y[i:i + int(chunk_duration)]
-                if len(chunk) < sr:  # Skip chunks shorter than 1 second
-                    continue
+        try:
+            S = np.abs(librosa.stft(y, n_fft=settings.audio_analysis.n_fft, hop_length=settings.audio_analysis.hop_length))
+            if S.shape[1] == 0:
+                features.update(_get_fallback_frame_analysis())
+            else:
+                freqs = librosa.fft_frequencies(sr=sr, n_fft=settings.audio_analysis.n_fft)
+                bass_bins = np.where(freqs <= settings.audio_analysis.bass_cutoff_hz)[0]
+                mid_bins = np.where((freqs > settings.audio_analysis.bass_cutoff_hz) & (freqs <= settings.audio_analysis.mid_cutoff_hz))[0]
+                high_bins = np.where(freqs > settings.audio_analysis.mid_cutoff_hz)[0]
 
-                chunk_S = np.abs(librosa.stft(chunk, n_fft=settings.ANALYSIS_N_FFT, hop_length=settings.ANALYSIS_HOP_LENGTH))
-                chunks.append(chunk_S)
+                max_s = max(np.max(S), 1e-10) if S.size > 0 else 1e-10
+                bass_energy = S[bass_bins, :].mean(axis=0) if bass_bins.size > 0 else np.zeros(S.shape[1])
+                mid_energy = S[mid_bins, :].mean(axis=0) if mid_bins.size > 0 else np.zeros(S.shape[1])
+                high_energy = S[high_bins, :].mean(axis=0) if high_bins.size > 0 else np.zeros(S.shape[1])
 
-            # Combine chunk analyses with weighted averaging
-            S = np.concatenate(chunks, axis=1) if chunks else np.array([[]])
-        else:
-            S = np.abs(librosa.stft(y, n_fft=settings.ANALYSIS_N_FFT, hop_length=settings.ANALYSIS_HOP_LENGTH))
-        freqs = librosa.fft_frequencies(sr=sr, n_fft=settings.ANALYSIS_N_FFT)
+                bass = np.clip(bass_energy / max_s, 0, 1)
+                mid = np.clip(mid_energy / max_s, 0, 1)
+                high = np.clip(high_energy / max_s, 0, 1)
 
-        # Guard against empty-frame result (very short or silent audio)
-        num_frames = S.shape[1] if S.ndim >= 2 else 0
-        if num_frames == 0:
-            # Return safe defaults
-            return {
-                "duration": duration,
-                "bpm": float(120.0),
-                "energy": 0.0,
-                "spectralCentroid": 0.0,
-                "spectralFlux": 0.0,
-                "frameAnalyses": []
-            }
+                times = librosa.frames_to_time(np.arange(S.shape[1]), sr=sr, hop_length=settings.audio_analysis.hop_length)
+                rms = librosa.feature.rms(S=S)[0]
+                centroid = librosa.feature.spectral_centroid(S=S, sr=sr)[0]
+                flux = np.abs(np.diff(centroid, prepend=centroid[0]))
 
-        bass_bins = np.where(freqs <= settings.ANALYSIS_BASS_CUTOFF)[0]
-        mid_bins = np.where((freqs > settings.ANALYSIS_BASS_CUTOFF) & (freqs <= settings.ANALYSIS_MID_CUTOFF))[0]
-        high_bins = np.where(freqs > settings.ANALYSIS_MID_CUTOFF)[0]
+                features["frameAnalyses"] = [{
+                    "timestamp": float(times[i]), "energy": float(rms[i]),
+                    "spectralCentroid": float(centroid[i]), "spectralFlux": float(flux[i]),
+                    "bass": float(bass[i]), "mid": float(mid[i]), "high": float(high[i])
+                } for i in range(S.shape[1])]
 
-        # Vectorized band energy per frame
-        # handle empty bin cases defensively
-        max_s = max(np.max(S), 1e-10) if S.size > 0 else 1e-10
-        bass_energy = S[bass_bins, :].mean(axis=0) if bass_bins.size > 0 else np.zeros(S.shape[1])
-        mid_energy = S[mid_bins, :].mean(axis=0) if mid_bins.size > 0 else np.zeros(S.shape[1])
-        high_energy = S[high_bins, :].mean(axis=0) if high_bins.size > 0 else np.zeros(S.shape[1])
+                avg_energy = np.mean(rms) if len(rms) > 0 else 0.0
+                features["energy"] = float(np.clip(avg_energy * 5, 0, 1))
+                features["spectralCentroid"] = float(np.mean(centroid)) if len(centroid) > 0 else 0.0
+                features["spectralFlux"] = float(np.mean(flux)) if len(flux) > 0 else 0.0
+        except Exception as e:
+            logger.warning("Frame-by-frame analysis failed, using fallback.", error=str(e))
+            features.update(_get_fallback_frame_analysis())
 
-        bass = np.clip(bass_energy / max_s, 0, 1)
-        mid = np.clip(mid_energy / max_s, 0, 1)
-        high = np.clip(high_energy / max_s, 0, 1)
+        try:
+            features['emotional_fingerprint'] = _extract_emotional_fingerprint(y, sr)
+        except Exception as e:
+            logger.warning("Emotional fingerprint failed, using fallback.", error=str(e))
+            features['emotional_fingerprint'] = _get_fallback_emotional_fingerprint()
 
-        # Use settings values consistently
-        hop_length = settings.ANALYSIS_HOP_LENGTH
-        n_fft = settings.ANALYSIS_N_FFT
-
-        times = librosa.frames_to_time(np.arange(S.shape[1]), sr=sr, hop_length=hop_length)
-        rms_frames = librosa.feature.rms(S=S, frame_length=n_fft, hop_length=hop_length)[0]
-        spectral_centroid_frames = librosa.feature.spectral_centroid(S=S, sr=sr, n_fft=n_fft, hop_length=hop_length)[0]
-        spectral_flux = np.abs(np.diff(spectral_centroid_frames, prepend=spectral_centroid_frames[0]))
-
-        # Build frame analyses list (convert to Python types)
-        frame_analyses: List[Dict[str, float]] = []
-        for i in range(S.shape[1]):
-            frame_analyses.append({
-                "timestamp": float(times[i]),
-                "energy": float(rms_frames[i]) if i < len(rms_frames) else 0.0,
-                "spectralCentroid": float(spectral_centroid_frames[i]) if i < len(spectral_centroid_frames) else 0.0,
-                "spectralFlux": float(spectral_flux[i]) if i < len(spectral_flux) else 0.0,
-                "bass": float(bass[i]) if i < len(bass) else 0.0,
-                "mid": float(mid[i]) if i < len(mid) else 0.0,
-                "high": float(high[i]) if i < len(high) else 0.0,
-            })
-
-        avg_energy = np.mean([f['energy'] for f in frame_analyses]) if frame_analyses else 0
-        normalized_energy = float(np.clip(avg_energy * 5, 0, 1))
-        avg_spectral_centroid = float(np.mean([f['spectralCentroid'] for f in frame_analyses])) if frame_analyses else 0
-        avg_spectral_flux = float(np.mean([f['spectralFlux'] for f in frame_analyses])) if frame_analyses else 0
-
-        # Extract emotional fingerprint
-        emotional_fingerprint = _extract_emotional_fingerprint(y, sr)
-
-        logger.info(
-            "Audio analysis complete",
-            duration_s=round(duration, 1),
-            frame_count=len(frame_analyses),
-            bpm=round(bpm, 1)
-        )
-
-        features = {
-            "duration": duration,
-            "bpm": bpm,
-            "energy": normalized_energy,
-            "spectralCentroid": avg_spectral_centroid,
-            "spectralFlux": avg_spectral_flux,
-            "frameAnalyses": frame_analyses,
-            "emotional_fingerprint": emotional_fingerprint
-        }
-
+        logger.info("Audio analysis complete", duration_s=round(duration, 1), frame_count=len(features.get("frameAnalyses", [])), bpm=round(features.get('bpm', 0), 1))
         return features
-    # Catch specific, expected errors from audio processing
-    except librosa.LibrosaError as e:
-        logger.error("Librosa error during audio analysis", error=str(e), exc_info=True)
-        # Re-raise as HTTPException so the API can return a 400 Bad Request
-        raise HTTPException(status_code=400, detail=f"Audio processing failed: {e}")
-    except Exception as e:
-        logger.error("Unexpected error during audio analysis", error=str(e), exc_info=True)
-        # For unexpected errors, it's better to return a 500 Internal Server Error
+
+    except AudioAnalysisError:
         raise
+    except Exception as e:
+        logger.error("Unexpected error in audio analysis", error=str(e), exc_info=True)
+        raise AudioAnalysisError(f"Audio analysis failed unexpectedly: {e}")
 
 async def analyze_audio(audio_bytes: bytes) -> Dict[str, Any]:
     """
-    Asynchronously analyzes an audio byte stream, with caching.
-
-    This function first checks a time-sensitive cache for pre-computed results.
-    If not found, it offloads the CPU-bound `_analyze_audio_sync` function to a
-    separate thread pool to avoid blocking the main asyncio event loop, ensuring
-    the server remains responsive. The result is then cached.
-
-    Args:
-        audio_bytes: The raw bytes of the audio file.
-
-    Returns:
-        A dictionary containing the extracted audio features.
+    Asynchronously analyzes audio, handling caching and errors gracefully.
     """
-    # Generate a cache key based on the hash of the audio content
     cache_key = hashlib.sha256(audio_bytes).hexdigest()
-
-    # Check cache first
     if cache_key in analysis_cache:
         logger.info("Audio analysis cache hit", cache_key=cache_key)
         return analysis_cache[cache_key]
 
     logger.info("Audio analysis cache miss", cache_key=cache_key)
-
-    # Use a specific, bounded executor to prevent resource exhaustion
-    features = await audio_analysis_executor.submit_bounded(
-        _analyze_audio_sync, audio_bytes
-    )
-
-    # Store the result in the cache
-    analysis_cache[cache_key] = features
-    return features
+    try:
+        features = await audio_analysis_executor.submit_bounded(_analyze_audio_sync, audio_bytes)
+        analysis_cache[cache_key] = features
+        return features
+    except AudioAnalysisError as e:
+        logger.error("Audio analysis failed", detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        logger.error("Runtime error from analysis thread", error=str(e), exc_info=True)
+        # Re-raise as AudioAnalysisError to be caught by the caller
+        raise AudioAnalysisError(f"Audio analysis failed unexpectedly: {e}")
+    except Exception as e:
+        logger.error("Unexpected error from analysis thread", error=str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail="An internal error occurred during audio analysis.")
