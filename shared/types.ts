@@ -148,6 +148,24 @@ export enum TrackComponentType {
 }
 
 // REASON: Strengthened track segment validation with required core properties
+// Define specific interfaces for audio properties and visual effects
+export interface AudioProperties {
+    volume: number;
+    pitch: number;
+    tempo_multiplier: number;
+    spectral_centroid: number;
+    mfcc_features: number[];
+    harmonic_content: number;
+    percussive_content: number;
+}
+
+export interface VisualEffect {
+    type: 'particle' | 'lighting' | 'fog' | 'distortion';
+    intensity: number;
+    duration: number;
+    parameters: Record<string, number | string | boolean>;
+}
+
 export interface TrackSegment extends BaseSegment {
     component: TrackComponentType;
     length: number; // Always required
@@ -158,8 +176,8 @@ export interface TrackSegment extends BaseSegment {
     radius?: number;
     twist_angle?: number;
     inversions?: number;
-    audio_properties?: Record<string, unknown>;
-    effects?: Record<string, unknown>;
+    audio_properties?: AudioProperties;
+    effects?: VisualEffect[];
     energy_threshold?: number;
     beat_alignment?: boolean;
     angle?: number;
@@ -168,12 +186,29 @@ export interface TrackSegment extends BaseSegment {
 }
 
 // REASON: Added validation functions for runtime type checking
+export function validateAudioProperties(props: any): props is AudioProperties {
+    return (
+        typeof props === 'object' &&
+        props !== null &&
+        typeof props.volume === 'number' &&
+        typeof props.pitch === 'number' &&
+        typeof props.tempo_multiplier === 'number' &&
+        typeof props.spectral_centroid === 'number' &&
+        Array.isArray(props.mfcc_features) &&
+        props.mfcc_features.every((f: any) => typeof f === 'number') &&
+        typeof props.harmonic_content === 'number' &&
+        typeof props.percussive_content === 'number'
+    );
+}
+
 export function isValidTrackSegment(obj: any): obj is TrackSegment {
   return obj &&
          typeof obj.component === 'string' &&
          Object.values(TrackComponentType).includes(obj.component) &&
          typeof obj.length === 'number' &&
-         obj.length > 0;
+         obj.length > 0 &&
+         (!obj.audio_properties || validateAudioProperties(obj.audio_properties)) &&
+         (!obj.effects || (Array.isArray(obj.effects) && obj.effects.every((e: any) => typeof e.type === 'string')));
 }
 
 // Rest of interfaces remain the same...

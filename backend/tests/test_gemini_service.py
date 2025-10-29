@@ -1,8 +1,13 @@
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 from types import SimpleNamespace
-from app.services.gemini_service import GeminiService, APIError
+from app.services.gemini_service import GeminiService, APIError, audio_cache
 from app.schema.blueprint import Blueprint
+
+@pytest.fixture(autouse=True)
+def clear_audio_cache():
+    audio_cache.clear()
+    yield
 
 @pytest.fixture
 def mock_gemini_client():

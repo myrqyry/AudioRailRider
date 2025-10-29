@@ -21,6 +21,54 @@ async def root() -> Dict[str, str]:
     """Root endpoint to check if the backend is running."""
     return {"message": "AudioRailRider Backend is running!", "status": "healthy"}
 
+import tempfile
+import os
+from pathlib import Path
+import magic
+import librosa
+
+async def validate_audio_file(audio_file: UploadFile, max_size: int) -> bytes:
+    """Comprehensive audio file validation with security checks."""
+    # Validate content type
+    if not audio_file.content_type or audio_file.content_type.lower() not in settings.ALLOWED_MIME_TYPES:
+        supported_formats = ", ".join([mime.split('/')[-1].upper() for mime in settings.ALLOWED_MIME_TYPES])
+        raise HTTPException(status_code=400, detail=f"Unsupported file format...")
+
+    # Stream validation with size limits
+    audio_bytes = bytearray()
+    chunk_size = 8192
+    total_size = 0
+
+    while chunk := await audio_file.read(chunk_size):
+        total_size += len(chunk)
+        if total_size > max_size:
+            raise HTTPException(status_code=413, detail="File size exceeds limit during streaming")
+        audio_bytes.extend(chunk)
+
+    # Verify magic numbers match content type
+    detected_mime = magic.from_buffer(bytes(audio_bytes[:2048]), mime=True)
+    if detected_mime not in settings.ALLOWED_MIME_TYPES:
+        raise HTTPException(status_code=400, detail=f"File content mismatch. Expected audio, got: {detected_mime}")
+
+    # Additional audio-specific validation using librosa
+    try:
+        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+            temp_file.write(audio_bytes)
+            temp_path = temp_file.name
+
+        # Quick librosa validation to ensure it's actually processable audio
+        y, sr = librosa.load(temp_path, duration=1.0)  # Load only 1 second for validation
+        if len(y) == 0 or sr <= 0:
+            raise ValueError("Invalid audio data")
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid audio file: {str(e)}")
+    finally:
+        if 'temp_path' in locals():
+            os.unlink(temp_path)
+
+    return bytes(audio_bytes)
+
 @router.post("/api/generate-blueprint")
 @limiter.limit("5/minute")
 async def generate_blueprint(
@@ -45,25 +93,7 @@ async def generate_blueprint(
         HTTPException: If the file type is invalid, file size exceeds the limit,
                        or the options JSON is malformed.
     """
-    if not audio_file.content_type or audio_file.content_type.lower() not in settings.ALLOWED_MIME_TYPES:
-        supported_formats = ", ".join([mime.split('/')[-1].upper() for mime in settings.ALLOWED_MIME_TYPES])
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported file format '{audio_file.content_type}'. Please upload: {supported_formats}"
-        )
-
-    audio_bytes = await audio_file.read()
-    if len(audio_bytes) > settings.MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail="File size exceeds limit.")
-
-    # Validate actual file content using magic numbers
-    import magic
-    detected_mime = magic.from_buffer(audio_bytes, mime=True)
-    if detected_mime not in settings.ALLOWED_MIME_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"File content doesn't match declared type. Detected: {detected_mime}"
-        )
+    audio_bytes = await validate_audio_file(audio_file, settings.MAX_FILE_SIZE)
 
     # Parse options JSON if provided and pass through to the service
     parsed_options = None
