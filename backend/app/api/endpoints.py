@@ -51,21 +51,16 @@ async def validate_audio_file(audio_file: UploadFile, max_size: int) -> bytes:
         raise HTTPException(status_code=400, detail=f"File content mismatch. Expected audio, got: {detected_mime}")
 
     # Additional audio-specific validation using librosa
+    import io
     try:
-        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-            temp_file.write(audio_bytes)
-            temp_path = temp_file.name
-
         # Quick librosa validation to ensure it's actually processable audio
-        y, sr = librosa.load(temp_path, duration=1.0)  # Load only 1 second for validation
+        with io.BytesIO(audio_bytes) as audio_stream:
+            y, sr = librosa.load(audio_stream, duration=1.0)  # Load only 1 second for validation
         if len(y) == 0 or sr <= 0:
             raise ValueError("Invalid audio data")
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid audio file: {str(e)}")
-    finally:
-        if 'temp_path' in locals():
-            os.unlink(temp_path)
 
     return bytes(audio_bytes)
 
