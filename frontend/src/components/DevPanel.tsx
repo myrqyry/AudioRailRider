@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useToast } from '../lib/ToastProvider';
 import { isDevelopment, isDebugEnabled } from '../config/environment';
+import CurlControl from './dev/CurlControl';
+import TrackSettingsControl from './dev/TrackSettingsControl';
+import ShaderUniformsControl from './dev/ShaderUniformsControl';
+import PresetManager from './dev/PresetManager';
 
 const DEFAULTS = { curlStrength: 0.12, noiseScale: 2.0, noiseSpeed: 0.12 };
 const STORAGE_KEY = 'audiorailrider:dev:curlParams';
@@ -183,30 +187,6 @@ const DevPanel: React.FC = () => {
     setNoiseScale(DEFAULTS.noiseScale);
     setNoiseSpeed(DEFAULTS.noiseSpeed);
     try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
-  };
-
-  /**
-   * Fetches the shader uniforms manifest from the server and updates the component's state.
-   */
-  const loadUniforms = async () => {
-    try {
-      const resp = await fetch('/shaders/shader-uniforms.json');
-      if (!resp.ok) return;
-      const manifest = await resp.json();
-      console.log('Loaded shader manifest', manifest);
-      setUniformsManifest(manifest);
-      window.dispatchEvent(new CustomEvent('audiorailrider:dev:loadUniformsManifest', { detail: { manifest } }));
-    } catch (e) { console.error(e); }
-  };
-
-  /**
-   * Applies the default curl parameter values to the visualizer.
-   */
-  const applyCurlDefaults = () => {
-    // dispatch a few likely uniform updates so users can see immediate effect
-    window.dispatchEvent(new CustomEvent('audiorailrider:dev:applyUniform', { detail: { name: 'curlStrength', value: DEFAULTS.curlStrength } }));
-    window.dispatchEvent(new CustomEvent('audiorailrider:dev:applyUniform', { detail: { name: 'noiseScale', value: DEFAULTS.noiseScale } }));
-    window.dispatchEvent(new CustomEvent('audiorailrider:dev:applyUniform', { detail: { name: 'noiseSpeed', value: DEFAULTS.noiseSpeed } }));
   };
 
   /**
@@ -449,142 +429,56 @@ const DevPanel: React.FC = () => {
   return (
     <div className="fixed right-4 top-4 z-50 w-72 p-3 bg-gray-900/80 border border-gray-700 rounded-lg text-sm text-gray-200 backdrop-blur-md">
       <h3 className="font-semibold text-gray-100 mb-2">Dev Panel</h3>
-      <div className="mb-2">
-        <label className="block text-xs text-gray-300">Curl Strength: {curlStrength.toFixed(2)}</label>
-        <input type="range" min="0" max="1" step="0.01" value={curlStrength} onChange={(e) => setCurlStrength(Number(e.target.value))} className="w-full" />
-      </div>
-      <div className="mb-2">
-        <label className="block text-xs text-gray-300">Noise Scale: {noiseScale.toFixed(2)}</label>
-        <input type="range" min="0.1" max="8" step="0.1" value={noiseScale} onChange={(e) => setNoiseScale(Number(e.target.value))} className="w-full" />
-      </div>
-      <div className="mb-3">
-        <label className="block text-xs text-gray-300">Noise Speed: {noiseSpeed.toFixed(2)}</label>
-        <input type="range" min="0" max="1" step="0.01" value={noiseSpeed} onChange={(e) => setNoiseSpeed(Number(e.target.value))} className="w-full" />
-      </div>
-      <div className="flex gap-2">
-        <button onClick={reset} className="flex-1 px-3 py-1 bg-gray-800 border border-gray-600 rounded">Reset</button>
-        <button onClick={() => window.dispatchEvent(new CustomEvent('audiorailrider:dev:dump', { detail: { curlStrength, noiseScale, noiseSpeed } }))} className="px-3 py-1 bg-cyan-600 rounded">Log</button>
-      </div>
-      <div className="mt-3 flex gap-2">
-        <button onClick={loadUniforms} className="flex-1 px-3 py-1 bg-gray-800 border border-gray-600 rounded">Load Uniforms</button>
-        <button onClick={applyCurlDefaults} className="px-3 py-1 bg-emerald-600 rounded">Apply Curl Defaults</button>
-      </div>
-      <div className="mt-4">
-        <h4 className="font-medium text-gray-100 mb-1">Track Settings</h4>
-        <div className="mb-2 text-xs text-gray-300">
-          <label className="inline-flex items-center gap-2">
-            <input type="checkbox" checked={placeUnderCamera} onChange={(e) => setPlaceUnderCamera(e.target.checked)} />
-            Place track under camera
-          </label>
-        </div>
-        <div className="mb-2">
-          <label className="block text-xs text-gray-300">Vertical Offset: {verticalOffset.toFixed(2)}</label>
-          <input type="range" min="0" max="3" step="0.01" value={verticalOffset} onChange={(e) => setVerticalOffset(Number(e.target.value))} className="w-full" />
-        </div>
-        <div className="mb-2">
-          <label className="block text-xs text-gray-300">Track Radius: {trackRadius.toFixed(2)}</label>
-          <input type="range" min="0.05" max="2" step="0.01" value={trackRadius} onChange={(e) => setTrackRadius(Number(e.target.value))} className="w-full" />
-        </div>
-        <div className="mb-2">
-          <label className="block text-xs text-gray-300">Default Opacity: {trackDefaultOpacity.toFixed(2)}</label>
-          <input type="range" min="0" max="1" step="0.01" value={trackDefaultOpacity} onChange={(e) => setTrackDefaultOpacity(Number(e.target.value))} className="w-full" />
-        </div>
-        <div className="mb-2">
-          <label className="block text-xs text-gray-300">Inside Opacity: {trackInsideOpacity.toFixed(2)}</label>
-          <input type="range" min="0" max="1" step="0.01" value={trackInsideOpacity} onChange={(e) => setTrackInsideOpacity(Number(e.target.value))} className="w-full" />
-        </div>
-        <div className="mb-3">
-          <label className="block text-xs text-gray-300">Opacity Lerp Speed: {trackOpacityLerpSpeed.toFixed(2)}</label>
-          <input type="range" min="0.1" max="12" step="0.1" value={trackOpacityLerpSpeed} onChange={(e) => setTrackOpacityLerpSpeed(Number(e.target.value))} className="w-full" />
-        </div>
-        <div className="flex gap-2 mb-3">
-          <button onClick={() => setForceInside((s) => !s)} className="px-3 py-1 bg-orange-600 rounded">{forceInside ? 'Release Inside' : 'Force Inside'}</button>
-          <button onClick={() => window.dispatchEvent(new CustomEvent('audiorailrider:dev:rebuildTrack'))} className="px-3 py-1 bg-blue-600 rounded">Rebuild Track</button>
-        </div>
-        <div className="mb-3 text-xs text-gray-300">
-          <label className="inline-flex items-center gap-2">
-            <input type="checkbox" checked={outlineMode} onChange={(e) => setOutlineMode(e.target.checked)} />
-            Outline Mode (minimal wireframe + glow)
-          </label>
-        </div>
-        <div className="mb-2">
-          <label className="block text-xs text-gray-300">Outline Opacity: {outlineOpacity.toFixed(2)}</label>
-          <input type="range" min="0" max="1" step="0.01" value={outlineOpacity} onChange={(e) => setOutlineOpacity(Number(e.target.value))} className="w-full" />
-        </div>
-        <div className="mb-3">
-          <label className="block text-xs text-gray-300">Glow Opacity: {glowOpacity.toFixed(2)}</label>
-          <input type="range" min="0" max="1" step="0.01" value={glowOpacity} onChange={(e) => setGlowOpacity(Number(e.target.value))} className="w-full" />
-        </div>
-      </div>
-      {uniformsManifest ? (
-        <div className="mt-3">
-          <h4 className="font-medium text-gray-100 mb-1">Shader Uniforms</h4>
-          <div className="space-y-2 max-h-48 overflow-auto pr-2">
-            {Object.entries(uniformsManifest).map(([shader, uniforms]) => (
-              <div key={shader} className="mb-2">
-                <div className="text-xs text-gray-400">{shader}</div>
-                {uniforms.map((u: any) => (
-                  <div key={u.name} className="mt-1">
-                    <label className="block text-xs text-gray-300">{u.name}</label>
-                    {u.control === 'range' && (
-                      <input data-uniform={`$${u.name}`} type="range" min={u.min ?? 0} max={u.max ?? 1} step={u.step ?? 0.01} value={uniformValues[u.name] ?? (u.min ?? 0)} onChange={(e) => applyUniform(u.name, Number(e.target.value))} className="w-full" />
-                    )}
-                    {u.control === 'number' && (
-                      <input data-uniform={`$${u.name}`} type="number" min={u.min ?? 0} max={u.max ?? 16} step={u.step ?? 1} value={uniformValues[u.name] ?? (u.min ?? 0)} onChange={(e) => applyUniform(u.name, Number(e.target.value))} className="w-full" />
-                    )}
-                    {u.control === 'checkbox' && (
-                      <input data-uniform={`$${u.name}`} type="checkbox" checked={!!uniformValues[u.name]} onChange={(e) => applyUniform(u.name, e.target.checked)} />
-                    )}
-                    {u.control === 'color' && (
-                      <input data-uniform={`$${u.name}`} type="color" value={uniformValues[u.name] ?? '#000000'} onChange={(e) => applyUniform(u.name, e.target.value)} />
-                    )}
-                    {u.control === 'select' && u.options && (
-                      <select data-uniform={`$${u.name}`} value={uniformValues[u.name] ?? u.options[0]} onChange={(e) => applyUniform(u.name, e.target.value)} className="w-full">
-                        {u.options.map((opt: string) => <option key={opt} value={opt}>{opt}</option>)}
-                      </select>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>
-          <div className="mt-2 flex gap-2">
-            <input id="presetName" placeholder="Preset name" className="flex-1 px-2 py-1 bg-gray-800 border border-gray-700 rounded text-sm" />
-            <button onClick={() => { const el = document.getElementById('presetName') as HTMLInputElement | null; if (el && el.value) savePreset(el.value); }} className="px-3 py-1 bg-blue-600 rounded">Save</button>
-          </div>
-          <div className="mt-2 flex gap-2">
-            <button onClick={() => {
-              const sel = presets[presets.length - 1];
-              if (sel) exportPreset(sel.data);
-            }} className="px-2 py-1 bg-gray-800 rounded">Export Last</button>
-            <button onClick={() => {
-              if (presets.length === 0) { addToast('No presets to share', 'info'); return; }
-              const sel = presets[presets.length - 1];
-              sharePresetUrl(sel.data);
-            }} className="px-2 py-1 bg-cyan-600 rounded">Share URL</button>
-            <label className="px-2 py-1 bg-emerald-600 rounded cursor-pointer">
-              Import
-              <input id="presetFile" type="file" accept="application/json" className="hidden" onChange={(e) => importPresetFromFile(e.target.files ? e.target.files[0] : null)} />
-            </label>
-          </div>
-          {presets.length > 0 && (
-            <div className="mt-2">
-              <div className="text-xs text-gray-400 mb-1">Presets</div>
-              <div className="space-y-1">
-                {presets.map((p, idx) => (
-                  <div key={idx} className="flex gap-2 items-center">
-                    <div className="text-sm flex-1">{p.name}</div>
-                    <button onClick={() => loadPreset(p.data)} className="px-2 py-1 bg-gray-800 rounded">Load</button>
-                    <button onClick={() => exportPreset(p.data)} className="px-2 py-1 bg-blue-600 rounded">Export</button>
-                    <button onClick={() => sharePresetUrl(p.data)} className="px-2 py-1 bg-cyan-600 rounded">Share</button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        {/* Toasts rendered by ToastProvider at app root */}
-        </div>
-      ) : null}
+      <CurlControl
+        curlStrength={curlStrength}
+        noiseScale={noiseScale}
+        noiseSpeed={noiseSpeed}
+        onCurlStrengthChange={setCurlStrength}
+        onNoiseScaleChange={setNoiseScale}
+        onNoiseSpeedChange={setNoiseSpeed}
+        onReset={reset}
+        onLog={() => window.dispatchEvent(new CustomEvent('audiorailrider:dev:dump', { detail: { curlStrength, noiseScale, noiseSpeed } }))}
+      />
+      <TrackSettingsControl
+        placeUnderCamera={placeUnderCamera}
+        verticalOffset={verticalOffset}
+        trackRadius={trackRadius}
+        trackDefaultOpacity={trackDefaultOpacity}
+        trackInsideOpacity={trackInsideOpacity}
+        trackOpacityLerpSpeed={trackOpacityLerpSpeed}
+        outlineMode={outlineMode}
+        outlineOpacity={outlineOpacity}
+        glowOpacity={glowOpacity}
+        forceInside={forceInside}
+        onPlaceUnderCameraChange={setPlaceUnderCamera}
+        onVerticalOffsetChange={setVerticalOffset}
+        onTrackRadiusChange={setTrackRadius}
+        onTrackDefaultOpacityChange={setTrackDefaultOpacity}
+        onTrackInsideOpacityChange={setTrackInsideOpacity}
+        onTrackOpacityLerpSpeedChange={setTrackOpacityLerpSpeed}
+        onOutlineModeChange={setOutlineMode}
+        onOutlineOpacityChange={setOutlineOpacity}
+        onGlowOpacityChange={setGlowOpacity}
+        onForceInsideToggle={() => setForceInside((s) => !s)}
+        onRebuildTrack={() => window.dispatchEvent(new CustomEvent('audiorailrider:dev:rebuildTrack'))}
+      />
+      {uniformsManifest && (
+        <>
+          <ShaderUniformsControl
+            uniformsManifest={uniformsManifest}
+            uniformValues={uniformValues}
+            onUniformChange={applyUniform}
+          />
+          <PresetManager
+            presets={presets}
+            onSavePreset={savePreset}
+            onExportPreset={exportPreset}
+            onSharePreset={sharePresetUrl}
+            onImportPreset={importPresetFromFile}
+            onLoadPreset={loadPreset}
+          />
+        </>
+      )}
     </div>
   );
 };

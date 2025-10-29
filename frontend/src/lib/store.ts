@@ -114,16 +114,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     setSkyboxUrl: (url: string | null) => set({ skyboxUrl: url }),
         startRide: () => {
             const currentState = get();
-            console.log('[Store] startRide called', { 
-                status: currentState.status, 
-                hasTrackData: !!currentState.trackData, 
-                hasAudioFile: !!currentState.audioFile 
-            });
             if (currentState.status === AppStatus.Ready && currentState.trackData && currentState.audioFile) {
-                console.log('[Store] Transitioning to Riding state');
                 set({ status: AppStatus.Riding });
-            } else {
-                console.warn('[Store] Cannot start ride - conditions not met');
             }
         },
         resetApp: () => {
@@ -137,6 +129,8 @@ export const useAppStore = create<AppState>((set, get) => ({
                 trackData: null,
                 workflowProgress: 0,
                 skyboxUrl: null,
+                generationOptions: null,
+                breathingIntensity: 1.0,
             });
         },
         handleRideFinish: () => {

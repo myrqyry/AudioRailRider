@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     # Allowed MIME types for audio uploads
     ALLOWED_MIME_TYPES: list[str] = Field(default=["audio/mpeg", "audio/wav", "audio/x-wav", "audio/ogg", "audio/flac"])
 
+    # Request timeout for middleware
+    REQUEST_TIMEOUT: int = Field(default=120, gt=0, description="Request timeout in seconds")
+
     # --- Audio Analysis Settings ---
     ANALYSIS_MAX_SECONDS: int = Field(default=120, gt=0, description="Maximum audio duration to analyze in seconds")
     ANALYSIS_N_FFT: int = Field(default=1024, gt=0, description="FFT window size for audio analysis")
