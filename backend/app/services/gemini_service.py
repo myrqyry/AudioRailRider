@@ -244,10 +244,9 @@ class GeminiService:
         )
 
         if blueprint_cache_key in self._cache:
-            # Return cached blueprint but with fresh features
-            cached_result = self._cache[blueprint_cache_key]
-            cached_result['features'] = features
-            return cached_result
+            # Return cached blueprint. The features will be consistent
+            # because the cache key is derived from them.
+            return self._cache[blueprint_cache_key]
         synesthetic_keys = {}
         if options:
             # Extract advanced options if present
