@@ -4,7 +4,7 @@ import { useAppInitialization } from './hooks/useAppInitialization';
 import AppUIRenderer from './components/AppUIRenderer';
 import DevPanel from './components/DevPanel';
 
-const App: React.FC = React.memo(() => {
+const App: React.FC = React.memo(function App() {
     useAppInitialization();
     const appState = useValidatedAppState();
 
