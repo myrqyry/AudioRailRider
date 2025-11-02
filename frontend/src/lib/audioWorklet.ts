@@ -14,6 +14,8 @@ export interface WorkletAnalysisResult {
   bass: number;
   mid: number;
   high: number;
+  isBeat?: boolean;
+  bpm?: number;
   frame?: Float32Array;
   sampleRate?: number;
   channelCount?: number;
@@ -43,6 +45,10 @@ const getInlineProcessorSourceString = (): string => {
       super();
       this._prevMagnitudes = null;
       this.port.onmessage = (ev) => {};
+      // Beat detection state
+      this._lastBeatTime = 0;
+      this._beatHistory = [];
+      this._bpm = 0;
     }
 
     _fft(re, im) {
@@ -93,6 +99,32 @@ const getInlineProcessorSourceString = (): string => {
         let bass = 0, mid = 0, high = 0; for (let k = 0; k < mags.length; k++) { if (k < bassRange) bass += mags[k]; else if (k < midRange) mid += mags[k]; else high += mags[k]; }
         const total = bass + mid + high || 1; bass /= total; mid /= total; high /= total;
         this._prevMagnitudes = mags;
+
+        // Beat detection
+        const beatThreshold = 0.15 + bass * 0.1;
+        let isBeat = false;
+        if (bass > beatThreshold && (currentTime - this._lastBeatTime) > 0.3) {
+          isBeat = true;
+          this._lastBeatTime = currentTime;
+
+          // BPM calculation
+          if (this._beatHistory.length >= 20) {
+            this._beatHistory.shift();
+          }
+          this._beatHistory.push(currentTime);
+          if (this._beatHistory.length > 1) {
+            const intervals = [];
+            for (let i = 1; i < this._beatHistory.length; i++) {
+              intervals.push(this._beatHistory[i] - this._beatHistory[i-1]);
+            }
+            const averageInterval = intervals.reduce((a, b) => a + b) / intervals.length;
+            const calculatedBpm = 60 / averageInterval;
+            if (calculatedBpm > 60 && calculatedBpm < 200) {
+              this._bpm = calculatedBpm;
+            }
+          }
+        }
+
         const frameCopy = frame.slice();
         this.port.postMessage(
           {
@@ -104,6 +136,8 @@ const getInlineProcessorSourceString = (): string => {
             bass: bass,
             mid: mid,
             high: high,
+            isBeat: isBeat,
+            bpm: this._bpm,
             frame: frameCopy,
             sampleRate: sampleRate,
             channelCount: input.length,

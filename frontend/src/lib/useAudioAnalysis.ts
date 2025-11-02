@@ -90,38 +90,17 @@ export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) =
       const timestamp = secondsToNumber(frame.timestamp);
       const energy = Math.max(0, Math.min(1, frame.energy));
 
-      pushWithLimit(energyHistory, energy);
-      pushWithLimit(centroidHistory, frame.spectralCentroid);
-      pushWithLimit(fluxHistory, frame.spectralFlux);
-
-      const energyMean = energyHistory.reduce((acc, val) => acc + val, 0) / energyHistory.length;
-      const energyVariance = energyHistory.reduce((acc, val) => {
-        const diff = val - energyMean;
-        return acc + diff * diff;
-      }, 0) / Math.max(1, energyHistory.length - 1);
-      const energyStd = Math.sqrt(Math.max(energyVariance, 0));
-      const beatThreshold = energyMean + energyStd * 0.75;
-
-      if (energy > beatThreshold && (timestamp - lastBeatTimestamp) >= MIN_BEAT_SPACING) {
+      if (frame.isBeat) {
         try {
           window.dispatchEvent(new CustomEvent('audiorailrider:beat', { detail: { timestamp, energy } }));
         } catch {}
+      }
 
-        if (lastBeatTimestamp > -Infinity) {
-          const interval = timestamp - lastBeatTimestamp;
-          if (interval > 0.1 && interval < 3) {
-            pushWithLimit(beatIntervals, interval);
-            const avgInterval = beatIntervals.reduce((acc, val) => acc + val, 0) / beatIntervals.length;
-            if (avgInterval > 0) {
-              const newTempo = 60 / avgInterval;
-              smoothedTempo = smoothedTempo > 0 ? smoothedTempo * 0.6 + newTempo * 0.4 : newTempo;
-              try {
-                window.dispatchEvent(new CustomEvent('audiorailrider:tempo', { detail: { tempo: smoothedTempo } }));
-              } catch {}
-            }
-          }
-        }
-        lastBeatTimestamp = timestamp;
+      if (frame.bpm && frame.bpm !== smoothedTempo) {
+        smoothedTempo = frame.bpm;
+        try {
+          window.dispatchEvent(new CustomEvent('audiorailrider:tempo', { detail: { tempo: smoothedTempo } }));
+        } catch {}
       }
 
       if (fluxHistory.length >= 4 && centroidHistory.length >= 4) {

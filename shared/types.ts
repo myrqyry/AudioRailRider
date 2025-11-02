@@ -32,6 +32,8 @@ export interface FrameAnalysis {
   bass: number;
   mid: number;
   high: number;
+  isBeat?: boolean;
+  bpm?: number;
   // REASON: Made critical audio properties required to prevent runtime errors
   sampleRate: number;
   channelCount: number;
