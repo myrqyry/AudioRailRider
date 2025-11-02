@@ -1,88 +1,20 @@
-import React, { useEffect, Suspense } from 'react';
-import { AppStatus } from '../../shared/types';
-import { useAppStore } from './lib/store';
-import { useAudioProcessor } from './hooks/useAudioProcessor';
-import { startPreload } from './lib/preloader';
-import { LoadingProgress } from './components/LoadingProgress';
-import { ErrorBoundary } from './components/ErrorBoundary';
-const ThreeCanvas = React.lazy(() => import('./components/ThreeCanvas'));
-import ReglOverlay from './components/ReglOverlay';
+import React from 'react';
+import { useValidatedAppState } from './hooks/useValidatedAppState';
+import { useAppInitialization } from './hooks/useAppInitialization';
+import AppUIRenderer from './components/AppUIRenderer';
 import DevPanel from './components/DevPanel';
-import RendererWarning from './components/RendererWarning';
-import IdleUI from './components/views/IdleUI';
-import ReadyUI from './components/views/ReadyUI';
-import FinishedUI from './components/views/FinishedUI';
-import ErrorUI from './components/views/ErrorUI';
-import BreathingIntensitySlider from './components/BreathingIntensitySlider';
 
-/**
- * The main application component.
- * It orchestrates the overall UI and state transitions based on the application status.
- * It renders the appropriate UI view (Idle, Ready, Finished, Error) or the 3D canvas
- * for the ride visualization.
- * @returns {React.ReactElement} The rendered App component.
- */
-const App: React.FC = () => {
-    const status = useAppStore((state) => state.status);
-    const statusMessage = useAppStore((state) => state.statusMessage);
-    const trackData = useAppStore((state) => state.trackData);
-    const audioFeatures = useAppStore((state) => state.trackData?.audioFeatures);
-    // REASON: Fixed direct store access to use proper React hooks for reactivity
-    const generationProgress = useAppStore((state) => state.generationProgress);
-
-    // Start preloading resources as soon as the app mounts
-    useEffect(() => {
-        startPreload();
-    }, []);
-
-    // This custom hook manages the audio processing workflow.
-    useAudioProcessor();
-
-    // REASON: Added proper TypeScript constraint for safer status mapping
-    const SAFE_STATUS_COMPONENTS = {
-        [AppStatus.Idle]: IdleUI,
-        [AppStatus.Ready]: ReadyUI,
-        [AppStatus.Finished]: FinishedUI,
-        [AppStatus.Error]: ErrorUI,
-    } as const;
-
-    // Validate status and provide safe fallback
-    const getSafeComponent = (status: AppStatus): React.ComponentType => {
-        if (status in SAFE_STATUS_COMPONENTS) {
-            return SAFE_STATUS_COMPONENTS[status as keyof typeof SAFE_STATUS_COMPONENTS];
-        }
-        return ErrorUI;
-    };
-
-    const ContentComponent = getSafeComponent(status);
+const App: React.FC = React.memo(() => {
+    useAppInitialization();
+    const appState = useValidatedAppState();
 
     return (
         <main className="relative w-full h-screen bg-black overflow-hidden flex items-center justify-center">
             <div className="absolute inset-0 z-0 bg-[url('/stardust.png')] opacity-20"></div>
-
-            {status === AppStatus.Analyzing && <LoadingProgress stage="analyzing" />}
-            {status === AppStatus.Generating && <LoadingProgress stage="generating" progress={generationProgress} />}
-
-            {/* Only show UI overlay when not riding */}
-            {ContentComponent && (
-                <div className="relative z-20 p-4">
-                    <RendererWarning />
-                    <ContentComponent />
-                </div>
-            )}
-
-            {(status === AppStatus.Riding || status === AppStatus.Ready) && trackData && (
-                <ErrorBoundary>
-                    <Suspense fallback={<LoadingProgress stage="loading" />}>
-                        <ThreeCanvas />
-                    </Suspense>
-                    {/* Only show waveform overlay when Ready, hide during Riding */}
-                    {status === AppStatus.Ready && <ReglOverlay audioFeatures={audioFeatures || null} />}
-                </ErrorBoundary>
-            )}
+            <AppUIRenderer {...appState} />
             <DevPanel />
         </main>
     );
-};
+});
 
 export default App;
