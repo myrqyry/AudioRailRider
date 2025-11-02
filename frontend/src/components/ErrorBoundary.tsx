@@ -6,7 +6,7 @@ import DefaultErrorFallback from './views/DefaultErrorFallback';
  */
 interface Props {
   children: ReactNode;
-  fallback?: React.ComponentType<any>;
+  fallback?: React.ComponentType<{ error?: Error | null; onRetry?: () => void; canRetry?: boolean }>;
 }
 
 /**
