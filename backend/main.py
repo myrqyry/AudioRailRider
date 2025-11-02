@@ -44,10 +44,51 @@ app.add_exception_handler(Exception, generic_exception_handler)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+import re
+from urllib.parse import urlparse
+from typing import List
+
 # --- CORS Configuration ---
-# REASON: Made CORS origins configurable via environment variables for security
-allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
-origins = [origin.strip() for origin in allowed_origins]
+def validate_cors_origins() -> List[str]:
+    """Validate and sanitize CORS origins from environment variables."""
+    allowed_origins_str = os.getenv(
+        "ALLOWED_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173"
+    )
+
+    origins = []
+    for origin in allowed_origins_str.split(","):
+        origin = origin.strip()
+        if not origin:
+            continue
+
+        # Validate URL format
+        try:
+            parsed = urlparse(origin)
+            if not parsed.scheme or not parsed.netloc:
+                logger.warning(f"Invalid CORS origin format: {origin}")
+                continue
+
+            # Only allow http/https
+            if parsed.scheme not in ['http', 'https']:
+                logger.warning(f"Invalid CORS origin scheme: {origin}")
+                continue
+
+            # Reconstruct clean URL
+            clean_origin = f"{parsed.scheme}://{parsed.netloc}"
+            origins.append(clean_origin)
+
+        except Exception as e:
+            logger.error(f"Error parsing CORS origin {origin}: {e}")
+            continue
+
+    if not origins:
+        raise ValueError("No valid CORS origins configured")
+
+    return origins
+
+# Use in main.py
+origins = validate_cors_origins()
 
 app.add_middleware(
     CORSMiddleware,
