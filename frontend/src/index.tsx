@@ -53,12 +53,12 @@ if (!rootElement) {
 // Dynamically import App and ToastProvider after we've set up environment shims so
 // modules that read env at import-time will observe the injected values.
 const root = ReactDOM.createRoot(rootElement);
-Promise.all([import('./App'), import('./lib/ToastProvider')])
-  .then(([{ default: App }, { default: ToastProvider }]) => {
+Promise.all([import('./components/SafeAppWrapper'), import('./lib/ToastProvider')])
+  .then(([{ default: SafeAppWrapper }, { default: ToastProvider }]) => {
     root.render(
       <React.StrictMode>
         <ToastProvider>
-          <App />
+          <SafeAppWrapper />
         </ToastProvider>
       </React.StrictMode>
     );
