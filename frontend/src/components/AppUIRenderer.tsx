@@ -36,26 +36,45 @@ const AppUIRenderer: React.FC<AppUIRendererProps> = React.memo(({ status, trackD
         return ErrorUI;
     };
 
-    const ContentComponent = useMemo(() => getSafeComponent(status), [status]);
+    const ContentComponent = useMemo(() => getSafeComponent(status), [status, audioContext]);
 
     const shouldShowCanvas = useMemo(
         () => (status === AppStatus.Riding || status === AppStatus.Ready) && trackData,
         [status, trackData]
     );
 
+    // Debug component for development
+    const DebugInfo = () => (
+        process.env.NODE_ENV === 'development' ? (
+            <div className="fixed top-4 left-4 bg-gray-800 text-white p-2 rounded text-sm z-50">
+                <div>Status: {status}</div>
+                <div>TrackData: {trackData ? '✓' : '✗'}</div>
+                <div>AudioFeatures: {audioFeatures ? '✓' : '✗'}</div>
+                <div>AudioContext: {audioContext ? audioContext.state : '✗'}</div>
+            </div>
+        ) : null
+    );
+
     return (
         <>
+            <DebugInfo />
             {status === AppStatus.Analyzing && <LoadingProgress stage="analyzing" />}
             {status === AppStatus.Generating && (
                 <LoadingProgress stage="generating" progress={generationProgress} />
             )}
 
-            {ContentComponent && (
-                <div className="relative z-20 p-4">
-                    <RendererWarning />
+            <div className="relative z-20 p-4">
+                <RendererWarning />
+                {ContentComponent ? (
                     <ContentComponent />
-                </div>
-            )}
+                ) : (
+                    <div className="text-white text-center">
+                        <h2 className="text-xl mb-4">Unknown State</h2>
+                        <p>App status: {status}</p>
+                        <p>Something went wrong. Please refresh the page.</p>
+                    </div>
+                )}
+            </div>
 
             {shouldShowCanvas && (
                 <EnhancedErrorBoundary fallback={ThreeCanvasErrorFallback}>
