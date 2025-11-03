@@ -26,6 +26,10 @@ export class VoxelTerrainRenderer {
                 uInverseProjectionMatrix: { value: new THREE.Matrix4() },
                 uInverseViewMatrix: { value: new THREE.Matrix4() },
                 uFar: { value: 0.0 },
+                uMapSize: { value: 256.0 },
+                uVerticalScale: { value: 500.0 },
+                uHorizonOffset: { value: 150.0 },
+                uLodFactor: { value: 0.02 },
             },
             vertexShader,
             fragmentShader,
@@ -38,6 +42,7 @@ export class VoxelTerrainRenderer {
     public setMaps(heightMap: THREE.DataTexture, colorMap: THREE.DataTexture) {
         this.material.uniforms.uHeightMap.value = heightMap;
         this.material.uniforms.uColorMap.value = colorMap;
+        this.material.uniforms.uMapSize.value = heightMap.image.width;
     }
 
     public update(deltaTime: number) {

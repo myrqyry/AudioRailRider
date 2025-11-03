@@ -8,6 +8,62 @@ export enum TerrainTheme {
     MountainPeaks,
 }
 
+interface TerrainThemeParams {
+    baseFreqX: number;
+    baseFreqY: number;
+    baseAmplitude: number;
+    highFreqMultiplier: number;
+    bassFreqMultiplier: number;
+    colorHue: number | 'energy';
+    colorSaturation: number;
+    colorLightnessFactor: number;
+    timeMultiplier?: number;
+}
+
+const themes: Record<TerrainTheme, TerrainThemeParams> = {
+    [TerrainTheme.ComancheDesert]: {
+        baseFreqX: 0.05,
+        baseFreqY: 0.05,
+        baseAmplitude: 100,
+        highFreqMultiplier: 60,
+        bassFreqMultiplier: -40,
+        colorHue: 0.1,
+        colorSaturation: 0.5,
+        colorLightnessFactor: 512,
+    },
+    [TerrainTheme.CyberpunkCanyon]: {
+        baseFreqX: 0.1,
+        baseFreqY: 0.1,
+        baseAmplitude: 50,
+        highFreqMultiplier: 120,
+        bassFreqMultiplier: -80,
+        colorHue: 'energy',
+        colorSaturation: 0.8,
+        colorLightnessFactor: 512,
+    },
+    [TerrainTheme.OceanWaves]: {
+        baseFreqX: 0.02,
+        baseFreqY: 0.02,
+        baseAmplitude: 50,
+        highFreqMultiplier: 0,
+        bassFreqMultiplier: 100,
+        colorHue: 0.6,
+        colorSaturation: 0.9,
+        colorLightnessFactor: 512,
+        timeMultiplier: 5,
+    },
+    [TerrainTheme.MountainPeaks]: {
+        baseFreqX: 0.01,
+        baseFreqY: 0.01,
+        baseAmplitude: 150,
+        highFreqMultiplier: 200,
+        bassFreqMultiplier: -20,
+        colorHue: 0.7,
+        colorSaturation: 0.3,
+        colorLightnessFactor: 512,
+    },
+};
+
 export class HeightMapGenerator {
     private heightMap: THREE.DataTexture;
     private colorMap: THREE.DataTexture;
@@ -39,46 +95,19 @@ export class HeightMapGenerator {
         const high = audioFeatures.high ?? 0;
         const energy = frame.energy;
 
-        const time = Date.now() * 0.0001;
+        const themeParams = themes[this.theme];
+        const time = Date.now() * 0.0001 * (themeParams.timeMultiplier || 1);
 
         for (let y = 0; y < this.size; y++) {
             for (let x = 0; x < this.size; x++) {
                 const offset = (y * this.size + x) * 4;
 
-                let finalHeight = 0;
+                const baseHeight = (Math.sin(x * themeParams.baseFreqX + time + bass) + Math.cos(y * themeParams.baseFreqY + time + bass)) * 0.5 + 0.5;
+                const terrainVariation = (high * themeParams.highFreqMultiplier + bass * themeParams.bassFreqMultiplier);
+                const finalHeight = THREE.MathUtils.clamp(baseHeight * themeParams.baseAmplitude + terrainVariation, 0, 255);
 
-                switch (this.theme) {
-                    case TerrainTheme.ComancheDesert:
-                        const baseHeightDesert = (Math.sin(x * 0.05 + time) + Math.cos(y * 0.05 + time)) * 0.5 + 0.5;
-                        const terrainVariationDesert = (high * 60 - bass * 40);
-                        finalHeight = THREE.MathUtils.clamp(baseHeightDesert * 100 + terrainVariationDesert, 0, 255);
-
-                        this.workingColor.setHSL(0.1, 0.5, finalHeight / 512);
-                        break;
-
-                    case TerrainTheme.CyberpunkCanyon:
-                        const baseHeightCyberpunk = (Math.sin(x * 0.1 + time) + Math.cos(y * 0.1 + time)) * 0.5 + 0.5;
-                        const terrainVariationCyberpunk = (high * 120 - bass * 80);
-                        finalHeight = THREE.MathUtils.clamp(baseHeightCyberpunk * 50 + terrainVariationCyberpunk, 0, 255);
-
-                        this.workingColor.setHSL(energy, 0.8, finalHeight / 512);
-                        break;
-
-                    case TerrainTheme.OceanWaves:
-                        const baseHeightOcean = (Math.sin(x * 0.02 + time * 5 + bass) + Math.cos(y * 0.02 + time * 5 + bass)) * 0.5 + 0.5;
-                        finalHeight = THREE.MathUtils.clamp(baseHeightOcean * 50 + bass * 100, 0, 255);
-
-                        this.workingColor.setHSL(0.6, 0.9, finalHeight / 512);
-                        break;
-
-                    case TerrainTheme.MountainPeaks:
-                        const baseHeightMountain = (Math.sin(x * 0.01 + time) + Math.cos(y * 0.01 + time)) * 0.5 + 0.5;
-                        const terrainVariationMountain = (high * 200 - bass * 20);
-                        finalHeight = THREE.MathUtils.clamp(baseHeightMountain * 150 + terrainVariationMountain, 0, 255);
-
-                        this.workingColor.setHSL(0.7, 0.3, finalHeight / 512);
-                        break;
-                }
+                const hue = themeParams.colorHue === 'energy' ? energy : themeParams.colorHue;
+                this.workingColor.setHSL(hue, themeParams.colorSaturation, finalHeight / themeParams.colorLightnessFactor);
 
                 heightData[offset] = finalHeight;
                 heightData[offset + 1] = finalHeight;

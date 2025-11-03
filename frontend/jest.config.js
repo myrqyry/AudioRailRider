@@ -10,5 +10,5 @@ export default {
         '^shared/(.*)$': '<rootDir>/../shared/$1',
     },
     setupFilesAfterEnv: ['@testing-library/jest-dom', 'jest-canvas-mock'],
-    testPathIgnorePatterns: ['<rootDir>/tests/playwright'],
+    modulePathIgnorePatterns: ['<rootDir>/tests/playwright'],
 };
