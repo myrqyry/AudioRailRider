@@ -1,6 +1,6 @@
 import { useRef, useEffect } from 'react';
 import { AppStatus, FrameAnalysis, secondsToNumber } from 'shared/types';
-import { LiveAudioProcessor } from './audioProcessor';
+import { LiveAudioProcessor, createWorkletAnalyzerForContext } from './audioProcessor';
 import { getLatestFrame } from './audioWorkletState';
 import { createFrameForDispatch } from './audioFeatureUtils';
 
@@ -8,10 +8,14 @@ import { createFrameForDispatch } from './audioFeatureUtils';
  * Props for the `useAudioAnalysis` hook.
  */
 interface UseAudioAnalysisProps {
-  /** The audio file to be analyzed and played. */
-  audioFile: File | null;
   /** The current status of the application, which controls the hook's behavior. */
   status: string;
+  /** The audio file to be analyzed and played. */
+  audioFile?: File | null;
+  /** A direct audio source node (e.g., from a microphone). */
+  audioSource?: AudioNode | null;
+  /** The AudioContext to use. Required if audioSource is provided. */
+  audioContext?: AudioContext | null;
 }
 
 /**
@@ -22,13 +26,13 @@ interface UseAudioAnalysisProps {
  * @param {UseAudioAnalysisProps} props - The properties for the hook.
  * @returns {{ audioRef: React.RefObject<HTMLAudioElement | null> }} An object containing a ref to the `HTMLAudioElement`.
  */
-export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) => {
+export const useAudioAnalysis = ({ status, audioFile, audioSource, audioContext }: UseAudioAnalysisProps) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const animationFrameId = useRef<number | null>(null);
   const liveProcessorRef = useRef<LiveAudioProcessor | null>(null);
 
   useEffect(() => {
-    console.log('[useAudioAnalysis] Effect triggered', { status, hasAudioFile: !!audioFile });
+    console.log('[useAudioAnalysis] Effect triggered', { status, hasAudioFile: !!audioFile, hasAudioSource: !!audioSource });
 
     const dispose = () => {
       if (animationFrameId.current) {
@@ -50,22 +54,31 @@ export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) =
       }
     };
 
-    if (status !== AppStatus.Riding || !audioFile) {
+    if (status !== AppStatus.Riding || (!audioFile && !audioSource)) {
       dispose();
       return;
     }
 
-    console.log('[useAudioAnalysis] Setting up audio for riding');
-    const audio = new Audio(URL.createObjectURL(audioFile));
-    audio.loop = false;
-    audio.preload = 'auto';
+    if (audioSource && !audioContext) {
+      console.error('[useAudioAnalysis] audioSource provided without audioContext. This is not supported.');
+      dispose();
+      return;
+    }
 
-    audio.addEventListener('loadeddata', () => console.log('[useAudioAnalysis] Audio loaded', { duration: audio.duration }));
-    audio.addEventListener('playing', () => console.log('[useAudioAnalysis] Audio is playing'));
-    audio.addEventListener('pause', () => console.log('[useAudioAnalysis] Audio paused'));
-    audio.addEventListener('error', (e) => console.error('[useAudioAnalysis] Audio error', e));
+    let audio: HTMLAudioElement | null = null;
+    if (audioFile) {
+      console.log('[useAudioAnalysis] Setting up audio for riding from file');
+      audio = new Audio(URL.createObjectURL(audioFile));
+      audio.loop = false;
+      audio.preload = 'auto';
 
-    audioRef.current = audio;
+      audio.addEventListener('loadeddata', () => console.log('[useAudioAnalysis] Audio loaded', { duration: audio?.duration }));
+      audio.addEventListener('playing', () => console.log('[useAudioAnalysis] Audio is playing'));
+      audio.addEventListener('pause', () => console.log('[useAudioAnalysis] Audio paused'));
+      audio.addEventListener('error', (e) => console.error('[useAudioAnalysis] Audio error', e));
+
+      audioRef.current = audio;
+    }
 
     const energyHistory: number[] = [];
     const centroidHistory: number[] = [];
@@ -137,9 +150,26 @@ export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) =
 
     const setupAudioProcessing = async () => {
       try {
-        const processor = new LiveAudioProcessor();
-        liveProcessorRef.current = processor;
-        await processor.initialize(audio);
+        let sourceNode: AudioNode | null = null;
+
+        if (audioSource && audioContext) {
+          sourceNode = audioSource;
+        } else if (audio) {
+          const processor = new LiveAudioProcessor();
+          liveProcessorRef.current = processor;
+          await processor.initialize(audio);
+          // In this case, the LiveAudioProcessor handles the connection internally.
+        }
+
+        if (sourceNode && audioContext) {
+            const workletNode = await createWorkletAnalyzerForContext(audioContext);
+            if (workletNode) {
+                sourceNode.connect(workletNode);
+                workletNode.connect(audioContext.destination);
+            } else {
+                sourceNode.connect(audioContext.destination);
+            }
+        }
 
         const processFrames = () => {
           const latestFrameData = getLatestFrame();
@@ -159,16 +189,18 @@ export const useAudioAnalysis = ({ audioFile, status }: UseAudioAnalysisProps) =
         console.warn('[useAudioAnalysis] Audio processing setup failed, playing audio directly.', e);
       }
 
-      console.log('[useAudioAnalysis] Starting audio playback');
-      audio.play()
-        .then(() => console.log('[useAudioAnalysis] Audio playing successfully'))
-        .catch(e => console.error("[useAudioAnalysis] Audio playback failed:", e));
+      if (audio) {
+        console.log('[useAudioAnalysis] Starting audio playback');
+        audio.play()
+          .then(() => console.log('[useAudioAnalysis] Audio playing successfully'))
+          .catch(e => console.error("[useAudioAnalysis] Audio playback failed:", e));
+      }
     };
 
     setupAudioProcessing();
 
     return dispose;
-  }, [audioFile, status]);
+  }, [status, audioFile, audioSource, audioContext]);
 
   return { audioRef };
 };
