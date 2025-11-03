@@ -18,17 +18,18 @@ interface AppUIRendererProps {
     trackData: TrackData | null;
     audioFeatures: AudioFeatures | null;
     generationProgress: number;
+    audioContext: AudioContext | null;
 }
 
-const AppUIRenderer: React.FC<AppUIRendererProps> = React.memo(({ status, trackData, audioFeatures, generationProgress }) => {
+const AppUIRenderer: React.FC<AppUIRendererProps> = React.memo(({ status, trackData, audioFeatures, generationProgress, audioContext }) => {
     const SAFE_STATUS_COMPONENTS = {
-        [AppStatus.Idle]: IdleUI,
+        [AppStatus.Idle]: () => <IdleUI audioContext={audioContext} />,
         [AppStatus.Ready]: ReadyUI,
         [AppStatus.Finished]: FinishedUI,
         [AppStatus.Error]: ErrorUI,
     } as const;
 
-    const getSafeComponent = (status: AppStatus): React.ComponentType => {
+    const getSafeComponent = (status: AppStatus): React.ComponentType | (() => JSX.Element) => {
         if (status in SAFE_STATUS_COMPONENTS) {
             return SAFE_STATUS_COMPONENTS[status as keyof typeof SAFE_STATUS_COMPONENTS];
         }

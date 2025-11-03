@@ -2,14 +2,18 @@ import React, { useRef, useCallback, useEffect } from 'react';
 import { useAppStore } from '../../lib/store';
 import { UploadIcon } from '../Icon';
 import GenerationOptionsForm from '../GenerationOptionsForm';
-import BreathingIntensitySlider from '../BreathingIntensitySlider';
+import MicrophoneControls from '../MicrophoneControls';
+
+interface IdleUIProps {
+  audioContext: AudioContext | null;
+}
 
 /**
  * The initial user interface component when the application is idle.
  * It provides a file input for uploading an audio file and displays the main title.
  * @returns {React.ReactElement} The rendered idle UI.
  */
-const IdleUI: React.FC = () => {
+const IdleUI: React.FC<IdleUIProps> = ({ audioContext }) => {
     const { setAudioFile, setError } = useAppStore((state) => state.actions);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -53,6 +57,15 @@ const IdleUI: React.FC = () => {
                 <span>Offer a ghost... (MP3, WAV)</span>
             </label>
             <input ref={fileInputRef} id="audio-upload" type="file" accept="audio/mp3, audio/wav, audio/mpeg" className="hidden" onChange={handleFileChange} />
+
+            <div className="my-6 flex items-center justify-center">
+                <div className="w-1/4 border-t border-gray-600"></div>
+                <p className="mx-4 text-gray-500">OR</p>
+                <div className="w-1/4 border-t border-gray-600"></div>
+            </div>
+
+            <MicrophoneControls audioContext={audioContext} />
+
             <p className="text-xs text-gray-600 mt-4">For the best experience, use a track with dynamic range.</p>
 
             <GenerationOptionsForm />

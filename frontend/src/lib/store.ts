@@ -25,6 +25,8 @@ interface AppState {
     statusMessage: string;
     /** The user-uploaded audio file. */
     audioFile: File | null;
+    /** A direct audio source node (e.g., from a microphone). */
+    audioSource: AudioNode | null;
     /** The generated blueprint for the ride. */
     blueprint: Blueprint | null;
     /** The extracted audio features. */
@@ -56,7 +58,9 @@ interface AppState {
         /** Sets or clears the application's error state. */
         setError: (error: ErrorState | null) => void;
         /** Sets the audio file to be processed. */
-        setAudioFile: (file: File) => void;
+        setAudioFile: (file: File | null) => void;
+        /** Sets the audio source to be processed. */
+        setAudioSource: (source: AudioNode | null) => void;
         /** Sets the progress of the current workflow. */
         setWorkflowProgress: (progress: number) => void;
         /** Sets the progress of the generation process. */
@@ -82,6 +86,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     error: null,
     statusMessage: '',
     audioFile: null,
+    audioSource: null,
     blueprint: null,
     audioFeatures: null,
     trackData: null,
@@ -105,16 +110,19 @@ export const useAppStore = create<AppState>((set, get) => ({
             }
         },
         setError: (error: ErrorState | null) => set({ error, status: error ? AppStatus.Error : get().status }),
-        setAudioFile: (file: File) => {
+        setAudioFile: (file: File | null) => {
             // Clear any previously-generated skybox when starting a new audio file
-            set({ audioFile: file, status: AppStatus.Idle, error: null, workflowProgress: 0, skyboxUrl: null });
+            set({ audioFile: file, audioSource: null, status: AppStatus.Idle, error: null, workflowProgress: 0, skyboxUrl: null });
+        },
+        setAudioSource: (source: AudioNode | null) => {
+            set({ audioSource: source, audioFile: null, status: AppStatus.Idle, error: null, workflowProgress: 0, skyboxUrl: null });
         },
     setWorkflowProgress: (progress: number) => set({ workflowProgress: progress }),
     setGenerationProgress: (progress: number) => set({ generationProgress: progress }),
     setSkyboxUrl: (url: string | null) => set({ skyboxUrl: url }),
         startRide: () => {
             const currentState = get();
-            if (currentState.status === AppStatus.Ready && currentState.trackData && currentState.audioFile) {
+            if (currentState.status === AppStatus.Ready && currentState.trackData && (currentState.audioFile || currentState.audioSource)) {
                 set({ status: AppStatus.Riding });
             }
         },
