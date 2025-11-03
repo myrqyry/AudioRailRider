@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 import { FrameAnalysis, SynestheticAtmosphere } from 'shared/types';
+import { VoxelTerrainRenderer } from './VoxelTerrainRenderer';
+import { HeightMapGenerator, TerrainTheme } from './HeightMapGenerator';
+import { SceneManager } from '../SceneManager';
 
 interface AtmosphereUpdateParams {
   deltaSeconds: number;
@@ -10,8 +13,7 @@ interface AtmosphereUpdateParams {
 }
 
 /**
- * Centralises sky and fog transitions so the ride atmosphere can breathe with the music
- * without cluttering the main VisualEffects class.
+ * Centralises sky, fog, and terrain transitions so the ride atmosphere can breathe with the music.
  */
 export class AtmosphereController {
   private readonly scene: THREE.Scene;
@@ -23,22 +25,37 @@ export class AtmosphereController {
   private readonly tintOverride: THREE.Color | null;
 
   private synesthetic: SynestheticAtmosphere | null = null;
+  private voxelTerrain: VoxelTerrainRenderer;
+  private heightMapGenerator: HeightMapGenerator;
 
-  constructor(scene: THREE.Scene, baseSkyColor: string, synesthetic: SynestheticAtmosphere | null) {
-    this.scene = scene;
-    this.sky = scene.getObjectByName('sky') || null;
-    this.fog = scene.fog instanceof THREE.FogExp2 ? scene.fog : null;
+  constructor(sceneManager: SceneManager, baseSkyColor: string, synesthetic: SynestheticAtmosphere | null) {
+    this.scene = sceneManager.scene;
+    this.sky = this.scene.getObjectByName('sky') || null;
+    this.fog = this.scene.fog instanceof THREE.FogExp2 ? this.scene.fog : null;
     this.baseSkyTint = new THREE.Color(baseSkyColor);
     this.tintOverride = synesthetic?.tint ? new THREE.Color(synesthetic.tint) : null;
     this.synesthetic = synesthetic;
+
+    this.heightMapGenerator = new HeightMapGenerator(256);
+    this.voxelTerrain = new VoxelTerrainRenderer(sceneManager);
+    this.voxelTerrain.setMaps(this.heightMapGenerator.getHeightMap(), this.heightMapGenerator.getColorMap());
   }
 
   public setSynesthetic(atmosphere: SynestheticAtmosphere | null): void {
     this.synesthetic = atmosphere;
   }
 
+  public setTheme(theme: TerrainTheme) {
+    this.heightMapGenerator.setTheme(theme);
+  }
+
   public update(params: AtmosphereUpdateParams): number {
     const { deltaSeconds, frame, audioFeatures, segmentColor, segmentIntensity } = params;
+
+    // Update Voxel Terrain
+    this.heightMapGenerator.update(frame, audioFeatures);
+    this.voxelTerrain.update(deltaSeconds);
+
     const turbulenceBias = this.synesthetic?.turbulenceBias ?? 1.0;
     const passionBias = this.synesthetic?.passionIntensity ?? 1.0;
 
@@ -90,5 +107,10 @@ export class AtmosphereController {
 
     const targetColor = this.workingColor.copy(this.baseSkyTint).lerp(this.tintOverride ?? this.baseSkyTint, 0.4 + bass * 0.3);
     this.fog.color.lerp(targetColor, THREE.MathUtils.clamp(deltaSeconds * 1.2, 0.04, 0.18));
+  }
+
+  public dispose(): void {
+      this.voxelTerrain.dispose();
+      this.heightMapGenerator.dispose();
   }
 }
