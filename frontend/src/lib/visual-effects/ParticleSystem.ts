@@ -1725,6 +1725,7 @@ export class ParticleSystem {
     const particle: ConsciousParticle = {
       id: this.consciousIdCounter++,
       featureKey,
+      thoughtType: this.classifyThought(featureKey),
       position: origin.clone(),
       velocity: new THREE.Vector3((Math.random() - 0.5) * 0.35, 0.05 + Math.random() * 0.12, (Math.random() - 0.5) * 0.35),
       resonance,

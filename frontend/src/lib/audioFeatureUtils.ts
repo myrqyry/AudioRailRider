@@ -1,5 +1,8 @@
 import { FrameAnalysis, Seconds, seconds } from 'shared/types';
 
+// Provide a safe creator that tolerates partially-populated worklet payloads
+// by filling sensible defaults for required fields (sampleRate, channelCount).
+
 /**
  * Calculates the average of a slice of a number array.
  * @param {ArrayLike<number>} arr - The input array.
@@ -226,7 +229,16 @@ export const detectStructuralBoundaries = (
  */
 export const createFrameForDispatch = (
   timestampSeconds: number,
-  values: Omit<FrameAnalysis, 'timestamp'>
+  // Accept partial shapes from worklets or plugin pipelines and ensure
+  // the returned FrameAnalysis always contains the required fields.
+  values: Partial<Omit<FrameAnalysis, 'timestamp'>> & {
+    energy: number;
+    spectralCentroid: number;
+    spectralFlux: number;
+    bass: number;
+    mid: number;
+    high: number;
+  }
 ): FrameAnalysis => ({
   timestamp: seconds(timestampSeconds),
   energy: values.energy,
@@ -235,7 +247,8 @@ export const createFrameForDispatch = (
   bass: values.bass,
   mid: values.mid,
   high: values.high,
-  sampleRate: values.sampleRate,
-  channelCount: values.channelCount,
+  // Provide safe defaults when the producer omitted these fields.
+  sampleRate: typeof values.sampleRate === 'number' ? values.sampleRate : 44100,
+  channelCount: typeof values.channelCount === 'number' ? values.channelCount : 1,
   frame: values.frame,
 });

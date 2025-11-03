@@ -62,6 +62,8 @@ export const runPipeline = (
       bass: aggregate.bass ?? 0,
       mid: aggregate.mid ?? 0,
       high: aggregate.high ?? 0,
+      sampleRate: sampleRate,
+      channelCount: 1,
     });
   }
 

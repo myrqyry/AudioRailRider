@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { AppStatus, Blueprint, TrackData } from 'shared/types';
+import { AppStatus, Blueprint, TrackData, AudioFeatures } from 'shared/types';
 
 /**
  * Defines the structure for representing an error state in the application.

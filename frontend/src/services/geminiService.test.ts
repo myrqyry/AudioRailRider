@@ -1,4 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
+import { seconds } from 'shared/types';
 import { generateRideBlueprintWithAI, prepareAudioPart } from './geminiService';
 import { analyzeAudio } from '../lib/audioProcessor';
 
@@ -44,7 +45,7 @@ describe('geminiService', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         (analyzeAudio as jest.Mock).mockResolvedValue({
-            duration: 120,
+            duration: seconds(120),
             bpm: 120,
             energy: 0.5,
             spectralCentroid: 1500,

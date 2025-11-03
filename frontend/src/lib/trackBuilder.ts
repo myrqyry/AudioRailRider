@@ -213,7 +213,11 @@ export const buildTrackData = (blueprint: Blueprint, audioFeatures?: AudioFeatur
         switch (normalizedComponent) {
             case 'climb':
             case 'drop': {
-                const typed = segment as Extract<TrackSegment, { component: 'climb' }> | Extract<TrackSegment, { component: 'drop' }>;
+                // During triage the shared TrackSegment union isn't a discriminated
+                // union (it may be a permissive string), so narrow casts using
+                // Extract<> resolve to `never`. Use a safe `any` assertion here to
+                // keep the runtime logic but avoid brittle type narrowing.
+                const typed = segment as any;
                 const angleValue = typed.angle ?? (normalizedComponent === 'climb' ? 15 : -40);
                 const angle = THREE.MathUtils.degToRad(THREE.MathUtils.clamp(angleValue, -90, 90));
         metricsSource.length = typed.length;
@@ -242,7 +246,7 @@ export const buildTrackData = (blueprint: Blueprint, audioFeatures?: AudioFeatur
                 break;
             }
             case 'turn': {
-                const typed = segment as Extract<TrackSegment, { component: 'turn' }>;
+                const typed = segment as any;
                 const radiusValue = typed.radius ?? 80;
                 const radius = Math.max(10, radiusValue) * SPEED_MULTIPLIER;
 
@@ -273,7 +277,7 @@ export const buildTrackData = (blueprint: Blueprint, audioFeatures?: AudioFeatur
                 break;
             }
             case 'loop': {
-                const typed = segment as Extract<TrackSegment, { component: 'loop' }>;
+                const typed = segment as any;
                 const radiusValue = typed.radius ?? 50;
                 const radius = Math.max(10, radiusValue) * SPEED_MULTIPLIER;
                 const forwardStretch = Math.max(radius * 1.5, (typed as any).length ? Math.max(20, Number((typed as any).length)) * SPEED_MULTIPLIER : radius * Math.PI * 0.75);
@@ -298,7 +302,7 @@ export const buildTrackData = (blueprint: Blueprint, audioFeatures?: AudioFeatur
                 break;
             }
             case 'barrelRoll': {
-                const typed = segment as Extract<TrackSegment, { component: 'barrelRoll' }>;
+                const typed = segment as any;
                 const rotationsValue = typed.rotations ?? 1;
                 const rotations = Math.max(1, Math.round(rotationsValue));
                 metricsSource.length = typed.length;
@@ -422,7 +426,7 @@ export const buildTrackData = (blueprint: Blueprint, audioFeatures?: AudioFeatur
         moodDescription: blueprint.moodDescription,
         frameAnalyses: (audioFeatures && audioFeatures.frameAnalyses) || [],
         audioFeatures: audioFeatures || {
-            duration: 0 as any,
+            duration: seconds(0),
             bpm: 120,
             energy: 0,
             spectralCentroid: 0,

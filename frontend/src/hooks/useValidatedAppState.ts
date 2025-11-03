@@ -12,8 +12,9 @@ export const useValidatedAppState = () => {
     const status = useAppStore((s) => s.status);
     const trackDataSnapshot = useAppStore((s) => s.trackData);
     const generationProgress = useAppStore((s) => s.generationProgress);
+    const audioFile = useAppStore((s) => s.audioFile);
 
-    const rawState = useMemo(() => ({ status, trackData: trackDataSnapshot, generationProgress }), [status, trackDataSnapshot, generationProgress]);
+    const rawState = useMemo(() => ({ status, trackData: trackDataSnapshot, generationProgress, audioFile }), [status, trackDataSnapshot, generationProgress, audioFile]);
 
     // Ref that signals whether the last validation failed. We set this inside
     // the memo to avoid causing state updates during render, then react to it

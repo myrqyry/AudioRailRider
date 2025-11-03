@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { SceneManager } from '../SceneManager';
-import vertexShader from '../shaders/voxel-terrain.vert.glsl';
-import fragmentShader from '../shaders/voxel-terrain.frag.glsl';
+import vertexShader from '../shaders/voxel-terrain.vert.glsl?raw';
+import fragmentShader from '../shaders/voxel-terrain.frag.glsl?raw';
 
 export class VoxelTerrainRenderer {
     private sceneManager: SceneManager;

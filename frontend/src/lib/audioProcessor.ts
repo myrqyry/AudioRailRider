@@ -293,6 +293,8 @@ export const analyzeAudio = async (audioFile: File): Promise<AudioFeatures> => {
       bass: bassCurve[i] ?? 0,
       mid: midCurve[i] ?? 0,
       high: highCurve[i] ?? 0,
+      sampleRate: audioBuffer.sampleRate,
+      channelCount: audioBuffer.numberOfChannels || 1,
     });
   }
 
@@ -358,8 +360,22 @@ export const createWorkletAnalyzerForContext = async (
   if (!audioWorklet.isWorkletSupported()) return null;
   try {
     await audioWorklet.registerWorklet(audioContext);
-    const node = audioWorklet.createAnalyzerNode(audioContext);
-    return node;
+    // Some environments / older helper files exposed a `createAnalyzerNode` helper.
+    // Prefer that when available for backward-compat, otherwise fall back to the
+    // stable `createWorkletNode` helper provided by `audioWorklet`.
+    if (typeof (audioWorklet as any).createAnalyzerNode === 'function') {
+      return (audioWorklet as any).createAnalyzerNode(audioContext);
+    }
+    if (typeof (audioWorklet as any).createWorkletNode === 'function') {
+      return (audioWorklet as any).createWorkletNode(audioContext);
+    }
+    // As a last resort, attempt to create a vanilla AudioWorkletNode directly.
+    try {
+      return new AudioWorkletNode(audioContext, 'simple-analyzer-processor');
+    } catch (err) {
+      console.warn('[audioProcessor] direct AudioWorkletNode creation failed', err);
+      return null;
+    }
   } catch (e) {
     console.warn('[audioProcessor] createWorkletAnalyzerForContext failed', e);
     return null;

@@ -11,7 +11,7 @@ export function applyBreathingToGeometry(
 ): void {
     const energy = audioFeatures.energy ?? 0;
     const spectralCentroid = audioFeatures.spectralCentroid ?? 0;
-    const harmonic = audioFeatures.harmonic ?? 0;
+    const harmonic = (audioFeatures as any).harmonic ?? 0;
     const time = performance.now() * 0.001;
     for (let i = 0; i < points.length; i++) {
         const alpha = i / points.length;
@@ -56,7 +56,7 @@ class ClimbGenerator implements SegmentGenerator {
         const resolution = 100; // TODO: make this configurable
 
         const angle = THREE.MathUtils.degToRad(THREE.MathUtils.clamp(segment.angle ?? 15, -90, 90));
-        const length = Math.max(10, typed.length) * 1.25;
+        const length = Math.max(10, (segment.length ?? 50)) * 1.25;
 
         const dir_horizontal = startDir.clone();
         dir_horizontal.y = 0;

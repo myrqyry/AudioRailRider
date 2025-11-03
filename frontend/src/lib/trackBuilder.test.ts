@@ -11,7 +11,7 @@ describe('buildTrackData', () => {
       { component: 'climb', angle: 10, length: 100 },
   { component: 'turn', direction: 'left', radius: 50, angle: 90, length: 60 },
       { component: 'drop', angle: -20, length: 100 },
-      { component: 'loop', radius: 40 },
+      { component: 'loop', radius: 40, length: 120 },
       { component: 'barrelRoll', rotations: 2, length: 100 },
     ],
   };

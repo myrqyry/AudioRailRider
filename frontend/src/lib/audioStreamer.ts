@@ -98,6 +98,8 @@ export const createStreamer = (file: File, opts?: Partial<StreamerOptions>) => {
         bass: bass,
         mid: mid,
         high: high,
+        sampleRate: audioCtx.sampleRate,
+        channelCount: 1,
       };
 
       try { onFrame(frame); } catch (e) { console.warn('[audioStreamer] onFrame crashed', e); }

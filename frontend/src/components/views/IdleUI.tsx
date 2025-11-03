@@ -1,6 +1,9 @@
 import React, { useRef, useCallback, useEffect } from 'react';
+
 import { useAppStore } from '../../lib/store';
+
 import { UploadIcon } from '../Icon';
+import BreathingIntensitySlider from '../BreathingIntensitySlider';
 import GenerationOptionsForm from '../GenerationOptionsForm';
 import MicrophoneControls from '../MicrophoneControls';
 
@@ -37,12 +40,21 @@ const IdleUI: React.FC<IdleUIProps> = ({ audioContext }) => {
         const maxBytes = 20 * 1024 * 1024; // 20 MB
 
         if (!allowedTypes.has(file.type)) {
-            setError({ title: "Unsupported File Type", message: `Please select a valid audio file (MP3, WAV). You selected a file of type: ${file.type}` });
-            return;
-        }
-        if (file.size > maxBytes) {
-            setError({ title: "File Too Large", message: `The selected file is too large (${(file.size / (1024 * 1024)).toFixed(1)}MB). Please select a file smaller than 20MB.` });
-            return;
+        // Clear file input on mount and setup cleanup
+        useEffect(() => {
+            const inputElement = fileInputRef.current;
+
+            if (inputElement) {
+                inputElement.value = '';
+            }
+
+            return () => {
+                if (inputElement) {
+                    inputElement.value = '';
+                    inputElement.blur();
+                }
+            };
+        }, []);
         }
 
         setAudioFile(file);
@@ -59,9 +71,9 @@ const IdleUI: React.FC<IdleUIProps> = ({ audioContext }) => {
             <input ref={fileInputRef} id="audio-upload" type="file" accept="audio/mp3, audio/wav, audio/mpeg" className="hidden" onChange={handleFileChange} />
 
             <div className="my-6 flex items-center justify-center">
-                <div className="w-1/4 border-t border-gray-600"></div>
+                <div className="w-1/4 border-t border-gray-600" />
                 <p className="mx-4 text-gray-500">OR</p>
-                <div className="w-1/4 border-t border-gray-600"></div>
+                <div className="w-1/4 border-t border-gray-600" />
             </div>
 
             <MicrophoneControls audioContext={audioContext} />

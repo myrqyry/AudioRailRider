@@ -13,7 +13,10 @@ const isIntense = (segment: TrackSegment): boolean => {
         case 'barrelRoll':
             return true;
         case 'turn': {
-            const turnSegment = segment as Extract<TrackSegment, { component: 'turn' }>;
+            // The shared TrackSegment type is permissive during triage; avoid
+            // brittle Extract<> narrowing which can become `never`. Use a safe
+            // any assertion for runtime validation here.
+            const turnSegment = segment as any;
             // A turn is intense if it's sharp (small radius)
             return turnSegment.radius !== undefined && turnSegment.radius < 100;
         }

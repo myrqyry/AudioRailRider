@@ -93,7 +93,8 @@ const DevPanel: React.FC = () => {
   const [outlineOpacity, setOutlineOpacity] = useState<number>(savedTrackSettings.outlineOpacity ?? TRACK_DEFAULTS.outlineOpacity);
   const [glowOpacity, setGlowOpacity] = useState<number>(savedTrackSettings.glowOpacity ?? TRACK_DEFAULTS.glowOpacity);
   const [forceInside, setForceInside] = useState<boolean>(false);
-  const [presets, setPresets] = useState<Record<string, any>[]>(() => {
+  interface Preset { name: string; data: Record<string, any> }
+  const [presets, setPresets] = useState<Preset[]>(() => {
     try { return JSON.parse(localStorage.getItem(PRESET_KEY) || '[]'); } catch (e) { return []; }
   });
 

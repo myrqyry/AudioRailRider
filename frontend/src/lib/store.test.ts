@@ -1,5 +1,5 @@
 import { useAppStore } from './store';
-import { AppStatus } from 'shared/types';
+import { AppStatus, seconds } from 'shared/types';
 
 describe('useAppStore', () => {
   it('should reset all relevant state on resetApp', () => {
@@ -10,8 +10,8 @@ describe('useAppStore', () => {
       statusMessage: 'Error state',
       audioFile: new File([''], 'test.mp3'),
       blueprint: { rideName: 'Test Ride', moodDescription: 'A test ride', palette: ['#fff', '#fff', '#fff'], track: [] },
-      audioFeatures: { duration: 120, bpm: 120, energy: 0.5, spectralCentroid: 1500, spectralFlux: 0.2, frameAnalyses: [] },
-      trackData: { path: [], upVectors: [], railColor: '', glowColor: '', skyColor1: '', skyColor2: '', segmentDetails: [], rideName: '', moodDescription: '', frameAnalyses: [], audioFeatures: { duration: 0, bpm: 0, energy: 0, spectralCentroid: 0, spectralFlux: 0, frameAnalyses: [] } },
+      audioFeatures: { duration: seconds(120), bpm: 120, energy: 0.5, spectralCentroid: 1500, spectralFlux: 0.2, frameAnalyses: [] },
+      trackData: { path: [], upVectors: [], railColor: '', glowColor: '', skyColor1: '', skyColor2: '', segmentDetails: [], rideName: '', moodDescription: '', frameAnalyses: [], audioFeatures: { duration: seconds(0), bpm: 0, energy: 0, spectralCentroid: 0, spectralFlux: 0, frameAnalyses: [] } },
       workflowProgress: 50,
       skyboxUrl: 'http://example.com/skybox.jpg',
     });

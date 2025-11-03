@@ -186,28 +186,34 @@ export const runAudioProcessingWorkflow = async (
       return;
     }
 
-    // If we started skybox generation, wait up to SKYBOX_MAX_WAIT_MS for it to finish
+    // If we started skybox generation, don't block the Ready transition.
+    // Instead, give the skybox a longer background window to finish and
+    // attach a non-blocking waiter that will set the skybox URL if it
+    // completes within the max wait window. This prevents the UI from
+    // stalling while still allowing a longer time for image generation.
     try {
       if (skyboxPromise) {
-        console.log('[Workflow] Waiting up to', SKYBOX_MAX_WAIT_MS, 'ms for skybox to finish before Ready');
         const { setSkyboxUrl } = useAppStore.getState().actions;
-        try {
-          const result = await Promise.race([
-            skyboxPromise,
-            new Promise<string | null>((res) => setTimeout(() => res(null), SKYBOX_MAX_WAIT_MS)),
-          ]);
-          if (result) {
-            console.log('[Workflow] Skybox generation completed before Ready');
-            try { setSkyboxUrl(result); } catch (e) {}
-          } else {
-            console.log('[Workflow] Skybox did not finish within max wait, continuing without it');
+        (async () => {
+          try {
+            console.log('[Workflow] Background-waiting up to', SKYBOX_MAX_WAIT_MS, 'ms for skybox');
+            const result = await Promise.race([
+              skyboxPromise,
+              new Promise<string | null>((res) => setTimeout(() => res(null), SKYBOX_MAX_WAIT_MS)),
+            ]);
+            if (result) {
+              console.log('[Workflow] Skybox generation completed (background)');
+              try { setSkyboxUrl(result); } catch (e) {}
+            } else {
+              console.log('[Workflow] Skybox did not finish within background max wait, continuing without it');
+            }
+          } catch (err) {
+            console.info('[Workflow] Background skybox waiter failed, continuing', err);
           }
-        } catch (e) {
-          console.info('[Workflow] Error while awaiting skybox result, continuing', e);
-        }
+        })();
       }
     } catch (e) {
-      console.info('[Workflow] Skybox wait logic failed, continuing', e);
+      console.info('[Workflow] Skybox background scheduling failed, continuing', e);
     }
 
     console.log('[Workflow] Setting status to Ready');
