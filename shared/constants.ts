@@ -69,3 +69,4 @@ export const RIDE_CONFIG = {
 } as const;
 
 export const DEFAULT_SPACING = 2.5 as const;
+

@@ -19,6 +19,10 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
+    // Explicitly include dependencies that sometimes cause optimize-deps
+    // race conditions or 504 "Outdated Optimize Dep" responses in the
+    // browser. Adding 'zod' here ensures Vite pre-bundles it reliably.
+    include: ['zod'],
     esbuildOptions: {
       // This ensures proper handling of browser field in package.json
       mainFields: ['browser', 'module', 'main'],

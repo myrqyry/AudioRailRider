@@ -2,6 +2,7 @@ import React, { useRef, useCallback, useEffect } from 'react';
 import { useAppStore } from '../../lib/store';
 import { UploadIcon } from '../Icon';
 import GenerationOptionsForm from '../GenerationOptionsForm';
+import BreathingIntensitySlider from '../BreathingIntensitySlider';
 
 /**
  * The initial user interface component when the application is idle.
@@ -54,7 +55,6 @@ const IdleUI: React.FC = () => {
             <input ref={fileInputRef} id="audio-upload" type="file" accept="audio/mp3, audio/wav, audio/mpeg" className="hidden" onChange={handleFileChange} />
             <p className="text-xs text-gray-600 mt-4">For the best experience, use a track with dynamic range.</p>
 
-import BreathingIntensitySlider from '../BreathingIntensitySlider';
             <GenerationOptionsForm />
             <BreathingIntensitySlider />
 
