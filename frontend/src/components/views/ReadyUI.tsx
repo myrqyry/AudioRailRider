@@ -1,6 +1,7 @@
 import React from 'react';
 import { useAppStore } from '../../lib/store';
 import { PlayIcon, SparkleIcon } from '../Icon';
+import BreathingIntensitySlider from '../BreathingIntensitySlider';
 
 /**
  * A user interface component displayed when the application is ready to start the ride.
@@ -24,7 +25,6 @@ const ReadyUI: React.FC = () => {
                 className="mt-8 inline-flex items-center gap-3 px-12 py-5 bg-cyan-500/80 text-white font-bold rounded-full shadow-lg shadow-cyan-500/20 hover:bg-cyan-400 transition-all duration-300 transform hover:scale-110"
             >
                 <PlayIcon className="w-8 h-8" />
-import BreathingIntensitySlider from '../BreathingIntensitySlider';
                 <span>Begin the Ride</span>
             </button>
             <div className="mt-8">

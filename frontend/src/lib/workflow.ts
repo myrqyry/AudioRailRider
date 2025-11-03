@@ -4,6 +4,7 @@ import { generateRideBlueprint, generateSkyboxImage } from '../services/geminiSe
 import { validateAndRefineBlueprint } from './trackValidator';
 import { buildTrackData } from './trackBuilder';
 import { AppStatus } from 'shared/types';
+import { env as environment } from '../config/environment';
 
 /**
  * Orchestrates the end-to-end workflow for processing an audio file and generating a ride.
@@ -81,7 +82,7 @@ export const runAudioProcessingWorkflow = async (
     console.log('[Workflow] Calling generateRideBlueprint with file:', file.name);
     try {
       // Log effective backend URL (if available) to help diagnose "Failed to fetch"
-      const backendUrl = (globalThis as any)?.BACKEND_URL || (require('../config/environment').env?.VITE_BACKEND_URL as string) || 'unknown';
+      const backendUrl = (globalThis as any)?.BACKEND_URL || (environment?.VITE_BACKEND_URL as string) || 'unknown';
       console.debug('[Workflow] Backend URL (effective):', backendUrl);
     } catch (e) {}
   // Pass the abort signal and any user-selected generation options to the backend

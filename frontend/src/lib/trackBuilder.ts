@@ -9,6 +9,7 @@ import {
     SynestheticGeometry,
 } from 'shared/types';
 import { RIDE_CONFIG, DEFAULT_SPACING } from 'shared/constants';
+import { applyBreathingToGeometry } from './procedural/TrackComposer';
 
 /**
  * Builds the 3D track data from a ride blueprint.
@@ -236,7 +237,6 @@ export const buildTrackData = (blueprint: Blueprint, audioFeatures?: AudioFeatur
                 }
                 // Apply breathing deformation
                 if (audioFeatures) {
-                    const { applyBreathingToGeometry } = require('./procedural/TrackComposer');
                     applyBreathingToGeometry(segmentPoints, audioFeatures, intensity);
                 }
                 break;
@@ -268,7 +268,6 @@ export const buildTrackData = (blueprint: Blueprint, audioFeatures?: AudioFeatur
                 }
                 // Apply breathing deformation
                 if (audioFeatures) {
-                    const { applyBreathingToGeometry } = require('./procedural/TrackComposer');
                     applyBreathingToGeometry(segmentPoints, audioFeatures, intensity);
                 }
                 break;
@@ -294,7 +293,6 @@ export const buildTrackData = (blueprint: Blueprint, audioFeatures?: AudioFeatur
                 }
                 // Apply breathing deformation
                 if (audioFeatures) {
-                    const { applyBreathingToGeometry } = require('./procedural/TrackComposer');
                     applyBreathingToGeometry(segmentPoints, audioFeatures, intensity);
                 }
                 break;
@@ -318,7 +316,6 @@ export const buildTrackData = (blueprint: Blueprint, audioFeatures?: AudioFeatur
                 }
                 // Apply breathing deformation
                 if (audioFeatures) {
-                    const { applyBreathingToGeometry } = require('./procedural/TrackComposer');
                     applyBreathingToGeometry(segmentPoints, audioFeatures, intensity);
                 }
                 break;

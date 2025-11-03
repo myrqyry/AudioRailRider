@@ -68,7 +68,6 @@ const IdleUI: React.FC<IdleUIProps> = ({ audioContext }) => {
 
             <p className="text-xs text-gray-600 mt-4">For the best experience, use a track with dynamic range.</p>
 
-import BreathingIntensitySlider from '../BreathingIntensitySlider';
             <GenerationOptionsForm />
             <BreathingIntensitySlider />
 

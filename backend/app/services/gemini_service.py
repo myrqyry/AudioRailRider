@@ -209,349 +209,127 @@ class GeminiService:
                         self.client = None
             except Exception:
                 self.client = None
-        # Use an instance-local cache to avoid sharing state between test cases
-        self._cache = TTLCache(maxsize=1024, ttl=60 * 60)
-        # helper reference to the async client when present
-        self._aio = getattr(self.client, "aio", None) if self.client is not None else None
-        # adapter instance (if created)
-        self._adapter = getattr(self, "_adapter", None)
+
 
     async def generate_blueprint(self, audio_bytes: bytes, content_type: str, options: Any = None) -> Dict[str, Any]:
-        """Generate a blueprint from audio bytes + content type + options.
+        """Analyze audio and generate a blueprint. Uses real client when available, otherwise falls back to a procedural generator.
 
-        Tests expect this method to call `analyze_audio` and then call
-        `self.client.aio.models.generate_content` when a client is provided.
+        This method is intentionally defensive: any error during model calls will be logged
+        and the procedural fallback will be returned so the API doesn't surface 500s to the dev UI.
         """
-        model_name = options.get("model") if isinstance(options, dict) else None
+        cache_key = _generate_cache_key(audio_bytes, content_type, options, getattr(self, "_adapter", None) and getattr(self._adapter, "client_name", None))
+        # Check module-level cache first
+        if cache_key in _CACHE:
+            return _CACHE[cache_key]
 
-        # Check for cached audio features first
-        cached_features = audio_cache.get(audio_bytes, content_type)
-        if cached_features:
-            logger.info("Using cached audio analysis", cache_hit=True)
-            features = cached_features
-        else:
-            logger.info("Performing fresh audio analysis", cache_hit=False)
-            features = await analyze_audio(audio_bytes)
-            audio_cache.set(audio_bytes, content_type, features)
-
-        # Generate a cache key for the blueprint itself, including audio features and options
-        blueprint_cache_key = _generate_cache_key(
-            json.dumps(features, sort_keys=True).encode('utf-8'),
-            "application/json",
-            options,
-            model_name
-        )
-
-        if blueprint_cache_key in self._cache:
-            # Return cached blueprint but with fresh features
-            cached_result = self._cache[blueprint_cache_key]
-            cached_result['features'] = features
-            return cached_result
-        synesthetic_keys = {}
-        if options:
-            # Extract advanced options if present
-            synesthetic_keys["aestheticMood"] = options.get("aestheticMood")
-            synesthetic_keys["impossiblePhysics"] = options.get("impossiblePhysics")
-            synesthetic_keys["breathingIntensity"] = options.get("breathingIntensity")
-            synesthetic_keys["organicBreathing"] = options.get("organicBreathing")
-            synesthetic_keys["connectionDensity"] = options.get("connectionDensity")
-            synesthetic_keys["resonanceThreshold"] = options.get("resonanceThreshold")
-            synesthetic_keys["lifespanSeconds"] = options.get("lifespanSeconds")
-            synesthetic_keys["skyMood"] = options.get("skyMood")
-            synesthetic_keys["turbulenceBias"] = options.get("turbulenceBias")
-            synesthetic_keys["passionIntensity"] = options.get("passionIntensity")
-            synesthetic_keys["paletteHint"] = options.get("paletteHint")
-
-        # Compose a detailed prompt string for Gemini
-        prompt = (
-            f"You are a synesthetic translation engine. "
-            f"Given the following audio features and user options, generate a JSON blueprint for an immersive ride. "
-            f"Audio features: {json.dumps(features)}. "
-            f"User options: {json.dumps(options)}. "
-            f"Advanced synesthetic keys: {json.dumps(synesthetic_keys)}. "
-            f"Output must strictly follow the Blueprint schema with these exact fields: "
-            f"rideName (string), moodDescription (string), palette (array of 3-5 hex color strings), "
-            f"track (array of at least 5 track segments, each with component, length, and other properties), "
-            f"generationOptions (optional object), events (optional array), synesthetic (optional object). "
-            f"Include synesthetic fields for geometry, particles, and atmosphere. "
-            f"Make use of aestheticMood, impossiblePhysics, breathingIntensity, and any advanced keys provided. "
-            f"Return only valid JSON with all required fields."
-        )
-
-        # If a real client (or a test-injected mock) is present, call it.
-        if self.client is not None and getattr(self.client, "aio", None) is not None:
-            try:
-                payload = {
-                    "prompt": prompt,
-                    "features": features,
-                    "content_type": content_type,
-                    "options": options,
-                    "synesthetic_keys": synesthetic_keys
-                }
-                # If the imported real SDK is available and we instantiated a real client,
-                # call the SDK with typed args so response.parsed is filled when we request JSON.
-                # If we have an adapter instance, use it to call the SDK in a typed way.
-                if getattr(self, "_adapter", None) is not None:
-                    try:
-                        adapter = self._adapter
-                        model = model_name or (options.get("model") if isinstance(options, dict) else None) or "gemini-2.5-flash"
-                        content_data = {
-                            "prompt": prompt,
-                            "features": features,
-                            "content_type": content_type,
-                            "options": options,
-                            "synesthetic_keys": synesthetic_keys
-                        }
-                        if content_type.startswith('audio/'):
-                            content_data["audio_data"] = {
-                                "inlineData": {
-                                    "content": audio_bytes,
-                                    "mimeType": content_type
-                                }
-                            }
-                        config = None
-                        try:
-                            from google.genai import types as _gtypes
-                            # Define the response schema for Blueprint
-                            track_segment_schema = _gtypes.Schema(
-                                type=_gtypes.Type.OBJECT,
-                                properties={
-                                    "component": _gtypes.Schema(type=_gtypes.Type.STRING),
-                                    "length": _gtypes.Schema(type=_gtypes.Type.NUMBER),
-                                    "intensity": _gtypes.Schema(type=_gtypes.Type.NUMBER),
-                                    "lightingEffect": _gtypes.Schema(type=_gtypes.Type.STRING),
-                                    "environmentChange": _gtypes.Schema(type=_gtypes.Type.STRING),
-                                    "audioSyncPoint": _gtypes.Schema(type=_gtypes.Type.NUMBER),
-                                    "angle": _gtypes.Schema(type=_gtypes.Type.NUMBER),
-                                    "radius": _gtypes.Schema(type=_gtypes.Type.NUMBER),
-                                    "direction": _gtypes.Schema(type=_gtypes.Type.STRING),
-                                    "rotations": _gtypes.Schema(type=_gtypes.Type.NUMBER),
-                                    "height": _gtypes.Schema(type=_gtypes.Type.NUMBER),
-                                    "banking": _gtypes.Schema(type=_gtypes.Type.NUMBER),
-                                    "g_force": _gtypes.Schema(type=_gtypes.Type.NUMBER),
-                                    "speed_modifier": _gtypes.Schema(type=_gtypes.Type.NUMBER),
-                                    "twist_angle": _gtypes.Schema(type=_gtypes.Type.NUMBER),
-                                    "inversions": _gtypes.Schema(type=_gtypes.Type.NUMBER),
-                                },
-                                required=["component", "length"]
-                            )
-                            synesthetic_geometry_schema = _gtypes.Schema(
-                                type=_gtypes.Type.OBJECT,
-                                properties={
-                                    "wireframeDensity": _gtypes.Schema(type=_gtypes.Type.NUMBER),
-                                    "organicBreathing": _gtypes.Schema(type=_gtypes.Type.NUMBER),
-                                    "impossiblePhysics": _gtypes.Schema(
-                                        type=_gtypes.Type.OBJECT,
-                                        properties={
-                                            "enabled": _gtypes.Schema(type=_gtypes.Type.BOOLEAN),
-                                            "intensity": _gtypes.Schema(type=_gtypes.Type.NUMBER),
-                                            "frequency": _gtypes.Schema(type=_gtypes.Type.NUMBER),
-                                        }
-                                    ),
-                                    "breathingDriver": _gtypes.Schema(type=_gtypes.Type.STRING),
-                                }
-                            )
-                            synesthetic_particles_schema = _gtypes.Schema(
-                                type=_gtypes.Type.OBJECT,
-                                properties={
-                                    "connectionDensity": _gtypes.Schema(type=_gtypes.Type.NUMBER),
-                                    "resonanceThreshold": _gtypes.Schema(type=_gtypes.Type.NUMBER),
-                                    "lifespanSeconds": _gtypes.Schema(type=_gtypes.Type.NUMBER),
-                                    "persistence": _gtypes.Schema(type=_gtypes.Type.NUMBER),
-                                }
-                            )
-                            synesthetic_atmosphere_schema = _gtypes.Schema(
-                                type=_gtypes.Type.OBJECT,
-                                properties={
-                                    "skyMood": _gtypes.Schema(type=_gtypes.Type.STRING),
-                                    "turbulenceBias": _gtypes.Schema(type=_gtypes.Type.NUMBER),
-                                    "passionIntensity": _gtypes.Schema(type=_gtypes.Type.NUMBER),
-                                    "tint": _gtypes.Schema(type=_gtypes.Type.STRING),
-                                }
-                            )
-                            synesthetic_schema = _gtypes.Schema(
-                                type=_gtypes.Type.OBJECT,
-                                properties={
-                                    "geometry": synesthetic_geometry_schema,
-                                    "particles": synesthetic_particles_schema,
-                                    "atmosphere": synesthetic_atmosphere_schema,
-                                }
-                            )
-                            blueprint_schema = _gtypes.Schema(
-                                type=_gtypes.Type.OBJECT,
-                                properties={
-                                    "rideName": _gtypes.Schema(type=_gtypes.Type.STRING),
-                                    "moodDescription": _gtypes.Schema(type=_gtypes.Type.STRING),
-                                    "palette": _gtypes.Schema(
-                                        type=_gtypes.Type.ARRAY,
-                                        items=_gtypes.Schema(type=_gtypes.Type.STRING)
-                                    ),
-                                    "track": _gtypes.Schema(
-                                        type=_gtypes.Type.ARRAY,
-                                        items=track_segment_schema
-                                    ),
-                                    "generationOptions": _gtypes.Schema(type=_gtypes.Type.OBJECT),
-                                    "events": _gtypes.Schema(
-                                        type=_gtypes.Type.ARRAY,
-                                        items=_gtypes.Schema(type=_gtypes.Type.OBJECT)
-                                    ),
-                                    "synesthetic": synesthetic_schema,
-                                },
-                                required=["rideName", "moodDescription", "palette", "track"]
-                            )
-                            config = _gtypes.GenerateContentConfig(
-                                response_mime_type="application/json",
-                                response_schema=blueprint_schema,
-                                max_output_tokens=4096,
-                                temperature=0.7
-                            )
-                        except Exception:
-                            config = None
-
-                        # Use the new enhanced prompt
-                        prompt = SYNESTHETIC_PROMPT.format(features=features)
-                        response = await adapter.generate_content(model=model, contents=prompt, config=config)
-                    except Exception:
-                        response = await self.client.aio.models.generate_content(payload)
-                else:
-                    response = await self.client.aio.models.generate_content(payload)
-
-                blueprint_obj = getattr(response, "parsed", None)
-                if blueprint_obj is not None:
-                    if hasattr(blueprint_obj, "model_dump"):
-                        blueprint = blueprint_obj.model_dump()
-                    elif hasattr(blueprint_obj, "to_dict"):
-                        blueprint = blueprint_obj.to_dict()
-                    else:
-                        blueprint = dict(blueprint_obj.__dict__) if hasattr(blueprint_obj, "__dict__") else {"parsed": str(blueprint_obj)}
-                else:
-                    text = getattr(response, "text", None)
-                    if text:
-                        from pydantic import ValidationError
-                        from ..schema.blueprint import Blueprint
-                        try:
-                            raw_data = json.loads(text)
-                            # Validate against schema to prevent malformed data
-                            blueprint = Blueprint.model_validate(raw_data).model_dump()
-                        except (json.JSONDecodeError, ValidationError) as e:
-                            logger.warning("Invalid blueprint from Gemini API", error=str(e))
-                            blueprint = self._procedural_fallback_with_features(features)
-                    else:
-                        blueprint = {"result": repr(response)}
-
-                blueprint = self._ensure_blueprint_has_track(blueprint, features)
-                result = {"blueprint": blueprint, "features": features}
-                self._cache[blueprint_cache_key] = result
-                return result
-            except APIError as e:
-                logger.warning("APIError from client, falling back: %s", e)
-            except Exception as e:
-                logger.warning("client generation failed, falling back: %s", e)
-
-        # Procedural fallback
-        proc = self._procedural_fallback_with_features(features)
-        self._cache[blueprint_cache_key] = proc
-        return proc
-
-    def _procedural_fallback_with_features(self, features: dict) -> Dict[str, Any]:
-        """Procedural generator used by tests when the client fails or is absent."""
-        if not hasattr(self, "advanced_generator"):
-            from .advanced_track_generator import AdvancedTrackGenerator
-            self.advanced_generator = AdvancedTrackGenerator()
-
-        track = self.advanced_generator.generate_track(features)
-        track_dicts = [component.model_dump() for component in track]
-        if not track_dicts:
-            track_dicts = [{"component": "straight", "length": 10}]
-
-        bpm = features.get("bpm", 120)
-        energy = features.get("energy", 0.5)
-
-        blueprint = {
-            "rideName": f"Dynamic Audio Coaster ({int(bpm)} BPM)",
-            "moodDescription": f"A procedurally generated ride based on audio analysis.",
-            "palette": self._generate_dynamic_palette(energy, bpm),
-            "track": track_dicts,
-        }
-        features_out = {"bpm": bpm, "energy": energy}
-        return {"blueprint": blueprint, "features": features_out}
-
-    def _ensure_blueprint_has_track(self, blueprint: dict, features: dict) -> dict:
-        """Ensure the blueprint has a valid track array, generating one if missing."""
-        if isinstance(blueprint.get("track"), list) and len(blueprint["track"]) > 0:
-            return blueprint
-        
-        logger.warning("Blueprint missing or invalid track, generating procedural track")
-        if not hasattr(self, "advanced_generator"):
-            from .advanced_track_generator import AdvancedTrackGenerator
-            self.advanced_generator = AdvancedTrackGenerator()
-
-        track = self.advanced_generator.generate_track(features)
-        track_dicts = [component.model_dump() for component in track]
-        if not track_dicts:
-            track_dicts = [{"component": "straight", "length": 10}]
-
-        blueprint["track"] = track_dicts
-        return blueprint
-
-    def _generate_dynamic_palette(self, energy: float, bpm: float) -> list:
-        """Generate color palette based on music energy and tempo."""
-        if energy > 0.8:
-            return ["#FF0040", "#FF6600", "#FFFF00", "#00FF80"]
-        elif energy > 0.6:
-            return ["#8000FF", "#FF0080", "#00FFFF", "#FF4000"]
-        elif energy > 0.4:
-            return ["#0080FF", "#8040FF", "#FF8000", "#40FF40"]
-        else:
-            return ["#4080FF", "#8080FF", "#FF8080", "#80FF80"]
-
-    async def generate_skybox(self, prompt: str, blueprint: dict, options: Any = None) -> Dict[str, Any]:
-        """Generate a skybox image based on prompt and blueprint."""
-        # For now, return a placeholder URL since skybox generation is optional
-        logger.info("Skybox generation requested but not implemented, returning placeholder")
-        return {"skybox_url": "/default_skybox.jpg"}
-
-    def _procedural_fallback(self, audio_path: str, options: Any) -> Dict[str, Any]:
-        name = os.path.splitext(os.path.basename(audio_path))[0]
-        fingerprint = hashlib.sha1(_safe_serialize(options).encode("utf-8")).hexdigest()[:8]
-        title = f"Ride for {name} ({fingerprint})"
-        blueprint = {"title": title, "segments": [], "features": {"energy": 0.5, "tempo": 120}}
-        metadata = {"source": "procedural", "options": options}
-        return {"blueprint": blueprint, "metadata": metadata}
-
-    @asynccontextmanager
-    async def upload_file(self, file_path: str) -> AsyncIterator[str]:
-        # Prefer async files.upload on the real SDK: client.aio.files.upload
+        # Always attempt to analyze audio first (may raise and bubble up if analysis fails)
         try:
-            if self.client is not None:
-                # prefer adapter.upload_file if we have it
-                if getattr(self, "_adapter", None) is not None:
-                    try:
-                        file_obj = await self._adapter.upload_file(file_path)
-                        yield getattr(file_obj, "name", getattr(file_obj, "uri", repr(file_obj)))
-                        return
-                    except Exception:
-                        logger.debug("Adapter upload failed, falling back to client or local hash", exc_info=True)
+            features = await analyze_audio(audio_bytes)
+        except Exception as e:
+            logger.exception("Audio analysis failed; returning procedural fallback: %s", e)
+            result = self._procedural_fallback({}, options)
+            _CACHE[cache_key] = result
+            return result
 
-                aio = getattr(self.client, "aio", None)
-                if aio is not None and getattr(aio, "files", None) is not None and hasattr(aio.files, "upload"):
-                    file_obj = await aio.files.upload(file=file_path)
-                    try:
-                        yield getattr(file_obj, "name", getattr(file_obj, "uri", repr(file_obj)))
-                    finally:
-                        return
-                # fallback: sync files.upload
-                if getattr(self.client, "files", None) is not None and hasattr(self.client.files, "upload"):
-                    file_obj = self.client.files.upload(file=file_path)
-                    yield getattr(file_obj, "name", getattr(file_obj, "uri", repr(file_obj)))
-                    return
-        except Exception:
-            logger.debug("Real client upload failed, falling back to local hash", exc_info=True)
+        # If we have a client, try to use it. If anything goes wrong, fall back.
+        if getattr(self, "client", None):
+            try:
+                # The production client codepath is intentionally flexible because
+                # different SDKs expose different async/sync calling shapes. Tests may
+                # patch `self.client` to be a callable/mock.
+                if hasattr(self.client, "generate"):
+                    # Example: a `generate` coroutine that accepts prompt/content
+                    response = await self.client.generate(prompt=SYNESTHETIC_PROMPT.format(features=features), options=options)
+                    # Attempt to parse JSON from the SDK response
+                    blueprint_json = None
+                    if isinstance(response, dict):
+                        blueprint_json = response.get("content") or response
+                    else:
+                        # Fallback: try to coerce to str then parse JSON
+                        try:
+                            blueprint_json = json.loads(str(response))
+                        except Exception:
+                            blueprint_json = None
 
-        # deterministic local fallback: return a file:// hash
-        h = hashlib.sha1(open(file_path, "rb").read()).hexdigest()
-        yield f"file://{h}"
+                    if blueprint_json:
+                        result = {"blueprint": blueprint_json, "features": features}
+                        _CACHE[cache_key] = result
+                        return result
+            except Exception:
+                logger.exception("Model generation failed; falling back to procedural generator")
+
+        # Final fallback: deterministic procedural generator based on features
+        result = self._procedural_fallback(features or {}, options)
+        _CACHE[cache_key] = result
+        return result
 
 
-# Convenience module-level instance for quick imports in tests
-gemini_service = GeminiService()
+    def _procedural_fallback(self, features: Dict[str, Any], options: Any = None) -> Dict[str, Any]:
+        """Create a simple, deterministic blueprint from analyzed features.
+
+        This is intentionally conservative: it produces a small, valid blueprint so the
+        frontend can continue development without a live GenAI key.
+        """
+        # Derive a few numeric seeds from hashed features for deterministic variety
+        features_repr = _safe_serialize(features)
+        seed = int(hashlib.sha256(features_repr.encode("utf-8")).hexdigest()[:8], 16)
+        def seeded_choice(choices):
+            return choices[seed % len(choices)]
+
+        palette_candidates = ["#FF6B6B", "#6BCB77", "#4D96FF", "#FFD93D", "#9B5CF6"]
+        components = ["straight", "climb", "drop", "turn", "loop", "barrelRoll"]
+
+        track = []
+        for i in range(5):
+            track.append({
+                "component": seeded_choice(components),
+                "length": 20 + (seed % 30),
+                "intensity": (seed % 100),
+            })
+
+        # Provide a few additional fields expected by frontend validators
+        total_length = sum(seg.get("length", 0) for seg in track)
+        blueprint = {
+            "id": f"procedural-{seed & 0xffff}",
+            "rideName": f"Procedural Ride {seed & 0xffff}",
+            "name": f"Procedural Ride {seed & 0xffff}",
+            "moodDescription": "A fallback, procedurally generated ride for development.",
+            "palette": [seeded_choice(palette_candidates) for _ in range(3)],
+            "track": track,
+            "duration": float(total_length),
+            "audioFeatures": {
+                "valence": 0.5,
+                "tempo": 120,
+                "loudness": -12,
+                "danceability": 0.5,
+                "speechiness": 0.0,
+                "acousticness": 0.1,
+                "instrumentalness": 0.0,
+                "liveness": 0.0,
+            },
+            "generatedPath": [],
+            "synesthetic": {
+                "geometry": {
+                    "wireframeDensity": 0.3,
+                    "organicBreathing": 0.6,
+                    "impossiblePhysics": {"enabled": True, "intensity": 0.4, "frequency": 0.2},
+                },
+                "particles": {"connectionDensity": 0.5},
+                "atmosphere": {"skyMood": "dreamy"},
+            },
+        }
+        return {"blueprint": blueprint, "features": features}
+
+
+    async def generate_skybox(self, prompt: str, blueprint: Dict[str, Any], options: Any = None) -> Dict[str, Any]:
+        """Lightweight skybox generator that returns a placeholder URL in dev/test environments."""
+        # In production this would call an image generation model; here we return a stable placeholder.
+        return {"url": "https://cdn.example.com/placeholder_skybox.png", "prompt": prompt}
+
+
+# Module-level singleton used by the FastAPI dependency in endpoints.py
+try:
+    gemini_service = GeminiService(api_key=os.environ.get("GEMINI_API_KEY"))
+except Exception:
+    # Be defensive during import; ensure endpoints importing this module don't blow up.
+    gemini_service = GeminiService(client=None)
