@@ -15,6 +15,7 @@ interface ErrorState {
  * Defines the complete state of the application, including status, data, and actions.
  */
 interface AppState {
+    _operationId: string;
         /** Global breathing intensity for geometry deformation. */
         breathingIntensity: number;
     /** The current status of the application. */
@@ -57,8 +58,6 @@ interface AppState {
         setTrackData: (data: TrackData | null) => void;
         /** Sets or clears the application's error state. */
         setError: (error: ErrorState | null) => void;
-        /** Sets the audio file to be processed. */
-        setAudioFile: (file: File | null) => void;
         /** Sets the audio source to be processed. */
         setAudioSource: (source: AudioNode | null) => void;
         /** Sets the progress of the current workflow. */
@@ -82,6 +81,7 @@ interface AppState {
  * The Zustand store for managing the application's global state.
  */
 export const useAppStore = create<AppState>((set, get) => ({
+    _operationId: crypto.randomUUID(),
     status: AppStatus.Idle,
     error: null,
     statusMessage: '',
@@ -102,18 +102,23 @@ export const useAppStore = create<AppState>((set, get) => ({
         setBlueprint: (blueprint: Blueprint | null) => set({ blueprint }),
         setAudioFeatures: (features: AudioFeatures | null) => set({ audioFeatures: features }),
         setTrackData: (data: TrackData | null) => {
-            const currentStatus = get().status;
-            if (data === null && (currentStatus === AppStatus.Riding || currentStatus === AppStatus.Ready)) {
-                set({ trackData: null, status: AppStatus.Idle, statusMessage: 'Track data was cleared, returning to start.' });
-            } else {
-                set({ trackData: data });
-            }
+            set((state) => {
+                const currentStatus = state.status;
+                if (data === null && (currentStatus === AppStatus.Riding || currentStatus === AppStatus.Ready)) {
+                    return {
+                        ...state,
+                        trackData: null,
+                        status: AppStatus.Idle,
+                        statusMessage: 'Track data was cleared, returning to start.',
+                    };
+                }
+                return {
+                    ...state,
+                    trackData: data,
+                };
+            });
         },
         setError: (error: ErrorState | null) => set({ error, status: error ? AppStatus.Error : get().status }),
-        setAudioFile: (file: File | null) => {
-            // Clear any previously-generated skybox when starting a new audio file
-            set({ audioFile: file, audioSource: null, status: AppStatus.Idle, error: null, workflowProgress: 0, skyboxUrl: null });
-        },
         setAudioSource: (source: AudioNode | null) => {
             set({ audioSource: source, audioFile: null, status: AppStatus.Idle, error: null, workflowProgress: 0, skyboxUrl: null });
         },
@@ -151,5 +156,53 @@ export const useAppStore = create<AppState>((set, get) => ({
                 set({ status: AppStatus.Riding });
             }
         },
+        setAudioFileAsync: async (file: File | null) => {
+            const operationId = crypto.randomUUID();
+
+            set((state) => ({
+                ...state,
+                audioFile: file,
+                audioSource: null,
+                status: AppStatus.Loading,
+                error: null,
+                workflowProgress: 0,
+                skyboxUrl: null,
+                _operationId: operationId
+            }));
+
+            try {
+                if (file) {
+                    // await validateAudioFile(file);
+                }
+
+                set((state) => {
+                    if (state._operationId !== operationId) {
+                        return state;
+                    }
+
+                    return {
+                        ...state,
+                        status: AppStatus.Idle,
+                        statusMessage: file ? 'Audio file loaded' : 'Audio file cleared'
+                    };
+                });
+            } catch (error) {
+                set((state) => {
+                    if (state._operationId !== operationId) {
+                        return state;
+                    }
+
+                    const message = error instanceof Error ? error.message : String(error);
+                    return {
+                        ...state,
+                        status: AppStatus.Error,
+                        error: {
+                            title: 'Audio File Error',
+                            message,
+                        },
+                    };
+                });
+            }
+        }
     }
 }));

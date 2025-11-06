@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { VisualEffects } from '../../../lib/VisualEffects';
+import { VisualEffectsOrchestrator } from '../../../lib/visual-effects/VisualEffectsOrchestrator';
 import { RideCamera } from '../../../lib/RideCamera';
 import { FrameAnalysis } from 'shared/types';
 
@@ -7,11 +7,11 @@ import { FrameAnalysis } from 'shared/types';
  * A custom hook to manage all global event listeners for the Three.js scene.
  * This includes listeners for real-time audio analysis frames and developer tools.
  *
- * @param {React.RefObject<VisualEffects | null>} visualEffectsRef - Ref to the VisualEffects instance.
+ * @param {React.RefObject<VisualEffectsOrchestrator | null>} visualEffectsRef - Ref to the VisualEffectsOrchestrator instance.
  * @param {React.RefObject<RideCamera | null>} rideCameraRef - Ref to the RideCamera instance.
  */
 export const useGlobalEventListeners = (
-  visualEffectsRef: React.RefObject<VisualEffects | null>,
+  visualEffectsRef: React.RefObject<VisualEffectsOrchestrator | null>,
   rideCameraRef: React.RefObject<RideCamera | null>
 ) => {
   useEffect(() => {

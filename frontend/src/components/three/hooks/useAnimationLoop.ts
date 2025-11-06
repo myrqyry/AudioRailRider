@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { AppStatus, TrackData, FrameAnalysis } from 'shared/types';
 import { SceneManager } from '../../../lib/SceneManager';
 import { RideCamera } from '../../../lib/RideCamera';
-import { VisualEffects } from '../../../lib/VisualEffects';
+import { VisualEffectsOrchestrator } from '../../../lib/visual-effects/VisualEffectsOrchestrator';
 
 const DEFAULT_PATH_SPEED = 50;
 
@@ -25,7 +25,7 @@ export const useAnimationLoop = (
   audioEl: HTMLAudioElement | null,
   sceneManager: SceneManager | null,
   rideCamera: RideCamera | null,
-  visualEffects: VisualEffects | null,
+  visualEffects: VisualEffectsOrchestrator | null,
   onRideFinish: () => void,
 ) => {
   const animationFrameId = useRef<number | null>(null);
