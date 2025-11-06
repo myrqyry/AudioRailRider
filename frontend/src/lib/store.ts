@@ -174,7 +174,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
             try {
                 if (file) {
-                    // await validateAudioFile(file);
+                    await validateAudioFile(file);
                 }
 
                 set((state) => {
