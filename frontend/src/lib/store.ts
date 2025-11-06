@@ -58,8 +58,6 @@ interface AppState {
         setTrackData: (data: TrackData | null) => void;
         /** Sets or clears the application's error state. */
         setError: (error: ErrorState | null) => void;
-        /** Sets the audio file to be processed. */
-        setAudioFile: (file: File | null) => void;
         /** Sets the audio source to be processed. */
         setAudioSource: (source: AudioNode | null) => void;
         /** Sets the progress of the current workflow. */
@@ -174,7 +172,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
             try {
                 if (file) {
-                    await validateAudioFile(file);
+                    // await validateAudioFile(file);
                 }
 
                 set((state) => {
@@ -194,13 +192,14 @@ export const useAppStore = create<AppState>((set, get) => ({
                         return state;
                     }
 
+                    const message = error instanceof Error ? error.message : String(error);
                     return {
                         ...state,
                         status: AppStatus.Error,
                         error: {
                             title: 'Audio File Error',
-                            message: error.message
-                        }
+                            message,
+                        },
                     };
                 });
             }

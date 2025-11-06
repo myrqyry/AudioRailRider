@@ -12,7 +12,7 @@ export class TrackGeometryManager {
     private trackData: TrackData;
     private trackMesh: THREE.Mesh;
     private trackMaterial: THREE.MeshStandardMaterial;
-    public pathCurve: THREE.CatullRomCurve3 | null = null;
+    public pathCurve: THREE.CatmullRomCurve3 | null = null;
     private highQualityMode: boolean = true;
     private placeTrackUnderCamera: boolean;
     private trackUnderCameraVerticalOffset: number;
@@ -50,7 +50,7 @@ export class TrackGeometryManager {
                 curvePoints = this.computeOffsetCurvePoints(this.trackPathPoints);
             }
 
-            const curve = new THREE.CatullRomCurve3(curvePoints);
+            const curve = new THREE.CatmullRomCurve3(curvePoints);
             this.pathCurve = curve;
             const newGeom = new THREE.TubeGeometry(curve, Math.max(4, segments), this.trackRadius, this.highQualityMode ? 8 : 6, false);
             const geometry = geometryPool.acquire();

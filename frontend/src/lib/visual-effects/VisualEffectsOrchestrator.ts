@@ -14,8 +14,12 @@ import {
     PLACE_TRACK_UNDER_CAMERA,
     TRACK_UNDER_CAMERA_VERTICAL_OFFSET,
     TRACK_RADIUS,
+    PERFORMANCE_CHECK_INTERVAL,
+    TARGET_FPS,
+    LOW_QUALITY_DEBOUNCE_MS
 } from '../constants';
 import { AnimationFrameManager } from '../utils/AnimationFrameManager';
+import { secondsToNumber } from 'shared/utils';
 
 class ValidationError extends Error {
     constructor(message: string) {
@@ -40,6 +44,10 @@ export class VisualEffectsOrchestrator {
     private gpuAudioForce: number = 0;
     private rideSpeedSmoothed: number = 0;
     private lastUpdateSeconds: number = 0;
+    private readonly _forward = new THREE.Vector3();
+    private readonly _right = new THREE.Vector3();
+    private readonly _up = new THREE.Vector3();
+    private readonly _worldUp = new THREE.Vector3(0, 1, 0);
 
     constructor(scene: THREE.Scene, trackData: TrackData, camera: THREE.Camera) {
         this.scene = scene;
@@ -75,8 +83,32 @@ export class VisualEffectsOrchestrator {
                 colorInner: { value: trackTintA },
                 colorOuter: { value: trackTintB },
             },
-            vertexShader: `...`, // Placeholder for ghost ribbon vertex shader
-            fragmentShader: `...`, // Placeholder for ghost ribbon fragment shader
+            vertexShader: `varying float vPath;
+varying float vRadial;
+uniform float time;
+uniform float audioPulse;
+void main() {
+  vPath = clamp(uv.y, 0.0, 1.0);
+  vRadial = uv.x;
+  float shimmer = sin(vPath * 20.0 + time * 2.4) * 0.35;
+  float lift = 0.6 + audioPulse * 1.2 + shimmer;
+  vec3 displaced = position + normal * lift;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
+}`,
+            fragmentShader: `varying float vPath;
+varying float vRadial;
+uniform vec3 colorInner;
+uniform vec3 colorOuter;
+uniform float audioPulse;
+void main() {
+  float fade = smoothstep(0.0, 1.0, vPath);
+  vec3 tint = mix(colorInner, colorOuter, fade);
+  float radial = 1.0 - abs(vRadial * 2.0 - 1.0);
+  float softness = pow(radial, 1.6);
+  float alpha = clamp((0.35 + audioPulse * 0.65) * softness, 0.0, 1.0);
+  if (alpha < 0.01) discard;
+  gl_FragColor = vec4(tint, alpha);
+}`,
             transparent: true,
             depthWrite: false,
             blending: THREE.AdditiveBlending,
@@ -84,22 +116,55 @@ export class VisualEffectsOrchestrator {
         });
 
         const sanitized = this.analyzeAndSanitizePath(trackData.path);
-    }
-
-    private hasBoundsTree(geometry: THREE.BufferGeometry): geometry is THREE.BufferGeometry & { boundsTree: MeshBVH } {
-        return 'boundsTree' in geometry && typeof (geometry as any).boundsTree?.closestPointToPoint === 'function';
+        if (sanitized.isErr()) {
+            console.warn('[VisualEffectsOrchestrator] Issues found in track path:', sanitized.error);
+        }
 
         const initialSettings = {
             placeTrackUnderCamera: PLACE_TRACK_UNDER_CAMERA,
             trackUnderCameraVerticalOffset: TRACK_UNDER_CAMERA_VERTICAL_OFFSET,
             trackRadius: TRACK_RADIUS,
-            trackPathPoints: sanitized.points,
+            trackPathPoints: sanitized.isOk() ? sanitized.value.points : [],
         };
 
         this.trackGeometryManager = new TrackGeometryManager(scene, trackData, this.trackMaterial, initialSettings);
         const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-        this.particleSystemController = new ParticleSystemController(scene, !isMobile);
+        this.particleSystemController = new ParticleSystemController(scene, !isMobile, trackData.synesthetic?.particles ?? null);
         this.shaderUniformManager = new ShaderUniformManager(this.trackMaterial, this.ghostRibbonMaterial);
+
+        try {
+            this.timelineEvents = Array.isArray((trackData as any).events) ? (trackData as any).events.slice() : [];
+            for (const ev of this.timelineEvents) {
+                if (ev && ev.timestamp === undefined && ev.params && ev.params.audioSyncPoint) {
+                    ev.timestamp = ev.params.audioSyncPoint as any;
+                }
+            }
+            this.timelineEvents.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+        } catch (e) {
+            console.error('[VisualEffectsOrchestrator] Failed to process timeline events:', e);
+            this.timelineEvents = [];
+        }
+    }
+
+    private spawnEvent(ev: TimelineEvent, intensity: number, origin: THREE.Vector3) {
+        const t = ev.type;
+        const inten = Math.max(0.02, Math.min(1, intensity));
+        switch (t) {
+            case 'fireworks': {
+                const bursts = 3 + Math.round(inten * 5);
+                for (let i = 0; i < bursts; i++) {
+                    const jitter = new THREE.Vector3((Math.random() - 0.5) * 6, 6 + Math.random() * 6, (Math.random() - 0.5) * 6);
+                    const pos = new THREE.Vector3().copy(origin).add(jitter);
+                    this.particleSystemController.spawnFeatureBurst('sparkle', inten * (0.8 + Math.random() * 0.6), pos, this.audioFeatures, this.segmentIntensityBoost);
+                }
+                break;
+            }
+            // ... other event types
+        }
+    }
+
+    private hasBoundsTree(geometry: THREE.BufferGeometry): geometry is THREE.BufferGeometry & { boundsTree: MeshBVH } {
+        return 'boundsTree' in geometry && typeof (geometry as any).boundsTree?.closestPointToPoint === 'function';
     }
 
     private analyzeAndSanitizePath(rawPath: unknown): Result<{ points: THREE.Vector3[]; issues: string[] }, ValidationError> {
@@ -107,7 +172,7 @@ export class VisualEffectsOrchestrator {
             const issues: string[] = [];
 
             if (!Array.isArray(rawPath)) {
-                return Err(new ValidationError('Path must be an array'));
+                return new Err(new ValidationError('Path must be an array'));
             }
 
             const points: THREE.Vector3[] = [];
@@ -124,21 +189,21 @@ export class VisualEffectsOrchestrator {
             }
 
             if (points.length < 2) {
-                return Err(new ValidationError('Path must contain at least 2 valid points'));
+                return new Err(new ValidationError('Path must contain at least 2 valid points'));
             }
 
-            return Ok({ points, issues });
+            return new Ok({ points, issues });
         } catch (error) {
-            return Err(new ValidationError(`Path analysis failed: ${error.message}`));
+            return new Err(new ValidationError(`Path analysis failed: ${error.message}`));
         }
     }
 
     private validatePathPoint(point: any, index: number): Result<THREE.Vector3, ValidationError> {
         const vec = this.normalizePathPoint(point);
         if (!vec) {
-            return Err(new ValidationError(`Invalid point at index ${index}`));
+            return new Err(new ValidationError(`Invalid point at index ${index}`));
         }
-        return Ok(vec);
+        return new Ok(vec);
     }
 
     private normalizePathPoint(point: any): THREE.Vector3 | null {
@@ -180,7 +245,55 @@ export class VisualEffectsOrchestrator {
     }
 
     public update(elapsedTime: number, currentFrame: FrameAnalysis | null, cameraPosition: THREE.Vector3, lookAtPosition: THREE.Vector3, rideProgress: number) {
-        // ... (orchestration logic)
+        const now = performance.now();
+        const nowSeconds = now / 1000;
+        const deltaSeconds = this.lastUpdateSeconds === 0 ? 1 / 60 : Math.min(0.25, Math.max(1 / 240, nowSeconds - this.lastUpdateSeconds));
+        this.lastUpdateSeconds = nowSeconds;
+
+        const clampedProgress = THREE.MathUtils.clamp(rideProgress ?? 0, 0, 1);
+
+        try {
+            const durationNum = this.trackData && this.trackData.audioFeatures && typeof this.trackData.audioFeatures.duration === 'number' ? secondsToNumber(this.trackData.audioFeatures.duration) : 0;
+            const currentAudioTime = durationNum > 0 ? clampedProgress * durationNum : 0;
+            this.handleTimelineEvents(currentAudioTime, deltaSeconds, cameraPosition, lookAtPosition);
+            this.lastAudioTimeSeconds = currentAudioTime;
+        } catch (e) {
+            console.error('[VisualEffectsOrchestrator] Error during timeline event handling:', e);
+        }
+
+        this.particleSystemController.update(nowSeconds, deltaSeconds, cameraPosition, this.audioFeatures, this.segmentIntensityBoost, this.gpuAudioForce);
+
+        this.shaderUniformManager.update(
+            elapsedTime,
+            this.trackPulse,
+            this.segmentIntensityBoost,
+            this.gpuAudioForce,
+            this.audioFeatures,
+            this.rideSpeedSmoothed
+        );
+    }
+
+    private handleTimelineEvents(currentAudioTime: number, deltaSeconds: number, cameraPosition: THREE.Vector3, lookAtPosition: THREE.Vector3) {
+        if (!this.timelineEvents || !this.timelineEvents.length) return;
+        const now = currentAudioTime;
+        this._forward.subVectors(lookAtPosition, cameraPosition).normalize();
+        this._right.crossVectors(this._forward, this._worldUp).normalize();
+        this._up.crossVectors(this._right, this._forward).normalize();
+
+        for (let i = 0; i < this.timelineEvents.length; i++) {
+            const ev = this.timelineEvents[i];
+            if (!ev || typeof ev.timestamp !== 'number') continue;
+            const triggeredUntil = this.timelineTriggeredUntil.get(i) || 0;
+            if (now <= triggeredUntil) continue;
+            const lookahead = Math.max(0.05, deltaSeconds * 1.5);
+            if (now + lookahead >= ev.timestamp) {
+                const intensity = Math.max(0, Math.min(1, (ev.intensity ?? 0.6) * (this.segmentIntensityBoost || 1)));
+                const spawnPos = new THREE.Vector3().copy(cameraPosition).addScaledVector(this._forward, 8).addScaledVector(this._up, 1.5);
+                this.spawnEvent(ev, intensity, spawnPos);
+                const duration = ev.duration ? (typeof ev.duration === 'number' ? ev.duration : Number(ev.duration)) : 2.0;
+                this.timelineTriggeredUntil.set(i, ev.timestamp + duration + 0.5);
+            }
+        }
     }
 
     public dispose() {
