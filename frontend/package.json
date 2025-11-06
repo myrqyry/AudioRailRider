@@ -1,5 +1,5 @@
 {
-  "name": "audiorail-rider.0",
+  "name": "@audiorailrider/frontend",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -25,7 +25,8 @@
     "regl": "^2.1.1",
     "three": "^0.180.0",
     "three-mesh-bvh": "^0.7.8",
-    "zustand": "^5.0.7"
+    "zustand": "^5.0.7",
+    "@audiorailrider/shared": "workspace:*"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.1",

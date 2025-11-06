@@ -2,12 +2,12 @@ import { useRef, useEffect } from 'react';
 import { Scene, PerspectiveCamera } from 'three';
 import { TrackData } from 'shared/types';
 import { RideCamera } from '../../../lib/RideCamera';
-import { VisualEffects } from '../../../lib/VisualEffects';
+import { VisualEffectsOrchestrator } from '../../../lib/visual-effects/VisualEffectsOrchestrator';
 import { SceneManager } from '../../../lib/SceneManager';
 
 interface RideRefs {
   rideCameraRef: React.MutableRefObject<RideCamera | null>;
-  visualEffectsRef: React.MutableRefObject<VisualEffects | null>;
+  visualEffectsRef: React.MutableRefObject<VisualEffectsOrchestrator | null>;
 }
 
 /**
@@ -25,7 +25,7 @@ export const useRide = (
   recoveryTrigger: number,
 ): RideRefs => {
   const rideCameraRef = useRef<RideCamera | null>(null);
-  const visualEffectsRef = useRef<VisualEffects | null>(null);
+  const visualEffectsRef = useRef<VisualEffectsOrchestrator | null>(null);
   const gpuInitRequestedRef = useRef(false);
 
   useEffect(() => {
@@ -43,8 +43,8 @@ export const useRide = (
 
     if (trackData.path.length > 1) {
       rideCameraRef.current = new RideCamera(sceneManager.camera, trackData);
-      visualEffectsRef.current = new VisualEffects(sceneManager.scene, trackData, sceneManager.camera);
-      console.log('[useRide] RideCamera and VisualEffects created.');
+      visualEffectsRef.current = new VisualEffectsOrchestrator(sceneManager.scene, trackData, sceneManager.camera);
+      console.log('[useRide] RideCamera and VisualEffectsOrchestrator created.');
 
       const renderer = sceneManager.renderer;
       if (visualEffectsRef.current && renderer && !gpuInitRequestedRef.current) {

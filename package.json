@@ -4,20 +4,35 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"pnpm --filter ./frontend run dev\" \"cd backend && PYTHONPATH=..:$PYTHONPATH poetry run uvicorn main:app --reload --host 0.0.0.0 --port 8000\"",
+    "dev": "concurrently \"pnpm --filter frontend dev\" \"pnpm --filter backend dev\"",
     "setup": "pnpm install --recursive",
     "postinstall": "pnpm run backend:install && pnpm run sync:constants",
     "sync:constants": "node scripts/sync-constants.mjs",
-    "frontend:dev": "pnpm --filter ./frontend run dev",
+    "frontend:dev": "pnpm --filter frontend dev",
     "backend:install": "cd backend && poetry install --no-root",
     "backend:dev": "cd backend && poetry run uvicorn main:app --reload --host 0.0.0.0 --port 8000",
-    "build": "pnpm --filter ./frontend run build"
+    "build": "pnpm --filter frontend build && pnpm --filter backend build",
+    "install:all": "pnpm install --recursive",
+    "test": "pnpm --recursive run test",
+    "lint": "pnpm --recursive run lint",
+    "clean": "pnpm --recursive run clean",
+    "reset": "pnpm run clean && rm -rf node_modules pnpm-lock.yaml && pnpm install"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.26.0",
     "concurrently": "^8.2.2"
   },
   "dependencies": {
     "all": "^0.0.0",
+    "neverthrow": "^8.2.0",
     "zod": "^4.1.12"
-  }
+  },
+  "engines": {
+    "pnpm": ">=8.0.0"
+  },
+  "workspaces": [
+    "frontend",
+    "backend",
+    "shared"
+  ]
 }
