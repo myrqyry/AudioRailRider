@@ -17,6 +17,8 @@ from typing import Any, AsyncIterator, Dict, Optional
 from cachetools import TTLCache
 from types import SimpleNamespace
 
+from app.schema.blueprint import Blueprint
+
 logger = logging.getLogger("GeminiService")
 
 class AudioAnalysisCache:
@@ -57,7 +59,7 @@ SYNESTHETIC_PROMPT = """
 You are not designing a rollercoaster - you are translating a song's soul into a navigable dreamscape.
 AUDIO SOUL ANALYSIS: {features}
 
-Create a JSON blueprint for a synesthetic experience with impossible physics:
+Create a JSON blueprint for a synesthetic experience with impossible physics.
 
 **DREAM-LOGIC ELEMENTS:**
 - gravity_defying_spirals: Rails that twist through negative space
@@ -81,43 +83,6 @@ Create a JSON blueprint for a synesthetic experience with impossible physics:
 - Geometry that morphs between 2D and 3D based on musical texture
 
 Return a blueprint that makes the rider feel like "the needle on the record."
-
-Output must be valid JSON with this exact schema:
-{{
-  "rideName": "string (creative name for the ride)",
-  "moodDescription": "string (evocative description of the ride's mood)",
-  "palette": ["#hexcolor1", "#hexcolor2", "#hexcolor3"] (array of 3-5 hex color strings),
-  "track": [
-    {{
-      "component": "straight|climb|drop|turn|loop|barrelRoll",
-      "length": number (segment length in meters),
-      "intensity": number (optional, 0-100),
-      "lightingEffect": "string (optional)",
-      "environmentChange": "string (optional)",
-      "audioSyncPoint": number (optional, seconds)
-    }},
-    ... (at least 5 segments)
-  ],
-  "synesthetic": {{
-    "geometry": {{
-      "wireframeDensity": number (0-1, optional),
-      "organicBreathing": number (0-1, optional),
-      "impossiblePhysics": {{
-        "enabled": boolean,
-        "intensity": number (0-1),
-        "frequency": number (0-1)
-      }}
-    }},
-    "particles": {{
-      "connectionDensity": number (0-1, optional),
-      "resonanceThreshold": number (0-1, optional)
-    }},
-    "atmosphere": {{
-      "skyMood": "string (optional)"
-    }}
-  }}
-}}
-Return only the JSON, no extra text.
 """
 
 
@@ -234,27 +199,22 @@ class GeminiService:
         # If we have a client, try to use it. If anything goes wrong, fall back.
         if getattr(self, "client", None):
             try:
-                # The production client codepath is intentionally flexible because
-                # different SDKs expose different async/sync calling shapes. Tests may
-                # patch `self.client` to be a callable/mock.
-                if hasattr(self.client, "generate"):
-                    # Example: a `generate` coroutine that accepts prompt/content
-                    response = await self.client.generate(prompt=SYNESTHETIC_PROMPT.format(features=features), options=options)
-                    # Attempt to parse JSON from the SDK response
-                    blueprint_json = None
-                    if isinstance(response, dict):
-                        blueprint_json = response.get("content") or response
-                    else:
-                        # Fallback: try to coerce to str then parse JSON
-                        try:
-                            blueprint_json = json.loads(str(response))
-                        except Exception:
-                            blueprint_json = None
+                generation_config = {
+                    "response_mime_type": "application/json",
+                    "response_json_schema": Blueprint.model_json_schema(),
+                }
 
-                    if blueprint_json:
-                        result = {"blueprint": blueprint_json, "features": features}
-                        _CACHE[cache_key] = result
-                        return result
+                response = await self.client.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=SYNESTHETIC_PROMPT.format(features=features),
+                    config=generation_config
+                )
+
+                if response.text:
+                    blueprint = Blueprint.model_validate_json(response.text)
+                    result = {"blueprint": blueprint.model_dump(), "features": features}
+                    _CACHE[cache_key] = result
+                    return result
             except Exception:
                 logger.exception("Model generation failed; falling back to procedural generator")
 
