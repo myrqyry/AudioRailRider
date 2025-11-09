@@ -94,8 +94,7 @@ def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
         # 2. Load audio with error handling
         try:
             audio_stream = io.BytesIO(audio_bytes)
-            target_sr = 22050
-            y, sr = librosa.load(audio_stream, sr=target_sr, mono=True)
+            y, sr = librosa.load(audio_stream, sr=settings.audio_analysis.target_sr, mono=True)
         except Exception as e:
             logger.error("Failed to decode audio", error=str(e), exc_info=True)
             raise AudioAnalysisError(f"Failed to decode audio: {e}")

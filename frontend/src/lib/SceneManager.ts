@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { RIDE_CONFIG } from 'shared/constants';
+import { RIDE_CONFIG, SCENE_CONFIG } from 'shared/constants';
 import { FPSMeter } from './fpsMeter';
 
 /**
@@ -35,7 +35,7 @@ export class SceneManager {
         this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             // Lightweight FPS meter for adaptive quality heuristics
             (this.scene as any).userData = (this.scene as any).userData || {};
-            (this.scene as any).userData._fpsMeter = new FPSMeter(1000);
+            (this.scene as any).userData._fpsMeter = new FPSMeter(RIDE_CONFIG.FPS_METER_INTERVAL);
         this.init();
     }
 
@@ -49,7 +49,7 @@ export class SceneManager {
         
         // Cap DPR to avoid excessive GPU work; we adaptively lower it if FPS drops.
         const rawDpr = (typeof window !== 'undefined' && window.devicePixelRatio) ? window.devicePixelRatio : 1;
-        const capped = Math.min(rawDpr, 2);
+        const capped = Math.min(rawDpr, RIDE_CONFIG.MAX_DPR);
         this.renderer.setPixelRatio(capped);
         this.renderer.setSize(width, height);
         
@@ -61,10 +61,10 @@ export class SceneManager {
         this.container.appendChild(this.renderer.domElement);
 
         // Set a default dark gradient background
-        const topColor = new THREE.Color(0x0a0a1a); // Very dark blue
-        const bottomColor = new THREE.Color(0x000000); // Black
+        const topColor = new THREE.Color(SCENE_CONFIG.DEFAULT_BACKGROUND_TOP_COLOR);
+        const bottomColor = new THREE.Color(SCENE_CONFIG.DEFAULT_BACKGROUND_BOTTOM_COLOR);
         this.scene.background = topColor;
-        this.scene.fog = new THREE.Fog(bottomColor, RIDE_CONFIG.FOG_NEAR, RIDE_CONFIG.FOG_FAR);
+        this.scene.fog = new THREE.Fog(new THREE.Color(SCENE_CONFIG.DEFAULT_FOG_COLOR), RIDE_CONFIG.FOG_NEAR, RIDE_CONFIG.FOG_FAR);
 
         // Add essential lighting to the scene
         const ambientLight = new THREE.AmbientLight(0xffffff, RIDE_CONFIG.AMBIENT_LIGHT_INTENSITY);
@@ -121,7 +121,7 @@ export class SceneManager {
         this.camera.aspect = containerWidth / containerHeight;
         this.camera.updateProjectionMatrix();
                 const rawDpr = (typeof window !== 'undefined' && window.devicePixelRatio) ? window.devicePixelRatio : 1;
-                const capped = Math.min(rawDpr, 2);
+                const capped = Math.min(rawDpr, RIDE_CONFIG.MAX_DPR);
                 this.renderer.setPixelRatio(capped);
         this.renderer.setSize(containerWidth, containerHeight);
     };
@@ -160,7 +160,7 @@ export class SceneManager {
                     (this.scene as any).userData.lodHint = fps < 40 ? 'low' : 'high';
                     // If FPS is very low, reduce DPR proactively
                     if (fps < 30) this.renderer.setPixelRatio(1);
-                    else this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+                    else this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, RIDE_CONFIG.MAX_DPR));
                 }
             }
         } catch (e) {
