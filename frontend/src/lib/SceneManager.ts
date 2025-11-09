@@ -64,7 +64,7 @@ export class SceneManager {
         const topColor = new THREE.Color(SCENE_CONFIG.DEFAULT_BACKGROUND_TOP_COLOR);
         const bottomColor = new THREE.Color(SCENE_CONFIG.DEFAULT_BACKGROUND_BOTTOM_COLOR);
         this.scene.background = topColor;
-        this.scene.fog = new THREE.Fog(new THREE.Color(SCENE_CONFIG.DEFAULT_FOG_COLOR), RIDE_CONFIG.FOG_NEAR, RIDE_CONFIG.FOG_FAR);
+        this.scene.fog = new THREE.Fog(SCENE_CONFIG.DEFAULT_FOG_COLOR, RIDE_CONFIG.FOG_NEAR, RIDE_CONFIG.FOG_FAR);
 
         // Add essential lighting to the scene
         const ambientLight = new THREE.AmbientLight(0xffffff, RIDE_CONFIG.AMBIENT_LIGHT_INTENSITY);
