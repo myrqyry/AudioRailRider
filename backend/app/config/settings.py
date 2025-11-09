@@ -8,6 +8,7 @@ class AudioAnalysisSettings(BaseModel):
     hop_length: int = Field(default=512, gt=0, description="Hop length for analysis")
     bass_cutoff_hz: int = Field(default=250, gt=0, description="Bass frequency cutoff")
     mid_cutoff_hz: int = Field(default=4000, gt=0, description="Mid-range frequency cutoff")
+    target_sr: int = Field(default=22050, gt=0, description="Target sample rate for analysis")
 
     # Tempo analysis
     tempo_min_bpm: float = Field(default=60.0, gt=0)

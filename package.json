@@ -19,7 +19,6 @@
     "reset": "pnpm run clean && rm -rf node_modules pnpm-lock.yaml && pnpm install"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.26.0",
     "concurrently": "^8.2.2"
   },
   "dependencies": {
