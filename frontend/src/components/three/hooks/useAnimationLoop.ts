@@ -101,9 +101,9 @@ export const useAnimationLoop = (
 
         if (currentFrame) {
             const audioData = {
-                bass: currentFrame.bands.bass,
-                mid: currentFrame.bands.mid,
-                treble: currentFrame.bands.treble,
+                bass: currentFrame.bass,
+                mid: currentFrame.mid,
+                treble: currentFrame.high,
                 energy: currentFrame.energy,
             };
             sceneManager.updatePostProcessing(audioData);
