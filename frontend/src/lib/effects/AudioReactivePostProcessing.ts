@@ -60,28 +60,17 @@ export class AudioReactivePostProcessing {
         this.smoothedAudio.treble += (audioData.treble - this.smoothedAudio.treble) * smoothingFactor;
         this.smoothedAudio.energy += (audioData.energy - this.smoothedAudio.energy) * smoothingFactor;
 
-        if (this.bloom) {
-            this.bloom.intensity = THREE.MathUtils.lerp(0.5, 3.0, this.smoothedAudio.bass * intensity);
-            this.bloom.luminanceThreshold = THREE.MathUtils.lerp(0.9, 0.3, this.smoothedAudio.energy);
-        }
+        this.bloom.intensity = THREE.MathUtils.lerp(0.5, 3.0, this.smoothedAudio.bass * intensity);
+        this.bloom.luminanceThreshold = THREE.MathUtils.lerp(0.9, 0.3, this.smoothedAudio.energy);
 
-        if (this.chromaticAberration) {
-            const offset = new THREE.Vector2(
-                this.smoothedAudio.treble * 0.003 * intensity,
-                this.smoothedAudio.treble * 0.003 * intensity
-            );
-            this.chromaticAberration.offset.copy(offset);
-        }
+        const chromaticOffsetValue = this.smoothedAudio.treble * 0.003 * intensity;
+        this.chromaticAberration.offset.set(chromaticOffsetValue, chromaticOffsetValue);
 
-        if (this.glitch) {
-            if (this.smoothedAudio.energy > 0.85) {
-                this.glitch.strength.set(
-                    THREE.MathUtils.lerp(0.1, 0.6, (this.smoothedAudio.energy - 0.85) / 0.15),
-                    THREE.MathUtils.lerp(0.1, 0.6, (this.smoothedAudio.energy - 0.85) / 0.15)
-                );
-            } else {
-                this.glitch.strength.set(0, 0);
-            }
+        if (this.smoothedAudio.energy > 0.85) {
+            const glitchAmount = THREE.MathUtils.lerp(0.1, 0.6, (this.smoothedAudio.energy - 0.85) / 0.15);
+            this.glitch.strength.set(glitchAmount, glitchAmount);
+        } else {
+            this.glitch.strength.set(0, 0);
         }
     }
 
