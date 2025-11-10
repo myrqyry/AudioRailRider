@@ -76,3 +76,4 @@ export const SCENE_CONFIG = {
   "DEFAULT_BACKGROUND_BOTTOM_COLOR": "#000000",
   "DEFAULT_FOG_COLOR": "#000000"
 } as const;
+

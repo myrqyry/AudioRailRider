@@ -17,7 +17,7 @@ interface IdleUIProps {
  * @returns {React.ReactElement} The rendered idle UI.
  */
 const IdleUI: React.FC<IdleUIProps> = ({ audioContext }) => {
-    const { setAudioFile, setError } = useAppStore((state) => state.actions);
+    const actions = useAppStore((state) => state.actions);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     // When the component mounts, clear the file input to allow re-uploading the same file
@@ -40,25 +40,29 @@ const IdleUI: React.FC<IdleUIProps> = ({ audioContext }) => {
         const maxBytes = 20 * 1024 * 1024; // 20 MB
 
         if (!allowedTypes.has(file.type)) {
-        // Clear file input on mount and setup cleanup
-        useEffect(() => {
-            const inputElement = fileInputRef.current;
-
-            if (inputElement) {
-                inputElement.value = '';
+            actions.setError({
+                title: 'Unsupported file type',
+                message: 'Please upload an MP3 or WAV file.',
+            });
+            if (fileInputRef.current) {
+                fileInputRef.current.value = '';
             }
-
-            return () => {
-                if (inputElement) {
-                    inputElement.value = '';
-                    inputElement.blur();
-                }
-            };
-        }, []);
+            return;
         }
 
-        setAudioFile(file);
-    }, [setAudioFile, setError]);
+        if (file.size > maxBytes) {
+            actions.setError({
+                title: 'File too large',
+                message: 'Please upload a file smaller than 20MB.',
+            });
+            if (fileInputRef.current) {
+                fileInputRef.current.value = '';
+            }
+            return;
+        }
+
+        actions.setAudioFileAsync(file);
+    }, [actions]);
 
     return (
         <div className="text-center animate-fade-in">
