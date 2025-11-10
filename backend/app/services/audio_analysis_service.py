@@ -144,8 +144,17 @@ def _analyze_audio_sync(audio_bytes: bytes) -> Dict[str, Any]:
                 high = np.clip(high_energy / max_s, 0, 1)
 
                 times = librosa.frames_to_time(np.arange(S.shape[1]), sr=sr, hop_length=settings.audio_analysis.hop_length)
-                rms = librosa.feature.rms(S=S)[0]
-                centroid = librosa.feature.spectral_centroid(S=S, sr=sr)[0]
+                rms = librosa.feature.rms(
+                    S=S,
+                    frame_length=settings.audio_analysis.n_fft,
+                    hop_length=settings.audio_analysis.hop_length
+                )[0]
+                centroid = librosa.feature.spectral_centroid(
+                    S=S,
+                    sr=sr,
+                    n_fft=settings.audio_analysis.n_fft,
+                    hop_length=settings.audio_analysis.hop_length
+                )[0]
                 flux = np.abs(np.diff(centroid, prepend=centroid[0]))
 
                 features["frameAnalyses"] = [{
