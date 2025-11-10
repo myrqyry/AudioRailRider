@@ -35,6 +35,9 @@ importers:
       meyda:
         specifier: ^5.6.3
         version: 5.6.3(rollup@4.50.1)
+      postprocessing:
+        specifier: ^6.38.0
+        version: 6.38.0(three@0.180.0)
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -2087,6 +2090,11 @@ packages:
   postcss@8.5.6:
     resolution: {integrity: sha512-3Ybi1tAuwAP9s0r1UQ2J4n5Y0G05bJkpUIO0/bI9MhwmD70S5aTWbXGBwxHrelT+XM1k6dM0pk+SwNkpTRN7Pg==}
     engines: {node: ^10 || ^12 || >=14}
+
+  postprocessing@6.38.0:
+    resolution: {integrity: sha512-tisx8XN/PWTL3uXz2mt8bjlMS1wiOUSCK3ixi4zjwUCFmP8XW8hNhXwrxwd2zf2VmCyCQ3GUaLm7GLnkkBbDsQ==}
+    peerDependencies:
+      three: '>= 0.157.0 < 0.182.0'
 
   pretty-format@27.5.1:
     resolution: {integrity: sha512-Qb1gy5OrP5+zDf2Bvnzdl3jsTf1qXVMazbvCoKhtKqVs4/YK4ozX4gKQJJVyNe+cajNPn0KoC0MC3FUmaHWEmQ==}
@@ -4796,6 +4804,10 @@ snapshots:
       nanoid: 3.3.11
       picocolors: 1.1.1
       source-map-js: 1.2.1
+
+  postprocessing@6.38.0(three@0.180.0):
+    dependencies:
+      three: 0.180.0
 
   pretty-format@27.5.1:
     dependencies:

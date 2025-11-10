@@ -98,7 +98,18 @@ export const useAnimationLoop = (
           rideCamera.lookAtPos,
           Math.max(0, Math.min(1, progress)),
         );
-        sceneManager.render();
+
+        if (currentFrame) {
+            const audioData = {
+                bass: currentFrame.bass,
+                mid: currentFrame.mid,
+                treble: currentFrame.high,
+                energy: currentFrame.energy,
+            };
+            sceneManager.updatePostProcessing(audioData);
+        }
+
+        sceneManager.render(clock.getDelta());
       } catch (error) {
         console.error('Error during animation frame:', error);
         if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);

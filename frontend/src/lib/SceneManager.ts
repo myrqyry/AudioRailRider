@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { RIDE_CONFIG, SCENE_CONFIG } from 'shared/constants';
 import { FPSMeter } from './fpsMeter';
+import { AudioReactivePostProcessing, AudioData } from './effects/AudioReactivePostProcessing';
 
 /**
  * Manages the core Three.js scene, camera, renderer, and lighting.
@@ -14,6 +15,7 @@ export class SceneManager {
     readonly camera: THREE.PerspectiveCamera;
     /** The WebGL renderer. */
     readonly renderer: THREE.WebGLRenderer;
+    private postProcessing?: AudioReactivePostProcessing;
     private container: HTMLElement;
     private skyboxTexture?: THREE.Texture;
 
@@ -59,6 +61,8 @@ export class SceneManager {
         this.renderer.domElement.style.height = '100%';
         
         this.container.appendChild(this.renderer.domElement);
+
+        this.postProcessing = new AudioReactivePostProcessing(this.renderer, this.scene, this.camera);
 
         // Set a default dark gradient background
         const topColor = new THREE.Color(SCENE_CONFIG.DEFAULT_BACKGROUND_TOP_COLOR);
@@ -124,6 +128,7 @@ export class SceneManager {
                 const capped = Math.min(rawDpr, RIDE_CONFIG.MAX_DPR);
                 this.renderer.setPixelRatio(capped);
         this.renderer.setSize(containerWidth, containerHeight);
+        this.postProcessing?.setSize(containerWidth, containerHeight);
     };
 
     /**
@@ -149,7 +154,7 @@ export class SceneManager {
     /**
      * Renders the scene. It also ticks an FPS meter and can adjust rendering quality based on performance.
      */
-    render(): void {
+    render(deltaTime: number): void {
         // Update adaptive hints before rendering
         try {
             const meter: FPSMeter | undefined = (this.scene as any).userData?._fpsMeter;
@@ -166,7 +171,11 @@ export class SceneManager {
         } catch (e) {
             // non-fatal
         }
-        this.renderer.render(this.scene, this.camera);
+        this.postProcessing?.render(deltaTime);
+    }
+
+    public updatePostProcessing(audioData: AudioData) {
+        this.postProcessing?.update(audioData);
     }
 
     /**
