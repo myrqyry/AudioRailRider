@@ -4,7 +4,7 @@ import path from 'path';
 const SHARED_DIR = path.resolve(process.cwd(), 'shared');
 const CONSTANTS_JSON_PATH = path.join(SHARED_DIR, 'constants.json');
 const CONSTANTS_TS_PATH = path.join(SHARED_DIR, 'constants.ts');
-const CONSTANTS_PY_PATH = path.join(SHARED_DIR, 'constants.py');
+const CONSTANTS_PY_PATH = path.join(SHARED_DIR, 'src', 'shared', 'constants.py');
 
 async function syncConstants() {
   try {

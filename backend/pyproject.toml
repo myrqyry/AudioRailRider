@@ -1,13 +1,9 @@
-[project]
+[tool.poetry]
 name = "audiorailrider-backend"
 version = "0.1.0"
 description = ""
-authors = [
-    {name = "myrqyry",email = "matrmx@gmail.com"}
-]
+authors = ["myrqyry <matrmx@gmail.com>"]
 readme = "README.md"
-requires-python = "^3.11"
-
 
 [tool.poetry.dependencies]
 python = "^3.11"
@@ -23,18 +19,18 @@ python-multipart = ">=0.0.20,<0.0.21"
 structlog = ">=24.1.0,<25.0.0"
 trio = ">=0.31.0,<0.32.0"
 python-magic = ">=0.4.27,<0.5.0"
-
-
-[tool.pytest.ini_options]
-pythonpath = [
-  "."
-]
-
-[build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
+audiorailrider-shared = {path = "../shared", develop = true}
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.0.0"
 pytest-mock = "^3.0.0"
 mypy = "^1.5.1"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "."
+]
