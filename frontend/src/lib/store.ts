@@ -74,6 +74,8 @@ interface AppState {
         handleRideFinish: () => void;
         /** Starts the ride again with the same track. */
         startRideAgain: () => void;
+        /** Asynchronously sets the audio file, clears any existing audio source, and resets the application state. */
+        setAudioFileAsync: (file: File | null) => Promise<void>;
     };
 }
 

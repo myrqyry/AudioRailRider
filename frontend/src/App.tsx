@@ -1,69 +1,22 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { useValidatedAppState } from './hooks/useValidatedAppState';
-import { useAppInitialization } from './hooks/useAppInitialization';
-import { useAudioAnalysis } from './lib/useAudioAnalysis';
-import { useAppStore } from './lib/store';
-import AppUIRenderer from './components/AppUIRenderer';
-import DevPanel from './components/DevPanel';
+import React, { useState, useEffect } from 'react';
+import { useValidatedAppState, useAppInitialization, useAudioContext } from '@/hooks';
+import { useAudioAnalysis, useAppStore } from '@/lib';
+import { AppUIRenderer, DevPanel, ProgressIndicator } from '@/components';
 
 const App: React.FC = React.memo(function App() {
     const [isInitialized, setIsInitialized] = useState(false);
-    const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
-    const [audioContextError, setAudioContextError] = useState<string | null>(null);
-    const [needsUserInteraction, setNeedsUserInteraction] = useState(false);
     const [backgroundLoaded, setBackgroundLoaded] = useState(false);
     const [backgroundError, setBackgroundError] = useState(false);
+
+    const { audioContext, error: audioContextError, needsUserInteraction, resumeContext } = useAudioContext();
 
     useAppInitialization();
     const appState = useValidatedAppState();
     const audioSource = useAppStore((state) => state.audioSource);
 
-    const initializeAudioContext = useCallback(async () => {
-        try {
-            const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-            if (!AudioContextClass) {
-                throw new Error('AudioContext not supported in this browser');
-            }
-            const ctx = new AudioContextClass();
-            if (ctx.state === 'suspended') {
-                setNeedsUserInteraction(true);
-            }
-            setAudioContext(ctx);
-            setAudioContextError(null);
-            return ctx;
-        } catch (error) {
-            const errorMessage = `Failed to initialize audio: ${error instanceof Error ? error.message : 'Unknown error'}`;
-            setAudioContextError(errorMessage);
-            console.error('AudioContext initialization failed:', error);
-            return null;
-        }
-    }, []);
-
-    const handleUserInteraction = useCallback(async () => {
-        if (audioContext && audioContext.state === 'suspended') {
-            try {
-                await audioContext.resume();
-                setNeedsUserInteraction(false);
-            } catch (error) {
-                setAudioContextError('Failed to resume audio context');
-            }
-        } else {
-            await initializeAudioContext();
-        }
-    }, [audioContext, initializeAudioContext]);
-
     useEffect(() => {
         setIsInitialized(true);
     }, []);
-
-    useEffect(() => {
-        initializeAudioContext();
-        return () => {
-            if (audioContext && audioContext.state !== 'closed') {
-                audioContext.close();
-            }
-        };
-    }, [initializeAudioContext]);
 
     useEffect(() => {
         const img = new Image();
@@ -93,7 +46,10 @@ const App: React.FC = React.memo(function App() {
                 <div className="text-white text-center">
                     <h1 className="text-2xl mb-4">Audio Context is suspended</h1>
                     <p className="mb-4">Browser requires user interaction to start audio.</p>
-                    <button onClick={handleUserInteraction} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+                    <button
+                         onClick={resumeContext}
+                         className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+                    >
                         Click to start
                     </button>
                 </div>
@@ -115,7 +71,7 @@ const App: React.FC = React.memo(function App() {
     return (
         <main className="relative w-full h-screen bg-black overflow-hidden flex items-center justify-center">
             <div
-                className={`absolute inset-0 z-0 ${
+                className={`absolute inset-0 z-0 transition-opacity duration-300 ${
                     backgroundLoaded
                         ? "bg-[url('/stardust.png')] opacity-20"
                         : backgroundError
@@ -127,6 +83,7 @@ const App: React.FC = React.memo(function App() {
                 <div className="absolute inset-0 z-0 bg-black animate-pulse"></div>
             )}
             <AppUIRenderer {...appState} audioContext={audioContext} />
+            <ProgressIndicator />
             <DevPanel />
         </main>
     );

@@ -1,8 +1,3 @@
-# REASON: Removed unsafe sys.path manipulation for better security
-# Add monorepo root through proper Python packaging instead
-import sys
-import os
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'shared'))
 from dotenv import load_dotenv
 load_dotenv()
 
