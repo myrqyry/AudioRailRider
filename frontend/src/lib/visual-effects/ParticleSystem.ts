@@ -633,6 +633,16 @@ export class ParticleSystem {
 
     const { nowSeconds, deltaSeconds, cameraPosition, lookAtPosition, audioFeatures, segmentIntensityBoost } = params;
 
+    // Defensive guard: ensure camera and lookAt positions exist before computing basis vectors.
+    if (!cameraPosition || !lookAtPosition) {
+      this.updateConsciousness({
+        nowSeconds,
+        audioFeatures,
+        segmentIntensityBoost,
+      });
+      return trackPulse;
+    }
+
     this.spawnForward.subVectors(lookAtPosition, cameraPosition);
     if (this.spawnForward.lengthSq() < 1e-6) return trackPulse;
     this.spawnForward.normalize();
