@@ -134,11 +134,19 @@ vWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;
     }
 
     private updateColorUniformSafe(uniform: THREE.IUniform, newColor: THREE.Color, epsilon = 1e-3): boolean {
-        if (!uniform || !uniform.value) {
+        if (!uniform) {
             return false;
         }
 
-        const value = uniform.value as THREE.Color | THREE.Vector3 | undefined;
+        const existing = uniform.value as THREE.Color | THREE.Vector3 | undefined;
+
+        // If no usable value is present yet, initialize directly to the target color.
+        if (!existing || typeof existing !== 'object') {
+            uniform.value = newColor.clone();
+            return true;
+        }
+
+        const value = existing;
 
         if (value instanceof THREE.Color) {
             if (!value.equals(newColor)) {
