@@ -1,6 +1,7 @@
 import { Blueprint, AudioFeatures } from 'shared/types';
 import { GoogleGenAI } from '@google/genai';
 import { config } from '../config';
+import { isEmbedded } from '../config/environment';
 
 const MAX_INLINE_BYTES = 20 * 1024 * 1024; // 20 MB
 const SUPPORTED_AUDIO_MIME_TYPES = new Set([
@@ -123,22 +124,117 @@ export const generateRideBlueprintWithAI = async (
 };
 
 /**
- * Generates a ride blueprint by sending the audio file and its features
- * to the backend service.
- * @param audioFile The audio file.
- * @param duration The duration of the audio in seconds.
- * @param bpm The beats per minute of the audio.
- * @param energy The energy of the audio.
- * @param spectralCentroid The spectral centroid of the audio.
- * @param spectralFlux The spectral flux of the audio.
- * @returns A promise that resolves to the generated ride blueprint.
+ * Analyzes audio file locally using Meyda to extract features.
  */
-// Export the AI-backed generator as the primary generateRideBlueprint used in tests.
-/**
- * Backend-based generator: upload the audio file to our backend which will
- * perform analysis + blueprint generation and return both the blueprint and
- * extracted audio features. This is the runtime path used by the web app.
- */
+export const analyzeAudioLocally = async (audioFile: File): Promise<any> => {
+  // Wait for Meyda to load
+  if (!(window as any).Meyda) {
+    await (window as any).meydaLoaded;
+  }
+
+  const audioContext = new AudioContext();
+  const arrayBuffer = await audioFile.arrayBuffer();
+  const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+  const channelData = audioBuffer.getChannelData(0);
+  const sampleRate = audioBuffer.sampleRate;
+  const duration = audioBuffer.duration;
+
+  // Initialize Meyda
+  const meyda = new (window as any).Meyda.createMeydaAnalyzer({
+    audioContext,
+    source: audioContext.createBufferSource(),
+    bufferSize: 512,
+    featureExtractors: ['energy', 'spectralCentroid', 'spectralFlux', 'chroma', 'mfcc']
+  });
+
+  meyda.start();
+
+  // Simple analysis: take samples throughout the track
+  const features = {
+    duration,
+    energy: 0,
+    spectralCentroid: 0,
+    spectralFlux: 0,
+    bpm: 120 // Default
+  };
+
+  const numSamples = Math.min(100, Math.floor(duration * 10)); // Sample every 0.1s, max 100
+  let energySum = 0;
+  let centroidSum = 0;
+  let fluxSum = 0;
+  let count = 0;
+
+  for (let i = 0; i < numSamples; i++) {
+    const time = (i / numSamples) * duration;
+    const sampleIndex = Math.floor(time * sampleRate);
+    const frame = channelData.slice(sampleIndex, sampleIndex + 512);
+
+    if (frame.length >= 512) {
+      const result = meyda.get([frame]);
+      if (result) {
+        energySum += result.energy || 0;
+        centroidSum += result.spectralCentroid || 0;
+        fluxSum += result.spectralFlux || 0;
+        count++;
+      }
+    }
+  }
+
+  if (count > 0) {
+    features.energy = energySum / count;
+    features.spectralCentroid = centroidSum / count;
+    features.spectralFlux = fluxSum / count;
+  }
+
+  meyda.stop();
+  audioContext.close();
+
+  return features;
+};
+export const generateLocalBlueprint = async (audioFile: File, features: any): Promise<{ blueprint: Blueprint; features: any }> => {
+  const duration = features?.duration || 60;
+  const bpm = features?.bpm || 120;
+  const energy = features?.energy || 0.5;
+
+  // Create a simple track with basic segments
+  const segments = [];
+  const segmentDuration = 10; // 10 seconds per segment
+  const numSegments = Math.ceil(duration / segmentDuration);
+
+  for (let i = 0; i < numSegments; i++) {
+    const startTime = i * segmentDuration;
+    const endTime = Math.min((i + 1) * segmentDuration, duration);
+    
+    segments.push({
+      component: energy > 0.7 ? 'loop' : energy > 0.4 ? 'hill' : 'straight',
+      startTime,
+      endTime,
+      parameters: {
+        radius: energy * 50 + 20,
+        height: energy * 30,
+        length: endTime - startTime
+      }
+    });
+  }
+
+  const blueprint: Blueprint = {
+    rideName: `${audioFile.name.replace(/\.[^/.]+$/, '')} Ride`,
+    moodDescription: `A ${energy > 0.7 ? 'high-energy' : energy > 0.4 ? 'moderate' : 'calm'} audio experience`,
+    track: segments,
+    cameraSettings: {
+      followDistance: 10,
+      heightOffset: 5,
+      lookAhead: 2
+    },
+    visualEffects: {
+      particleDensity: energy * 100,
+      colorScheme: energy > 0.7 ? 'bright' : 'neutral'
+    }
+  };
+
+  return { blueprint, features };
+};
 /**
  * Generates a ride blueprint by sending the audio file to the backend service.
  * The backend handles the audio analysis and blueprint generation.
@@ -155,6 +251,18 @@ export const generateRideBlueprint = async (
   signal?: AbortSignal,
   options?: Record<string, any>
 ): Promise<{ blueprint: Blueprint; features: any }> => {
+  // If embedded, use local analysis and generation
+  if (isEmbedded()) {
+    console.log('[GeminiService] Embedded mode detected, using local analysis');
+    try {
+      const features = await analyzeAudioLocally(audioFile);
+      return generateLocalBlueprint(audioFile, features);
+    } catch (error) {
+      console.error('[GeminiService] Local analysis failed:', error);
+      throw new Error('Local audio analysis failed. Please try a different file.');
+    }
+  }
+
   const url = `${config.api.baseUrl}${config.api.endpoints.processAudio}`;
 
   const fd = new FormData();
@@ -209,6 +317,12 @@ export const generateRideBlueprint = async (
  * @throws {Error} If the image generation fails or is not supported by the backend.
  */
 export const generateSkyboxImage = async (prompt: string, blueprint?: any): Promise<string> => {
+  // Skip skybox generation in embedded mode
+  if (isEmbedded()) {
+    console.log('[GeminiService] Embedded mode detected, skipping skybox generation');
+    throw new Error('Skybox generation not available in embedded mode');
+  }
+
   try {
     const url = `${config.api.baseUrl}${config.api.endpoints.generateSkybox}`;
     // Extract any generation options embedded in the blueprint and send them
@@ -238,5 +352,52 @@ export const generateSkyboxImage = async (prompt: string, blueprint?: any): Prom
     console.warn('[GeminiService] Skybox generation failed, continuing without custom skybox:', error);
     const errorMessage = error instanceof Error ? error.message : String(error);
     throw new Error(`Skybox generation unavailable: ${errorMessage}`);
+  }
+};
+
+export interface SkyboxFrame {
+  time: number;
+  imageUrl: string;
+}
+
+/**
+ * Requests a timeline of skybox frames from the backend.
+ * Currently this wraps a single-frame implementation but is forward-compatible
+ * with richer, multi-frame outputs.
+ */
+export const generateSkyboxTimeline = async (
+  prompt: string,
+  blueprint: any
+): Promise<SkyboxFrame[]> => {
+  if (isEmbedded()) {
+    console.log('[GeminiService] Embedded mode detected, skipping skybox timeline generation');
+    // Embedded environments cannot call backend; return empty to mean "no timeline".
+    return [];
+  }
+
+  const optionsPayload = blueprint && (blueprint as any).generationOptions ? (blueprint as any).generationOptions : null;
+  const url = `${config.api.baseUrl}${config.api.endpoints.generateSkyboxTimeline ?? '/api/generate-skybox-timeline'}`;
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, blueprint, options: optionsPayload }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to generate skybox timeline');
+    }
+
+    const data = await res.json();
+    const frames = Array.isArray(data.frames) ? data.frames : [];
+    // Basic shape validation
+    return frames
+      .filter((f: any) => f && typeof f.imageUrl === 'string')
+      .map((f: any) => ({ time: typeof f.time === 'number' ? f.time : 0, imageUrl: f.imageUrl }));
+  } catch (error) {
+    console.info('[GeminiService] Skybox timeline generation failed, proceeding without timeline:', error);
+    return [];
   }
 };

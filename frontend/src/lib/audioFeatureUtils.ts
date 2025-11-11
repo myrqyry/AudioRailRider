@@ -227,6 +227,127 @@ export const detectStructuralBoundaries = (
  * @param {Omit<FrameAnalysis, 'timestamp'>} values - An object containing all frame analysis values except the timestamp.
  * @returns {FrameAnalysis} The complete frame analysis object.
  */
+export interface SpectralFeatures {
+  spectralCentroid: number;  // 0-1, brightness
+  spectralRolloff: number;   // 0-1, where 85% of spectrum energy is
+  spectralFlux: number;      // Change in spectrum over time
+  zeroCrossingRate: number;  // 0-1, noisiness
+}
+
+/**
+ * Calculate spectral centroid (brightness)
+ * Returns normalized value 0-1
+ */
+export function calculateSpectralCentroid(
+  frequencyData: Float32Array,
+  sampleRate: number
+): number {
+  let numerator = 0;
+  let denominator = 0;
+
+  const binWidth = sampleRate / (2 * frequencyData.length);
+
+  for (let i = 0; i < frequencyData.length; i++) {
+    const frequency = i * binWidth;
+    const magnitude = frequencyData[i];
+
+    numerator += frequency * magnitude;
+    denominator += magnitude;
+  }
+
+  if (denominator === 0) return 0;
+
+  const centroid = numerator / denominator;
+  // Normalize to 0-1 range (assuming max frequency is Nyquist)
+  return Math.min(1, centroid / (sampleRate / 2));
+}
+
+/**
+ * Calculate spectral rolloff (where 85% of spectrum energy is)
+ * Returns normalized value 0-1
+ */
+export function calculateSpectralRolloff(
+  frequencyData: Float32Array,
+  threshold: number = 0.85
+): number {
+  const totalEnergy = frequencyData.reduce((sum, val) => sum + val, 0);
+  const targetEnergy = totalEnergy * threshold;
+
+  let cumulativeEnergy = 0;
+  for (let i = 0; i < frequencyData.length; i++) {
+    cumulativeEnergy += frequencyData[i];
+    if (cumulativeEnergy >= targetEnergy) {
+      return i / frequencyData.length;
+    }
+  }
+
+  return 1.0;
+}
+
+/**
+ * Calculate zero-crossing rate (noisiness)
+ * Returns normalized value 0-1
+ */
+export function calculateZeroCrossingRate(timeData: Float32Array): number {
+  let crossings = 0;
+
+  for (let i = 1; i < timeData.length; i++) {
+    if ((timeData[i] >= 0 && timeData[i - 1] < 0) ||
+        (timeData[i] < 0 && timeData[i - 1] >= 0)) {
+      crossings++;
+    }
+  }
+
+  // Normalize by maximum possible crossings
+  return crossings / (timeData.length - 1);
+}
+
+/**
+ * Calculate spectral flux (rate of change in spectrum)
+ * Requires previous frame's frequency data
+ */
+export function calculateSpectralFlux(
+  currentFrequencies: Float32Array,
+  previousFrequencies: Float32Array | null
+): number {
+  if (!previousFrequencies || previousFrequencies.length !== currentFrequencies.length) {
+    return 0;
+  }
+
+  let flux = 0;
+  for (let i = 0; i < currentFrequencies.length; i++) {
+    const diff = currentFrequencies[i] - previousFrequencies[i];
+    // Only consider increases in energy
+    flux += Math.max(0, diff);
+  }
+
+  // Normalize by number of bins
+  return flux / currentFrequencies.length;
+}
+
+/**
+ * Extract all spectral features from audio data
+ */
+export function extractSpectralFeatures(
+  frequencyData: Float32Array,
+  timeData: Float32Array,
+  sampleRate: number,
+  previousFrequencies: Float32Array | null = null
+): SpectralFeatures {
+  return {
+    spectralCentroid: calculateSpectralCentroid(frequencyData, sampleRate),
+    spectralRolloff: calculateSpectralRolloff(frequencyData),
+    spectralFlux: calculateSpectralFlux(frequencyData, previousFrequencies),
+    zeroCrossingRate: calculateZeroCrossingRate(timeData)
+  };
+}
+
+/**
+ * Creates a `FrameAnalysis` object suitable for dispatching in a custom event.
+ * @param {number} timestampSeconds - The timestamp of the frame in seconds.
+ * @param {Omit<FrameAnalysis, 'timestamp'>} values - An object containing all frame analysis values except the timestamp.
+ * @returns {FrameAnalysis} The complete frame analysis object.
+ */
 export const createFrameForDispatch = (
   timestampSeconds: number,
   // Accept partial shapes from worklets or plugin pipelines and ensure

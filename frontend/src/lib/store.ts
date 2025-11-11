@@ -98,7 +98,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     actions: {
     setGenerationOptions: (opts: import('shared/types').GenerationOptions | null) => set({ generationOptions: opts }),
     setBreathingIntensity: (intensity: number) => set({ breathingIntensity: intensity }),
-        setStatus: (status: AppStatus, message?: string) => set({ status, statusMessage: message || '', error: null }),
+        setStatus: (status: AppStatus, message?: string) => {
+            console.log('[Store] setStatus called with:', status, message);
+            set({ status, statusMessage: message || '', error: null });
+        },
         setBlueprint: (blueprint: Blueprint | null) => set({ blueprint }),
         setAudioFeatures: (features: AudioFeatures | null) => set({ audioFeatures: features }),
         setTrackData: (data: TrackData | null) => {
@@ -118,7 +121,10 @@ export const useAppStore = create<AppState>((set, get) => ({
                 };
             });
         },
-        setError: (error: ErrorState | null) => set({ error, status: error ? AppStatus.Error : get().status }),
+        setError: (error: ErrorState | null) => {
+            console.log('[Store] setError called with:', error);
+            set({ error, status: error ? AppStatus.Error : get().status });
+        },
         setAudioSource: (source: AudioNode | null) => {
             set({ audioSource: source, audioFile: null, status: AppStatus.Idle, error: null, workflowProgress: 0, skyboxUrl: null });
         },

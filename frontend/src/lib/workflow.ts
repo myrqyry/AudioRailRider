@@ -4,7 +4,7 @@ import { generateRideBlueprint, generateSkyboxImage } from '../services/geminiSe
 import { validateAndRefineBlueprint } from './trackValidator';
 import { buildTrackData } from './trackBuilder';
 import { AppStatus } from 'shared/types';
-import { env as environment } from '../config/environment';
+import { env as environment, isEmbedded } from '../config/environment';
 
 /**
  * Orchestrates the end-to-end workflow for processing an audio file and generating a ride.
@@ -30,7 +30,8 @@ export const runAudioProcessingWorkflow = async (
     fileSize: file.size,
     fileType: file.type,
     hasExternalSignal: !!signal,
-    externalSignalAborted: signal?.aborted
+    externalSignalAborted: signal?.aborted,
+    isEmbedded: isEmbedded()
   });
 
   const checkAbort = () => {

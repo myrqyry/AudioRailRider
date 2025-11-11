@@ -1,3 +1,7 @@
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+
 from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Request, Form
 from typing import Dict, Any
 from ..services.gemini_service import GeminiService, gemini_service
@@ -142,6 +146,22 @@ async def generate_skybox(
         A JSON object with the URL of the generated skybox image.
     """
     return await service.generate_skybox(req_body.prompt, req_body.blueprint, req_body.options)
+
+
+@router.post("/api/generate-skybox-timeline")
+@limiter.limit("10/minute")
+async def generate_skybox_timeline(
+    request: Request,
+    req_body: SkyboxRequest,
+    service: GeminiService = Depends(lambda: gemini_service)
+) -> Dict[str, Any]:
+    """
+    Generates a timeline of skybox frames based on blueprint, options, and prompt.
+    This is designed for smooth, Gemini-guided environment evolution across the ride.
+    """
+    # Delegate to GeminiService timeline generator, which uses structured output
+    # and falls back safely if multi-frame generation is unavailable.
+    return await service.generate_skybox_timeline(req_body.prompt, req_body.blueprint, req_body.options)
 
 
 @router.get('/api/generation-presets')

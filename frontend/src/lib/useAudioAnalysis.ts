@@ -32,7 +32,7 @@ export const useAudioAnalysis = ({ status, audioFile, audioSource, audioContext 
   const liveProcessorRef = useRef<LiveAudioProcessor | null>(null);
 
   useEffect(() => {
-    console.log('[useAudioAnalysis] Effect triggered', { status, hasAudioFile: !!audioFile, hasAudioSource: !!audioSource });
+    console.log('[useAudioAnalysis] Effect triggered', `status=${status}, hasAudioFile=${!!audioFile}, hasAudioSource=${!!audioSource}`);
 
     const dispose = () => {
       if (animationFrameId.current) {

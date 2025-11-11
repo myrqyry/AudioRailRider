@@ -37,7 +37,8 @@ export const useValidatedAppState = () => {
                     validatedTrackData = TrackDataSchema.parse(rawState.trackData);
                 }
             } catch (error) {
-                console.error('Track data validation failed:', error);
+                console.error('[useValidatedAppState] Track data validation failed:', error);
+                console.log('[useValidatedAppState] Raw track data that failed validation:', rawState.trackData);
                 // Mark that validation failed; we will set the error in an effect
                 validationFailedRef.current = true;
             }
@@ -57,6 +58,7 @@ export const useValidatedAppState = () => {
         if (validationFailedRef.current) {
             // Clear the flag before calling into the store to avoid races.
             validationFailedRef.current = false;
+            console.log('[useValidatedAppState] Setting validation error');
             useAppStore.getState().actions.setError({
                 title: 'Validation Error',
                 message: 'Invalid track data received from the server.'

@@ -265,12 +265,33 @@ export type DetailLevel = 'low' | 'medium' | 'high';
 export type CameraPreset = 'epic' | 'immersive' | 'first_person' | 'wide_angle';
 
 export interface GenerationOptions {
+  // High-level stylistic presets
   trackStyle?: TrackStyle;
   worldTheme?: WorldTheme;
   visualStyle?: VisualStyle;
   paletteHint?: string[]; // optional array of preferred hex colors
   detailLevel?: DetailLevel;
   cameraPreset?: CameraPreset;
+
+  // Audio feature utilization toggles for Gemini prompts
+  useTempoMap?: boolean;
+  useEnergyCurve?: boolean;
+  useBrightnessCurve?: boolean;
+  useBeatsAndSections?: boolean;
+
+  // Physical/layout constraints for safer, tailored tracks
+  maxGrade?: number;
+  maxLateralG?: number;
+  allowInversions?: boolean;
+
+  // Skybox and timeline-aware visual generation
+  enableSkyboxTimeline?: boolean;
+  skyboxFrames?: number; // recommended: small (e.g., 3-6)
+  skyboxAspectRatio?: '1:1' | '2:3' | '3:2' | '3:4' | '4:3' | '4:5' | '5:4' | '9:16' | '16:9' | '21:9';
+
+  // Narrative control for ride theming
+  narrativeMode?: 'none' | 'abstract' | 'story';
+
   // Optional small visual event presets that should be favored when generating
   // timeline events (e.g., fireworks, fog, starshow). If omitted, the AI may
   // choose sensible defaults based on the music.

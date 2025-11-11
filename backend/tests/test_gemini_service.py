@@ -21,17 +21,29 @@ def mock_gemini_client():
     mock_client.aio.files.delete = AsyncMock()
     return mock_client
 
+@pytest.fixture
+def mock_adapter():
+    """Mocks the GenAIAdapter."""
+    mock_adapter = MagicMock()
+    mock_adapter.generate_content = AsyncMock()
+    mock_adapter.upload_file = AsyncMock()
+    return mock_adapter
+
 @patch('app.services.gemini_service.analyze_audio', new_callable=AsyncMock)
-@patch('app.services.gemini_service.genai.Client')
+@patch('app.services.genai_adapter.GenAIAdapter')
 class TestGeminiService:
 
     @pytest.mark.anyio
-    async def test_generate_blueprint_success(self, mock_genai_client, mock_analyze_audio, mock_gemini_client):
+    async def test_generate_blueprint_success(self, mock_adapter_class, mock_analyze_audio, mock_gemini_client):
         """
         Tests the successful generation of a blueprint.
         """
         # Arrange
-        mock_genai_client.return_value = mock_gemini_client
+        mock_adapter_instance = MagicMock()
+        mock_adapter_instance.generate_content = AsyncMock()
+        mock_adapter_instance.upload_file = AsyncMock()
+        mock_adapter_class.return_value = mock_adapter_instance
+        
         svc = GeminiService()
 
         audio_bytes = b"test_audio"
@@ -59,7 +71,7 @@ class TestGeminiService:
             parsed=mock_blueprint_model,
             text=mock_blueprint_model.model_dump_json()
         )
-        svc.client.aio.models.generate_content.return_value = mock_response
+        mock_adapter_instance.generate_content.return_value = mock_response
 
         # Act
         result = await svc.generate_blueprint(audio_bytes, content_type, options)
@@ -67,18 +79,22 @@ class TestGeminiService:
         # Assert
         assert "blueprint" in result
         assert "features" in result
-        assert result["blueprint"]["rideName"] == "Test Ride"
+        assert result["blueprint"].rideName == "Test Ride"
         assert result["features"]["bpm"] == 120.0
-        svc.client.aio.models.generate_content.assert_called_once()
+        mock_adapter_instance.generate_content.assert_called_once()
         mock_analyze_audio.assert_called_once_with(audio_bytes)
 
     @pytest.mark.anyio
-    async def test_generate_blueprint_api_error_fallback(self, mock_genai_client, mock_analyze_audio, mock_gemini_client):
+    async def test_generate_blueprint_api_error_fallback(self, mock_adapter_class, mock_analyze_audio, mock_gemini_client):
         """
         Tests that the service falls back to procedural generation on APIError.
         """
         # Arrange
-        mock_genai_client.return_value = mock_gemini_client
+        mock_adapter_instance = MagicMock()
+        mock_adapter_instance.generate_content = AsyncMock()
+        mock_adapter_instance.upload_file = AsyncMock()
+        mock_adapter_class.return_value = mock_adapter_instance
+        
         svc = GeminiService()
 
         audio_bytes = b"test_audio_fallback"
@@ -89,25 +105,29 @@ class TestGeminiService:
         }
 
         # Simulate an API error
-        svc.client.aio.models.generate_content.side_effect = APIError("Test API Error", response_json={})
+        mock_adapter_instance.generate_content.side_effect = APIError("Test API Error", response_json={})
 
         # Act
         result = await svc.generate_blueprint(audio_bytes, content_type)
 
         # Assert
-        bpm = mock_analyze_audio.return_value['bpm']
-        expected_name = f"Dynamic Audio Coaster ({int(bpm)} BPM)"
-        assert result["blueprint"]["rideName"] == expected_name
-        assert "A procedurally generated ride" in result["blueprint"]["moodDescription"]
+        assert "blueprint" in result
+        assert "features" in result
+        assert "Procedural Ride" in result["blueprint"]["rideName"]
+        assert result["blueprint"]["moodDescription"] == "A fallback, procedurally generated ride for development."
         assert len(result["blueprint"]["track"]) > 0
 
     @pytest.mark.anyio
-    async def test_generate_blueprint_caching(self, mock_genai_client, mock_analyze_audio, mock_gemini_client):
+    async def test_generate_blueprint_caching(self, mock_adapter_class, mock_analyze_audio, mock_gemini_client):
         """
         Tests that blueprint generation results are cached.
         """
         # Arrange
-        mock_genai_client.return_value = mock_gemini_client
+        mock_adapter_instance = MagicMock()
+        mock_adapter_instance.generate_content = AsyncMock()
+        mock_adapter_instance.upload_file = AsyncMock()
+        mock_adapter_class.return_value = mock_adapter_instance
+        
         svc = GeminiService()
 
         audio_bytes = b"test_audio_caching"
@@ -129,7 +149,7 @@ class TestGeminiService:
             track=make_track()
         )
         mock_response = SimpleNamespace(parsed=mock_blueprint_model)
-        svc.client.aio.models.generate_content.return_value = mock_response
+        mock_adapter_instance.generate_content.return_value = mock_response
 
         # Act
         # First call - should miss cache and call API
@@ -139,9 +159,9 @@ class TestGeminiService:
         result2 = await svc.generate_blueprint(audio_bytes, content_type, options)
 
         # Assert
-        assert result1["blueprint"]["rideName"] == "Cached Ride"
+        assert result1["blueprint"].rideName == "Cached Ride"
         assert result2 == result1 # Should be the exact same object from cache
-        svc.client.aio.models.generate_content.assert_called_once() # API should only be called once
+        mock_adapter_instance.generate_content.assert_called_once() # API should only be called once
         mock_analyze_audio.assert_called_once() # Audio analysis should also only be called once
 
         # Verify that audio analysis is not called on cache hit

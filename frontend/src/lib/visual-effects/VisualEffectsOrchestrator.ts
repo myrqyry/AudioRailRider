@@ -4,22 +4,9 @@ import { TrackGeometryManager } from './TrackGeometryManager';
 import { ParticleSystemController } from './ParticleSystemController';
 import { ShaderUniformManager } from './ShaderUniformManager';
 import { Result, Ok, Err } from 'neverthrow';
-import {
-    BASS_GLOW_MIN,
-    BASS_GLOW_MAX,
-    LERP_FACTOR,
-    TRACK_DEFAULT_OPACITY,
-    TRACK_INSIDE_OPACITY,
-    TRACK_OPACITY_LERP_SPEED,
-    PLACE_TRACK_UNDER_CAMERA,
-    TRACK_UNDER_CAMERA_VERTICAL_OFFSET,
-    TRACK_RADIUS,
-    PERFORMANCE_CHECK_INTERVAL,
-    TARGET_FPS,
-    LOW_QUALITY_DEBOUNCE_MS
-} from '../constants';
+import { RIDE_CONFIG } from '../constants';
 import { AnimationFrameManager } from '../utils/AnimationFrameManager';
-import { secondsToNumber } from 'shared/utils';
+import { secondsToNumber } from 'shared/types';
 
 class ValidationError extends Error {
     constructor(message: string) {
@@ -65,11 +52,11 @@ export class VisualEffectsOrchestrator {
         this.trackMaterial = new THREE.MeshStandardMaterial({
             color: baseRailColor.clone(),
             emissive: baseEmissiveColor.clone(),
-            emissiveIntensity: BASS_GLOW_MIN,
+            emissiveIntensity: RIDE_CONFIG.BASS_GLOW_MIN,
             metalness: 0.15,
             roughness: 0.65,
             transparent: true,
-            opacity: TRACK_DEFAULT_OPACITY,
+            opacity: RIDE_CONFIG.TRACK_DEFAULT_OPACITY,
             side: THREE.DoubleSide,
         });
 
@@ -121,9 +108,9 @@ void main() {
         }
 
         const initialSettings = {
-            placeTrackUnderCamera: PLACE_TRACK_UNDER_CAMERA,
-            trackUnderCameraVerticalOffset: TRACK_UNDER_CAMERA_VERTICAL_OFFSET,
-            trackRadius: TRACK_RADIUS,
+            placeTrackUnderCamera: RIDE_CONFIG.PLACE_TRACK_UNDER_CAMERA,
+            trackUnderCameraVerticalOffset: RIDE_CONFIG.TRACK_UNDER_CAMERA_VERTICAL_OFFSET,
+            trackRadius: RIDE_CONFIG.TRACK_RADIUS,
             trackPathPoints: sanitized.isOk() ? sanitized.value.points : [],
         };
 

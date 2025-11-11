@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { ParticleSystem, ParticleQualityLevel, FeatureVisualConfig } from './ParticleSystem';
 import { FrameAnalysis, SynestheticBlueprintLayer } from 'shared/types';
-import { GHOST_RIBBON_RADIUS } from '../constants';
+import { RIDE_CONFIG } from '../constants';
 
 export class ParticleSystemController {
     private particles: ParticleSystem;
@@ -21,7 +21,7 @@ export class ParticleSystemController {
         if (!pathCurve) return;
         const sampleCount = Math.min(48, Math.max(18, Math.floor(trackPathPoints.length / 4)));
         const nowSeconds = performance.now() / 1000;
-        const spread = GHOST_RIBBON_RADIUS * 4.2;
+        const spread = RIDE_CONFIG.GHOST_RIBBON_RADIUS * 4.2;
         this.particles.seedAmbientField(pathCurve, sampleCount, spread, nowSeconds, audioFeatures, 0.9);
     }
 

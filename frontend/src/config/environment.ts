@@ -194,3 +194,14 @@ if (isDevelopment() && isDebugEnabled()) {
     debug: env.VITE_DEBUG,
   });
 }
+
+/**
+ * Detects if the app is running in an embedded environment (e.g., iframe)
+ */
+export const isEmbedded = (): boolean => {
+  try {
+    return window.parent !== window || window.location.host.includes('google.com') || window.location.host.includes('gemini');
+  } catch {
+    return false;
+  }
+};

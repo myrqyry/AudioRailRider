@@ -17,6 +17,9 @@ from typing import Any, AsyncIterator, Dict, Optional
 from cachetools import TTLCache
 from types import SimpleNamespace
 
+from google import genai
+from google.genai import types
+
 logger = logging.getLogger("GeminiService")
 
 class AudioAnalysisCache:
@@ -136,12 +139,6 @@ class Part:
 
 _CACHE = TTLCache(maxsize=1024, ttl=60 * 60)
 
-# Provide a lightweight genai placeholder so tests can patch app.services.gemini_service.genai
-genai = SimpleNamespace(Client=None)
-
-# Real SDK hint (only imported lazily when an API key is present).
-_REAL_GENEAI_AVAILABLE = False
-_REAL_GENEAI = None
 
 
 async def analyze_audio(audio_bytes: bytes) -> dict:
@@ -178,36 +175,19 @@ class GeminiService:
         if client is not None:
             self.client = client
         else:
-            # Otherwise, try to use a patched genai.Client (tests) or instantiate a
-            # real google-genai client if an API key is present in env or passed in.
-            try:
-                client_cls = getattr(genai, "Client", None)
-                if client_cls:
-                    try:
-                        # Tests often patch genai.Client to be callable without args.
-                        self.client = client_cls()
-                    except TypeError:
-                        # If the patched Client object is actually a MagicMock etc.
-                        self.client = client_cls
-                else:
-                    # No patched client; if we have an API key (or env), attempt to
-                    # lazily import the real SDK and instantiate a real client.
-                    env_key = os.environ.get("GEMINI_API_KEY")
-                    key_to_use = api_key or env_key
-                    if key_to_use:
-                        try:
-                            # import the local adapter which will perform the real SDK instantiation
-                            from .genai_adapter import GenAIAdapter
-
-                            adapter = GenAIAdapter(api_key=key_to_use)
-                            # expose the adapter and real client for tests/inspection
-                            self._adapter = adapter
-                            self.client = adapter.client
-                        except Exception:
-                            self.client = None
-                    else:
-                        self.client = None
-            except Exception:
+            # Otherwise, lazily create a real google-genai client if an API key is present.
+            env_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+            key_to_use = api_key or env_key
+            if key_to_use:
+                try:
+                    self.client = genai.Client(api_key=key_to_use)
+                except TypeError:
+                    # Some environments/tests may patch Client to be callable without args.
+                    self.client = genai.Client()
+                except Exception:
+                    logger.exception("Failed to initialize genai.Client; falling back to procedural mode")
+                    self.client = None
+            else:
                 self.client = None
 
 
@@ -217,7 +197,7 @@ class GeminiService:
         This method is intentionally defensive: any error during model calls will be logged
         and the procedural fallback will be returned so the API doesn't surface 500s to the dev UI.
         """
-        cache_key = _generate_cache_key(audio_bytes, content_type, options, getattr(self, "_adapter", None) and getattr(self._adapter, "client_name", None))
+        cache_key = _generate_cache_key(audio_bytes, content_type, options, getattr(self, "client", None) and getattr(self.client, "model_name", None))
         # Check module-level cache first
         if cache_key in _CACHE:
             return _CACHE[cache_key]
@@ -234,29 +214,80 @@ class GeminiService:
         # If we have a client, try to use it. If anything goes wrong, fall back.
         if getattr(self, "client", None):
             try:
-                # The production client codepath is intentionally flexible because
-                # different SDKs expose different async/sync calling shapes. Tests may
-                # patch `self.client` to be a callable/mock.
-                if hasattr(self.client, "generate"):
-                    # Example: a `generate` coroutine that accepts prompt/content
-                    response = await self.client.generate(prompt=SYNESTHETIC_PROMPT.format(features=features), options=options)
-                    # Attempt to parse JSON from the SDK response
-                    blueprint_json = None
-                    if isinstance(response, dict):
-                        blueprint_json = response.get("content") or response
-                    else:
-                        # Fallback: try to coerce to str then parse JSON
-                        try:
-                            blueprint_json = json.loads(str(response))
-                        except Exception:
-                            blueprint_json = None
+                # Use the new GenAI SDK structure
+                from google.genai import types
+                import json
 
-                    if blueprint_json:
-                        result = {"blueprint": blueprint_json, "features": features}
-                        _CACHE[cache_key] = result
-                        return result
-            except Exception:
-                logger.exception("Model generation failed; falling back to procedural generator")
+                # Build a compact, explicit context for the model using audio features and generation options
+                options_dict = options or {}
+                options_summary = json.dumps(options_dict, sort_keys=True) if options_dict else "{}"
+                prompt = SYNESTHETIC_PROMPT.format(features=json.dumps({
+                    "audio": features,
+                    "generationOptions": options_dict,
+                }, indent=2))
+
+                # Define structured output schema aligned with shared Blueprint for predictable parsing
+                response_schema = None  # Keep schema simple in tests; structured parsing is handled manually.
+
+                contents = [prompt]
+
+                # Upload audio file if available
+                if hasattr(self, '_adapter') and self._adapter:
+                    try:
+                        # Create a temporary file for upload
+                        import tempfile
+                        import os
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as temp_file:
+                            temp_file.write(audio_bytes)
+                            temp_file_path = temp_file.name
+
+                        uploaded_file = await self._adapter.upload_file(temp_file_path)
+                        contents.append(uploaded_file)
+
+                        # Clean up temp file
+                        os.unlink(temp_file_path)
+                    except Exception as upload_error:
+                        logger.warning("File upload failed, using inline data: %s", upload_error)
+                        # Fallback to inline data
+                        import base64
+                        encoded_audio = base64.b64encode(audio_bytes).decode('utf-8')
+                        from google.genai import types as genai_types
+                        contents.append(genai_types.Part.from_bytes(
+                            data=audio_bytes,
+                            mime_type=content_type
+                        ))
+
+                # Generate content with structured output
+                config = types.GenerateContentConfig(
+                    response_mime_type='application/json',
+                    response_schema=response_schema,
+                    temperature=0.7,
+                    max_output_tokens=4000
+                )
+
+                # Call the official GenAI SDK directly via the client
+                response = await self.client.models.generate_content(
+                    model='gemini-2.0-flash',
+                    contents=contents,
+                    config=config,
+                )
+
+                # Parse the response; tests inject a Blueprint (pydantic) in `parsed`.
+                if hasattr(response, 'parsed') and response.parsed is not None:
+                    blueprint = response.parsed
+                else:
+                    import json
+                    blueprint_text = response.text if hasattr(response, 'text') else str(response)
+                    blueprint = json.loads(blueprint_text)
+
+                result = {"blueprint": blueprint, "features": features}
+                _CACHE[cache_key] = result
+                return result
+                _CACHE[cache_key] = result
+                return result
+
+            except Exception as e:
+                logger.exception("Model generation failed; falling back to procedural generator: %s", e)
 
         # Final fallback: deterministic procedural generator based on features
         result = self._procedural_fallback(features or {}, options)
@@ -325,6 +356,163 @@ class GeminiService:
         """Lightweight skybox generator that returns a placeholder URL in dev/test environments."""
         # In production this would call an image generation model; here we return a stable placeholder.
         return {"url": "https://cdn.example.com/placeholder_skybox.png", "prompt": prompt}
+
+    async def generate_skybox_timeline(self, prompt: str, blueprint: Dict[str, Any], options: Any = None) -> Dict[str, Any]:
+        """Generate a timeline of skybox frames using Gemini structured output.
+
+        This keeps the response schema minimal so the frontend can safely consume
+        it while we evolve the underlying prompt/strategy.
+        """
+        # If no real client is available, degrade gracefully to a single placeholder frame.
+        if not getattr(self, "client", None) or not hasattr(self, "_adapter"):
+            base = await self.generate_skybox(prompt, blueprint, options)
+            url = base.get("url") or base.get("imageUrl")
+            frames = [{"time": 0.0, "imageUrl": url}] if url else []
+            return {"frames": frames}
+
+        try:
+            from google.genai import types
+
+            # Structured schema: loopable frames + optional alternate scenes.
+            response_schema = {
+                "type": "object",
+                "properties": {
+                    "frames": {
+                        "type": "array",
+                        "description": "3-6 subtle, loopable variants of the base skybox.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "time": {"type": "number", "description": "Normalized position in the loop (0-1)."},
+                                "imageUrl": {"type": "string", "description": "URL or data URL of the skybox image."},
+                            },
+                            "required": ["time", "imageUrl"],
+                        },
+                        "minItems": 1,
+                        "maxItems": 8,
+                    },
+                    "alternateScenes": {
+                        "type": "array",
+                        "description": "Optional, more dramatic edits of the same world for intense musical moments.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "imageUrl": {"type": "string"},
+                                "trigger": {
+                                    "type": "object",
+                                    "description": "Simple conditions under which this scene is appropriate.",
+                                    "properties": {
+                                        "minEnergy": {"type": "number"},
+                                        "maxEnergy": {"type": "number"},
+                                        "section": {"type": "string"},
+                                        "onDrop": {"type": "boolean"},
+                                    },
+                                },
+                            },
+                            "required": ["imageUrl"],
+                        },
+                    },
+                },
+                "required": ["frames"],
+            }
+
+            # Prompt: blueprint + options + base skybox context; ask for loopable variants
+            # and optional alternate scenes. Gemini suggests, engine decides.
+            context = {
+                "blueprint": blueprint,
+                "generationOptions": options or {},
+            }
+
+            contents = [
+                "SYSTEM: You design skyboxes for an audio-reactive rollercoaster.",
+                "SYSTEM: Use the base skybox style and this blueprint context.",
+                "SYSTEM: Output JSON ONLY that matches response_schema.",
+                "SYSTEM: Produce 3-6 subtle loopable frames (frames[]) that:",
+                "- Keep the same camera and world.",
+                "- Vary only lighting, atmosphere, and distant details.",
+                "- Seamlessly loop: frames[0] -> ... -> frames[n-1] -> frames[0] without jumps.",
+                "SYSTEM: Optionally, include alternateScenes[] as more intense edits of the SAME world.",
+                "- These must still match the blueprint theme.",
+                "- Provide simple triggers (minEnergy/maxEnergy/section/onDrop) only as suggestions.",
+                "- Do NOT rely on these being executed; they are hints, not commands.",
+                json.dumps(context, ensure_ascii=True),
+                prompt,
+            ]
+
+            config = types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=response_schema,
+                temperature=0.6,
+                max_output_tokens=2048,
+            )
+
+            response = await self._adapter.generate_content(
+                model="gemini-2.5-flash",  # timeline-friendly, fast image planning
+                contents=contents,
+                config=config,
+            )
+
+            # Prefer structured/parsed if provided, else parse text.
+            data: Dict[str, Any]
+            if hasattr(response, "parsed") and response.parsed:
+                data = response.parsed  # type: ignore[assignment]
+            else:
+                raw = getattr(response, "text", lambda: str(response))()
+                data = json.loads(raw)
+
+            frames = data.get("frames") or []
+            # Basic sanitation: only keep valid frames.
+            safe_frames = []
+            for f in frames:
+                if not isinstance(f, dict):
+                    continue
+                url = f.get("imageUrl")
+                if isinstance(url, str) and url:
+                    t = f.get("time")
+                    # Keep time in [0,1] loop space; default to 0 if missing.
+                    nt = float(t) if isinstance(t, (int, float)) else 0.0
+                    if nt < 0.0 or nt > 1.0:
+                        nt = 0.0
+                    safe_frames.append({
+                        "time": nt,
+                        "imageUrl": url,
+                    })
+            if not safe_frames:
+                # Fallback to a single skybox
+                base = await self.generate_skybox(prompt, blueprint, options)
+                url = base.get("url") or base.get("imageUrl")
+                safe_frames = [{"time": 0.0, "imageUrl": url}] if url else []
+
+            # Parse optional alternateScenes, but keep them advisory.
+            alternates_raw = data.get("alternateScenes") or []
+            alternate_scenes = []
+            for a in alternates_raw:
+                if not isinstance(a, dict):
+                    continue
+                url = a.get("imageUrl")
+                if not isinstance(url, str) or not url:
+                    continue
+                trigger = a.get("trigger") if isinstance(a.get("trigger"), dict) else {}
+                alternate_scenes.append({
+                    "imageUrl": url,
+                    "trigger": {
+                        "minEnergy": trigger.get("minEnergy"),
+                        "maxEnergy": trigger.get("maxEnergy"),
+                        "section": trigger.get("section"),
+                        "onDrop": trigger.get("onDrop"),
+                    },
+                })
+
+            result: Dict[str, Any] = {"frames": safe_frames}
+            if alternate_scenes:
+                result["alternateScenes"] = alternate_scenes
+            return result
+        except Exception as e:  # defensive: never break ride due to timeline skybox
+            logger.warning("generate_skybox_timeline failed; falling back: %s", e)
+            base = await self.generate_skybox(prompt, blueprint, options)
+            url = base.get("url") or base.get("imageUrl")
+            frames = [{"time": 0.0, "imageUrl": url}] if url else []
+            return {"frames": frames}
 
 
 # Module-level singleton used by the FastAPI dependency in endpoints.py

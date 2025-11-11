@@ -60,6 +60,9 @@ export const ThreeCanvasCore: React.FC<ThreeCanvasCoreProps> = ({ mountRef }) =>
     onRideFinish
   );
 
+  // Note: AudioReactivePostProcessing (R3F-based) is mounted inside the Three.js scene layer,
+  // not here, so any postprocessing runtime mismatch will not crash the controller.
+
   // --- Effects ---
 
   // Effect to apply the skybox when the URL is available from the store

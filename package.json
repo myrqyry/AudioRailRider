@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"pnpm --filter frontend dev\" \"pnpm --filter backend dev\"",
+    "dev": "concurrently \"pnpm --filter frontend dev\" \"pnpm --filter audiorailrider-backend dev\"",
     "setup": "pnpm install --recursive",
     "postinstall": "pnpm run backend:install && pnpm run sync:constants",
     "sync:constants": "node scripts/sync-constants.mjs",

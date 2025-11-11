@@ -1,0 +1,12 @@
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "shared"
+version = "0.1.0"
+description = "Shared constants and types for AudioRailRider"
+authors = ["myrqyry <matrmx@gmail.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.11"

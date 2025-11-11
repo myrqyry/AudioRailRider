@@ -1,7 +1,5 @@
-import * as THREE from 'three';
-import * as THREE from 'three';
-import { EffectComposer, Bloom, ChromaticAberration, Glitch, Vignette, RenderPass } from 'postprocessing';
-import { BlendFunction, GlitchMode } from 'postprocessing';
+// Optional postprocessing: disabled in this build to avoid runtime issues.
+// This stub keeps the API surface for SceneManager without importing heavy deps.
 
 export interface AudioData {
     bass: number;
@@ -11,6 +9,18 @@ export interface AudioData {
 }
 
 export class AudioReactivePostProcessing {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    constructor(_renderer: unknown, _scene: unknown, _camera: unknown) {}
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    public update(_audioData: AudioData, _intensity = 1.0) {}
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    public render(_deltaTime: number) {}
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    public setSize(_width: number, _height: number) {}
+}
     private composer: EffectComposer;
     private bloom: Bloom;
     private chromaticAberration: ChromaticAberration;

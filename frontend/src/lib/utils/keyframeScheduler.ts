@@ -73,8 +73,137 @@ export class KeyframeScheduler {
     return out;
   }
 
+  /**
+   * Export all tracks to JSON format for persistence
+   */
+  exportToJSON(): string {
+    const data: Record<string, KeyframeTrack> = {};
+    this.tracks.forEach((track, name) => {
+      data[name] = track;
+    });
+    return JSON.stringify(data, null, 2);
+  }
+
+  /**
+   * Import tracks from JSON format
+   */
+  importFromJSON(json: string): void {
+    try {
+      const data = JSON.parse(json) as Record<string, KeyframeTrack>;
+      this.tracks.clear();
+      Object.values(data).forEach(track => {
+        this.addTrack(track);
+      });
+    } catch (error) {
+      console.error('Failed to import keyframe data:', error);
+      throw new Error('Invalid keyframe JSON format');
+    }
+  }
+
+  /**
+   * Export a single track in FrameSync-compatible format
+   */
+  exportTrackToFrameSync(trackName: string, fps: number = 30): string {
+    const track = this.tracks.get(trackName);
+    if (!track) return '';
+
+    const lines: string[] = [`# ${trackName}`, ''];
+    track.keyframes.forEach(kf => {
+      const frame = Math.round(kf.time * fps);
+      const value = typeof kf.value === 'number' 
+        ? kf.value.toFixed(3)
+        : JSON.stringify(kf.value);
+      const easing = kf.easing ? ` (${kf.easing})` : '';
+      lines.push(`${frame}: ${value}${easing}`);
+    });
+
+    return lines.join('\n');
+  }
+
+  /**
+   * Import a track from FrameSync format
+   */
+  importTrackFromFrameSync(
+    trackName: string, 
+    content: string, 
+    fps: number = 30,
+    defaultValue: number | Record<string, number> = 0
+  ): void {
+    const lines = content.split('\n').filter(line => {
+      const trimmed = line.trim();
+      return trimmed && !trimmed.startsWith('#');
+    });
+
+    const keyframes: Keyframe[] = [];
+
+    lines.forEach(line => {
+      const match = line.match(/^(\d+):\s*(.+?)(?:\s*\((\w+)\))?$/);
+      if (match) {
+        const [, frameStr, valueStr, easingStr] = match;
+        const frame = parseInt(frameStr);
+        const time = frame / fps;
+        
+        let value: number | Record<string, number>;
+        try {
+          value = JSON.parse(valueStr);
+        } catch {
+          value = parseFloat(valueStr);
+        }
+
+        const easing = easingStr as Easing | undefined;
+
+        keyframes.push({ time, value, easing });
+      }
+    });
+
+    this.addTrack({
+      name: trackName,
+      keyframes,
+      defaultValue
+    });
+  }
+
+  /**
+   * Get all track names
+   */
+  getTrackNames(): string[] {
+    return Array.from(this.tracks.keys());
+  }
+
+  /**
+   * Remove a track
+   */
+  removeTrack(name: string): boolean {
+    return this.tracks.delete(name);
+  }
+
+  /**
+   * Clear all tracks
+   */
+  clear(): void {
+    this.tracks.clear();
+  }
+
+  /**
+   * Clone the scheduler with all its tracks
+   */
+  clone(): KeyframeScheduler {
+    const cloned = new KeyframeScheduler();
+    this.tracks.forEach((track, name) => {
+      cloned.addTrack({
+        name,
+        keyframes: [...track.keyframes],
+        defaultValue: track.defaultValue
+      });
+    });
+    cloned.setCurrentTime(this.currentTime);
+    return cloned;
+  }
+
   private applyEasing(t: number, easing: Easing): number {
     switch (easing) {
+      case 'linear':
+        return t;
       case 'easeIn':
         return t * t;
       case 'easeOut':
