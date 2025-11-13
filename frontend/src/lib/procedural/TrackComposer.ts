@@ -1,3 +1,7 @@
+import * as THREE from 'three';
+import { Blueprint, TrackSegment, TrackData, AudioFeatures } from 'shared/types';
+import { TrackValidator } from './TrackValidator';
+
 /**
  * Applies breathing deformation to geometry points based on audio features.
  * @param points - Array of THREE.Vector3 points to deform
@@ -23,12 +27,9 @@ export function applyBreathingToGeometry(
         points[i].y += centroidPulse;
     }
 }
-import * as THREE from 'three';
-import { Blueprint, TrackSegment, TrackData, AudioFeatures } from 'shared/types';
-import { TrackValidator } from './TrackValidator';
 
 interface SegmentGenerator {
-    generate(segment: TrackSegment, startPos: THREE.Vector3, startDir: THREE.Vector3, startUp: THREE.Vector3): { points: THREE.Vector3[], upVectors: THREE.Vector3[] };
+    generate(segment: TrackSegment, startPos: THREE.Vector3, startDir: THREE.Vector3, startUp: THREE.Vector3, audioFeatures?: Partial<AudioFeatures>): { points: THREE.Vector3[], upVectors: THREE.Vector3[] };
 }
 
 class StraightGenerator implements SegmentGenerator {
@@ -241,7 +242,7 @@ export class TrackComposer {
             const generator = this.segmentGenerators.get(segment.component);
             if (generator) {
                 const startPointIndex = points.length;
-                let { points: newPoints, upVectors: newUpVectors } = generator.generate(segment, currentPos, currentDir, currentUp);
+                let { points: newPoints, upVectors: newUpVectors } = generator.generate(segment, currentPos, currentDir, currentUp, audioFeatures);
 
                 if (previousSegmentPoints.length > 0) {
                     newPoints = this.blendSegments(previousSegmentPoints, newPoints);
