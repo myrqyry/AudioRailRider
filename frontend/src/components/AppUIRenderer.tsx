@@ -1,5 +1,5 @@
 import React from 'react';
-import { ThreeErrorBoundary, ThreeCanvas, UploadView } from '@/components';
+import { ThreeErrorBoundary, ThreeCanvas, IdleUI, ReadyUI } from '@/components';
 import { AppStatus } from 'shared/types';
 
 interface AppUIRendererProps {
@@ -14,9 +14,10 @@ const AppUIRenderer: React.FC<AppUIRendererProps> = (props) => {
     const renderView = () => {
         switch (status) {
             case AppStatus.Idle:
-                return <UploadView />;
-            case AppStatus.Riding:
+                return <IdleUI audioContext={props.audioContext} />;
             case AppStatus.Ready:
+                return <ReadyUI />;
+            case AppStatus.Riding:
                 return (
                     <ThreeErrorBoundary>
                         <ThreeCanvas {...props} />

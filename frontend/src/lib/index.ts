@@ -13,8 +13,8 @@ export * from './audioFeatureUtils';
 export * from './useAudioAnalysis';
 
 // Scene Management
-export { default as SceneManager } from './SceneManager';
-export { default as RideCamera } from './RideCamera';
+export { SceneManager } from './SceneManager';
+export { RideCamera } from './RideCamera';
 
 // Track Building
 export * from './trackBuilder';

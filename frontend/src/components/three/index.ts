@@ -1,2 +1,2 @@
-export { default as ThreeCanvasCore } from './ThreeCanvasCore';
+export { ThreeCanvasCore } from './ThreeCanvasCore';
 export * from './hooks';

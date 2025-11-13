@@ -1,7 +1,7 @@
 import React, { useRef, memo } from 'react';
 import { AppStatus } from 'shared/types';
 import { useAppStore } from '../lib/store';
-import { ThreeCanvasCore } from './three/ThreeCanvasCore';
+import { ThreeCanvasCore } from './three';
 
 /**
  * The main container component for the Three.js scene.

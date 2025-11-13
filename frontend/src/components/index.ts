@@ -2,9 +2,8 @@
 export { default as AppUIRenderer } from './AppUIRenderer';
 export { default as DevPanel } from './DevPanel';
 export { default as ErrorBoundary } from './ErrorBoundary';
-export { default as Icon } from './Icon';
-export { default as Loader } from './Loader';
-export { default as LoadingProgress } from './LoadingProgress';
+export { Loader } from './Loader';
+export { LoadingProgress } from './LoadingProgress';
 export { default as ThreeCanvas } from './ThreeCanvas';
 export { default as ThreeErrorBoundary } from './ThreeErrorBoundary';
 export { default as ProgressIndicator } from './ProgressIndicator';
@@ -14,7 +13,7 @@ export { default as RendererWarning } from './RendererWarning';
 // Form Components
 export { default as GenerationOptionsForm } from './GenerationOptionsForm';
 export { default as BreathingIntensitySlider } from './BreathingIntensitySlider';
-export { default as KeyframeEditor } from './KeyframeEditor';
+export { KeyframeEditor } from './KeyframeEditor';
 export { default as MicrophoneControls } from './MicrophoneControls';
 
 // Other
